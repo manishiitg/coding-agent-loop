@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
-import { CheckCircle2, Circle, Copy, FolderOpen, Loader2, Monitor, Square, X } from 'lucide-react'
+import { CheckCircle2, Circle, Copy, FolderOpen, Globe, Loader2, Maximize2, Minimize2, Monitor, MoreHorizontal, RefreshCw, Square, X } from 'lucide-react'
 import api, { getApiBaseUrl, getAuthToken } from '../../services/api'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -25,6 +25,29 @@ function testBrowserLabel(browser: BrowserSession): string {
 
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
+// Live-view connection lifecycle shown to users. A dropped managed-browser
+// stream reconnects on its own with backoff; only exhausted retries ask the
+// user to act. Playwright test streams end by design and never auto-retry.
+export type BrowserLinkState = 'starting' | 'live' | 'reconnecting' | 'failed'
+export const BROWSER_RECONNECT_ATTEMPTS = 5
+export function browserReconnectDelayMs(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 15000)
+}
+export function mapToViewport(clientX: number, clientY: number, rect: { left: number; top: number; width: number; height: number }, viewport: { width: number; height: number }) {
+  const scale = Math.min(rect.width / viewport.width, rect.height / viewport.height)
+  const offsetX = (rect.width - viewport.width * scale) / 2
+  const offsetY = (rect.height - viewport.height * scale) / 2
+  const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value))
+  return {
+    x: clamp((clientX - rect.left - offsetX) / scale, viewport.width),
+    y: clamp((clientY - rect.top - offsetY) / scale, viewport.height),
+  }
+}
+const PAGE_SIZES = [
+  { value: '900x1200', label: 'Tall page · 900 × 1200' },
+  { value: '1280x800', label: 'Wide page · 1280 × 800' },
+]
+
 export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow', minimal = false }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project'; minimal?: boolean }) {
   const [sessions, setSessions] = useState<BrowserSession[]>([])
   const [session, setSession] = useState('')
@@ -39,6 +62,11 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
   const [controlling, setControlling] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [linkState, setLinkState] = useState<BrowserLinkState>('starting')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const reconnectAttempt = useRef(0)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [recording, setRecording] = useState<Recording>({ recording: false })
   const [recordingBusy, setRecordingBusy] = useState(false)
   const [dismissedRecording, setDismissedRecording] = useState('')
@@ -176,6 +204,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
   useEffect(() => {
     pendingTab.current = ''
     setFrame(''); setTabs([]); setConnected(false); setControlling(false); setError('')
+    if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
+    if (reconnectAttempt.current === 0) setLinkState('starting')
     if (!session || !workspacePath || sourceCompleted) return
     setLastPlaywrightFrame(previous => previous?.workspace === workspacePath && previous.session === session ? previous : null)
     const url = new URL(`${getApiBaseUrl() || window.location.origin}/api/browser/live/${encodeURIComponent(session)}/stream`)
@@ -195,6 +225,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         if (message.type === 'frame' && typeof message.data === 'string') {
           const nextFrame = `data:image/${message.data.startsWith('iVBOR') ? 'png' : 'jpeg'};base64,${message.data}`
           receivedFrame = true
+          reconnectAttempt.current = 0
+          setLinkState('live')
           setFrame(nextFrame)
           if (session.startsWith('pw-')) setLastPlaywrightFrame({ workspace: workspacePath, session, frame: nextFrame })
           if (message.metadata?.deviceWidth > 0 && message.metadata?.deviceHeight > 0) {
@@ -217,13 +249,54 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
       } catch { /* Ignore unsupported runtime messages. */ }
     }
     ws.onclose = () => {
-      if (!disposed) { setConnected(false); setControlling(false); setFrame(''); setError(session.startsWith('pw-') && receivedFrame ? '' : session.startsWith('pw-') ? 'Playwright test browser disconnected or finished. Running test browsers appear automatically.' : 'Live view disconnected. Reconnect to continue watching. If it persists, check that the server has a streaming-capable agent-browser version.') }
+      if (disposed) return
+      setConnected(false); setControlling(false); setFrame('')
+      if (session.startsWith('pw-')) {
+        setError(receivedFrame ? '' : 'Playwright test browser disconnected or finished. Running test browsers appear automatically.')
+        return
+      }
+      // The browser behind a managed session can restart (crash recovery,
+      // idle reaping). Reconnect quietly instead of asking the user to.
+      if (reconnectAttempt.current < BROWSER_RECONNECT_ATTEMPTS) {
+        const delay = browserReconnectDelayMs(reconnectAttempt.current)
+        reconnectAttempt.current += 1
+        setLinkState('reconnecting')
+        reconnectTimer.current = setTimeout(() => { reconnectTimer.current = null; setRetry(value => value + 1) }, delay)
+      } else {
+        setLinkState('failed')
+        console.warn(`[browser] live view for ${session} closed ${BROWSER_RECONNECT_ATTEMPTS} times; check agent-browser streaming and Chrome health on the server`)
+      }
     }
     const heartbeat = window.setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }))
     }, 10000)
     return () => { disposed = true; window.clearInterval(heartbeat); ws.close(); if (socket.current === ws) socket.current = null }
   }, [session, workspacePath, retry, sourceCompleted])
+
+  // A different browser (or leaving the panel) starts a fresh retry budget.
+  useEffect(() => {
+    reconnectAttempt.current = 0
+    return () => { if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null } }
+  }, [session, workspacePath])
+
+  function tryAgain() {
+    reconnectAttempt.current = 0
+    setLinkState('starting')
+    setRetry(value => value + 1)
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (event: Event) => {
+      if (event instanceof globalThis.KeyboardEvent && event.key !== 'Escape') return
+      if (event.type === 'mousedown' && menuRef.current?.contains(event.target as Node)) return
+      setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')?.focus()
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close) }
+  }, [menuOpen])
 
   useEffect(() => {
     setRecording({ recording: false })
@@ -279,8 +352,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
       if (!rect.width || !rect.height || ws?.readyState !== WebSocket.OPEN) return
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.current.height : 1
       ws.send(JSON.stringify({ type: 'input_mouse', eventType: 'mouseWheel',
-        x: (event.clientX - rect.left) * viewport.current.width / rect.width,
-        y: (event.clientY - rect.top) * viewport.current.height / rect.height,
+        ...mapToViewport(event.clientX, event.clientY, rect, viewport.current),
         deltaX: event.deltaX * unit, deltaY: event.deltaY * unit,
       }))
     }
@@ -292,10 +364,12 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     if (message.type === 'take_control') chooseBrowser(session)
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
   }
+  // The frame is drawn with object-contain, so the element box includes any
+  // letterbox bars. Map pointer positions through the actually painted area.
   function point(clientX: number, clientY: number) {
     const rect = screen.current?.getBoundingClientRect()
     if (!rect || !rect.width || !rect.height) return { x: 0, y: 0 }
-    return { x: (clientX - rect.left) * viewport.current.width / rect.width, y: (clientY - rect.top) * viewport.current.height / rect.height }
+    return mapToViewport(clientX, clientY, rect, viewport.current)
   }
   function mouse(event: MouseEvent<HTMLImageElement>, eventType: string) {
     if (!controlling) return
@@ -312,57 +386,157 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     send({ type: 'input_keyboard', eventType, key: event.key, code: event.code, text: eventType === 'keyDown' && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey ? event.key : '', windowsVirtualKeyCode: event.keyCode, modifiers })
   }
 
-  const browserTabs = (tabs.length > 0 && <div className="live-browser-tabs flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
-        {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
+  const [expanded, setExpanded] = useState(false)
+  const controllingRef = useRef(false)
+  controllingRef.current = controlling
+  useEffect(() => {
+    if (!expanded) return
+    // Escape exits the expanded view unless it is releasing browser control.
+    const onKey = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape' && !controllingRef.current) setExpanded(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [expanded])
+
+  const activeTab = tabs.find(tab => tab.active) ?? (tabs.length === 1 ? tabs[0] : undefined)
+  const managedBrowsers = sessions.filter(item => item.kind !== 'playwright')
+  const hasTests = sessions.some(item => item.kind === 'playwright')
+  // One browser per crew / per workflow is the normal case: no picker then.
+  const showPicker = !minimal && (sessions.length > 1 || hasTests)
+  const singleBrowserLabel = !showPicker ? (currentBrowser?.label || managedBrowsers[0]?.label || '') : ''
+  const slim = !minimal && Boolean(displayFrame) && !replayURL
+  const canResize = connected && canControl && !minimal
+  const menuItems = (session && canControl) || canResize
+
+  const browserTabs = (tabs.length > 1 && <div className="live-browser-tabs flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-0.5" aria-label="Browser tabs">
+        {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-2.5 py-1 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>)
 
-  const statusLabel = controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'
-  // Tertiary labeled buttons sit left of the Ask/refresh pair at the standard
-  // action height. Minimal mode keeps its compact embed header (drawer use).
-  const tertiaryButtonClass = 'inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-background px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+  const statusLabel = controlling ? 'You have control'
+    : connected && displayFrame ? 'Live'
+      : completed ? 'Completed'
+        : retainedFrame ? 'Disconnected'
+          : !session ? 'Idle'
+            : linkState === 'reconnecting' ? 'Reconnecting…'
+              : linkState === 'failed' ? 'Not connected'
+                : 'Starting…'
+  const statusDot = controlling ? 'bg-amber-500' : connected && displayFrame ? 'bg-emerald-500' : linkState === 'failed' && session ? 'bg-red-500' : 'bg-muted-foreground/50'
+  const iconButtonClass = 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40'
+  const tertiaryButtonClass = 'inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+
+  const controlToggle = connected && canControl && (
+    <button type="button" aria-pressed={controlling} className={`inline-flex h-7 shrink-0 items-center rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${controlling ? 'bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`} onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>
+      {controlling ? 'Give back to helper' : 'Take control'}
+    </button>
+  )
+  const expandToggle = !minimal && Boolean(displayFrame) && (
+    <button type="button" aria-pressed={expanded} aria-label={expanded ? 'Exit expanded view' : 'Expand browser'} title={expanded ? 'Exit expanded view (Esc)' : 'Expand browser'} className={iconButtonClass} onClick={() => setExpanded(value => !value)}>
+      {expanded ? <Minimize2 className="h-4 w-4" aria-hidden="true" /> : <Maximize2 className="h-4 w-4" aria-hidden="true" />}
+    </button>
+  )
+  const overflowMenu = !minimal && menuItems && (
+    <div ref={menuRef} className="relative">
+      <button type="button" aria-label="More browser options" aria-haspopup="menu" aria-expanded={menuOpen} className={iconButtonClass} onClick={() => setMenuOpen(value => !value)}>
+        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+      </button>
+      {menuOpen && (
+        <div role="menu" aria-label="Browser options" className="absolute right-0 top-8 z-20 min-w-52 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          {session && canControl && (
+            <button type="button" role="menuitem" disabled={recordingBusy} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50" onClick={() => { setMenuOpen(false); void toggleRecording() }}>
+              {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
+              {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
+            </button>
+          )}
+          {canResize && PAGE_SIZES.map(size => (
+            <button key={size.value} type="button" role="menuitem" disabled={!controlling} title={controlling ? 'Resize the actual browser page' : 'Take control to change page size'} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50" onClick={() => { const [width, height] = size.value.split('x').map(Number); send({ type: 'resize_viewport', width, height }); setMenuOpen(false) }}>
+              {size.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+  const recordingIndicator = recording.recording && <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400"><Circle className="h-2 w-2 fill-current" aria-hidden="true" />Recording</span>
+
+  let centered: ReactNode = null
+  if (!displayFrame && !replayURL) {
+    const spin = (text: string) => <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{text}</span>
+    centered = replayQueued ? spin('Replay queued for processing…')
+      : replayPreparing ? spin('Preparing video replay…')
+        : replayFailed ? 'Replay unavailable. See the recording error above.'
+          : sourceCompleted ? 'Replay is no longer available.'
+            : session && linkState === 'reconnecting' ? spin('Browser restarted — reconnecting…')
+              : session && linkState === 'failed' ? (
+                <div className="flex flex-col items-center gap-3">
+                  <span>We couldn’t reconnect to the browser.</span>
+                  <button type="button" className={tertiaryButtonClass} onClick={tryAgain}><RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />Try again</button>
+                  <details className="max-w-md text-left text-xs text-muted-foreground/80">
+                    <summary className="cursor-pointer select-none">Details</summary>
+                    <p className="mt-1">The live view closed {BROWSER_RECONNECT_ATTEMPTS} times in a row. If this keeps happening, the server’s browser runtime (agent-browser live streaming / Chrome) needs attention.</p>
+                  </details>
+                </div>
+              )
+                : session ? spin('Starting browser…')
+                  : (
+                    <div className="flex flex-col items-center gap-1">
+                      <span>Your helper isn’t using a browser right now — it opens one when needed.</span>
+                      {!minimal && scopeNoun === 'workflow' && <span className="text-xs text-muted-foreground/80">Test runs appear here automatically.</span>}
+                    </div>
+                  )
+  }
 
   return (
-    <section className="live-browser flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label={`Live ${scopeNoun} browser`}>
+    <section className={`live-browser flex min-h-0 flex-1 flex-col overflow-hidden bg-background ${expanded ? 'fixed inset-0 z-50' : ''}`} aria-label={`Live ${scopeNoun} browser`}>
       {minimal ? (
-        <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
           <h3 className="text-sm font-medium">Browser</h3>
           <span className="text-xs text-muted-foreground" role="status">{statusLabel}</span>
           {browserTabs}
           <div className="live-browser-actions ml-auto flex gap-2">
-            {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
-            {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
+            {controlToggle}
             {connected && canControl && <select aria-label="Browser page size" title={controlling ? 'Resize the actual browser page' : 'Take control to change page size'} disabled={!controlling} defaultValue="" onChange={event => { const [width, height] = event.target.value.split('x').map(Number); send({ type: 'resize_viewport', width, height }); event.target.value = '' }}>
               <option value="" disabled>Page size</option>
-              <option value="900x1200">Tall · 900 × 1200</option>
-              <option value="1280x800">Wide · 1280 × 800</option>
+              {PAGE_SIZES.map(size => <option key={size.value} value={size.value}>{size.label.replace(' page', '')}</option>)}
             </select>}
             {toolbar}
           </div>
+        </div>
+      ) : slim ? (
+        <div className="live-browser-bar flex h-10 shrink-0 items-center gap-2 border-b border-border px-2">
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}</span>
+          {activeTab ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs" title={activeTab.url}>
+              <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate font-medium">{activeTab.title || activeTab.url}</span>
+              {activeTab.title && activeTab.url && <span className="hidden truncate text-muted-foreground sm:inline">{activeTab.url}</span>}
+            </span>
+          ) : <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{singleBrowserLabel}</span>}
+          {recordingIndicator}
+          {controlToggle}
+          {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
+          {expandToggle}
+          {overflowMenu}
+          {toolbar}
         </div>
       ) : (
         <WorkspaceViewHeader
           icon={Monitor}
           title="Browser"
-          subtitle="Watch and control the browser your helper uses."
-          context={<span className="text-xs text-muted-foreground" role="status">{statusLabel}</span>}
+          subtitle="See what your helper does in its browser. Take control anytime."
+          context={<span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}{singleBrowserLabel && <span className="text-muted-foreground/80">· {singleBrowserLabel}</span>}</span>}
           actions={<>
-            {session && !connected && !sourceCompleted && <button type="button" className={tertiaryButtonClass} onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
-            {connected && canControl && <button type="button" className={tertiaryButtonClass} onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
-            {session && canControl && (
-              <button type="button" disabled={recordingBusy} className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
-                {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
-                {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
-              </button>
-            )}
+            {recordingIndicator}
+            {controlToggle}
             {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
+            {expandToggle}
+            {overflowMenu}
             {toolbar}
           </>}
         />
       )}
-      {!minimal && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <span className="shrink-0 text-xs text-muted-foreground">Session</span>
-          <select className="h-8 min-w-0 max-w-96 flex-1 rounded-md border border-border bg-background px-2 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+      {showPicker && (
+        <div key="picker" className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1">
+          <span className="shrink-0 text-xs text-muted-foreground">Browser</span>
+          <select className="h-7 min-w-0 max-w-96 flex-1 rounded-md border border-border bg-background px-2 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
             {!selection && !session && <option value="" disabled>No managed browser</option>}
             <option value={AUTO_BROWSER}>{followingActivity ? followLabel : 'Follow browser activity'}</option>
             {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
@@ -370,7 +544,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         </div>
       )}
       {!minimal && !recording.recording && recording.directory && recording.directory !== dismissedRecording && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
           <span className="min-w-0 flex-1 font-medium" title={recording.directory}>{recording.validation === 'failed' || recording.errors?.length ? 'Recording incomplete — check details' : 'Recording saved'}</span>
           <div className="ml-auto flex items-center gap-1">
@@ -388,15 +562,17 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           </div>
         </div>
       )}
-      {!minimal && (readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
-      {currentBrowser?.recording_error && <p className="px-3 py-2 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
-      {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
+      {!minimal && (readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
+      {currentBrowser?.recording_error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
+      {error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{error}</p>}
       {!minimal && browserTabs}
 
-      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="live-browser-viewport relative min-h-0 flex-1 bg-muted/20"><div className="live-browser-frame absolute inset-0 flex items-center justify-center overflow-hidden">
-        <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingActivity && !minimal ? 'Waiting for browser activity. Managed browser sessions and AgentWorks Playwright tests will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
-      <p className="live-browser-footer shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="live-browser-viewport relative min-h-0 flex-1 bg-black/90">
+        <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="live-browser-frame absolute inset-0 block h-full w-full select-none object-contain outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
+        {retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}
+        {controlling && <span className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-full bg-amber-500/90 px-3 py-1 text-[11px] font-medium text-white shadow">You’re in control · press Esc to give it back</span>}
+      </div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{centered}</div>}
+      {(readOnly && !minimal) || session === 'shared-browser' ? <p className="live-browser-footer shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.'}</p> : null}
     </section>
   )
 }

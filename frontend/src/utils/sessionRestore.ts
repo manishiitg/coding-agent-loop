@@ -4,7 +4,8 @@ import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
 import type { PollingEvent } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
-import { applyLiveInputConfirmations, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withDeliveryConfirmation } from './liveInputReceipt'
+import { applyLiveInputConfirmations, resolveLiveInputConfirmations, splitLiveInputConfirmations } from './liveInputReceipt'
+import { keepUnechoedProvisionals } from './clientMessageIdentity'
 import type { LiveInputConfirmationUpdate } from './liveInputReceipt'
 import axios from 'axios'
 
@@ -149,11 +150,10 @@ async function doRestoreSession(
         appendRestoredLiveTail(sessionId, runtime.events)
       }
       const cursor = runtime.latest_sequence ?? runtime.last_processed_index
+      // A forward `since` read: has_more means "newer rows", so it must not
+      // touch the older-history pager established by the initial restore.
       if (cursor !== undefined) {
         chatStore.setTabLastEventIndex(sessionId, cursor)
-      }
-      if (runtime.has_more !== undefined) {
-        chatStore.setTabHasMoreOlderEvents(sessionId, runtime.has_more)
       }
       console.log(`${TAG} [${src}] Refreshed runtime state for existing tab ${tabId}`)
     } else {
@@ -189,26 +189,6 @@ function isNotFoundError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404
 }
 
-const ACCEPTED_LIVE_INPUT_STATUSES = new Set(['sent_to_cli', 'next_turn_started', 'queued_for_injection', 'queued_for_turn'])
-
-function eventPayload(event: PollingEvent): Record<string, unknown> {
-  const outer = event.data && typeof event.data === 'object'
-    ? event.data as unknown as Record<string, unknown>
-    : {}
-  return outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : outer
-}
-
-function eventMetadata(event: PollingEvent): Record<string, unknown> {
-  const metadata = eventPayload(event).metadata
-  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {}
-}
-
-function isAcceptedOptimisticLiveInput(event: PollingEvent): boolean {
-  if (event.type !== 'user_message' || !event.id?.startsWith('user-message-')) return false
-  const metadata = eventMetadata(event)
-  return metadata.source === 'coding_agent_live_input'
-    && ACCEPTED_LIVE_INPUT_STATUSES.has(String(metadata.delivery_status || ''))
-}
 
 // appendTimelineAndApplyConfirmations lands a timeline window and consumes
 // its durability receipts in one ordering: rows first, verdicts second,
@@ -238,95 +218,9 @@ export function appendRestoredLiveTail(sessionId: string, incoming: ReadonlyArra
     return
   }
   if (timelineEvents.length > 0) chatStore._addTabEventsImmediate(sessionId, timelineEvents)
-  // Identity-transfer against the merged rows first, then the shared
-  // append+apply consumes the receipts (with an empty remainder: this
-  // window's rows already landed above).
-  chatStore.patchTabEvents(sessionId, events => transferLiveTailInputIdentity(events, timelineEvents))
+  // Rows carry their own identity (client_message_id / message_id), so the
+  // shared append+apply consumes this window's receipts directly.
   appendTimelineAndApplyConfirmations(sessionId, [], confirmations)
-}
-
-// transferLiveTailInputIdentity copies live-input identity (message_id and
-// delivery facts) from volatile live-tail user rows onto restored rows with
-// the same content. Durable conversation carriers keep role/content only, so
-// without the transfer a restored row can never match the durability receipt
-// that names it and the tick is lost on every restore. Content matching
-// carries the same identical-resend ambiguity the live echo suppression
-// already accepts; a mismatch only costs a tick, never a row.
-function transferLiveTailInputIdentity(
-  restored: PollingEvent[],
-  liveTails: ReadonlyArray<PollingEvent>,
-): PollingEvent[] {
-  const donors = liveTails.filter(event =>
-    event.type === 'user_message' && String(eventMetadata(event).message_id || '').trim())
-  if (donors.length === 0) return restored
-  return restored.map(row => {
-    if (row.type !== 'user_message' || String(eventMetadata(row).message_id || '').trim()) return row
-    const content = String(eventPayload(row).content || '').trim()
-    if (!content) return row
-    const donor = donors.find(candidate => String(eventPayload(candidate).content || '').trim() === content)
-    if (!donor) return row
-    const metadata = eventMetadata(donor)
-    const messageId = String(metadata.message_id || '').trim()
-    const stamped = stampLiveInputIdentity(row, messageId,
-      typeof metadata.delivery_status === 'string' && metadata.delivery_status ? metadata.delivery_status : 'sent_to_cli',
-      typeof metadata.provider === 'string' ? metadata.provider : undefined)
-    // A donor that already carries a terminal verdict (a live-upgraded row
-    // surviving in the tab) transfers the verdict too, so the tick survives
-    // even when the receipt itself fell out of the re-fetched window.
-    const verdict = metadata.confirmation
-    if (verdict === 'confirmed' || verdict === 'accepted_but_unflushed' || verdict === 'failed') {
-      const latencyRaw = metadata.latency_ms
-      return withDeliveryConfirmation(stamped, {
-        messageId,
-        outcome: verdict,
-        proofSource: typeof metadata.proof_source === 'string' ? metadata.proof_source : undefined,
-        latencyMs: typeof latencyRaw === 'number' ? latencyRaw : undefined,
-        provider: typeof metadata.provider === 'string' ? metadata.provider : undefined,
-      })
-    }
-    return stamped
-  })
-}
-
-function durableLiveInputMessageIDs(events: ReadonlyArray<PollingEvent>): Set<string> {
-  const ids = new Set<string>()
-  for (const event of events) {
-    if (event.type !== 'user_message') continue
-    const messageID = String(eventMetadata(event).message_id || '').trim()
-    if (messageID) ids.add(messageID)
-  }
-  return ids
-}
-
-// An accepted live-input bubble is a local receipt for a server mutation. A
-// history response can lag that mutation, so absence from one snapshot is not
-// deletion authority. Keep the receipt until the durable UI trace confirms the
-// server message ID. This invariant runs after projection because projection is
-// allowed to replace the complete event array.
-function preserveUnconfirmedAcceptedLiveInputs(
-  projectedEvents: PollingEvent[],
-  currentEvents: ReadonlyArray<PollingEvent>,
-): PollingEvent[] {
-  const durableMessageIDs = durableLiveInputMessageIDs(projectedEvents)
-  const projectedIDs = new Set(projectedEvents.map(event => event.id).filter((id): id is string => !!id))
-  const missing = currentEvents.filter(event => {
-    if (!isAcceptedOptimisticLiveInput(event) || (event.id && projectedIDs.has(event.id))) return false
-    const messageID = String(eventMetadata(event).message_id || '').trim()
-    return !messageID || !durableMessageIDs.has(messageID)
-  })
-  if (missing.length === 0) return projectedEvents
-
-  return [...projectedEvents, ...missing]
-    .map((event, index) => ({ event, index }))
-    .sort((left, right) => {
-      if (left.event.type === 'conversation_resumed') return -1
-      if (right.event.type === 'conversation_resumed') return 1
-      const leftTime = Date.parse(left.event.timestamp || '')
-      const rightTime = Date.parse(right.event.timestamp || '')
-      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime
-      return left.index - right.index
-    })
-    .map(({ event }) => event)
 }
 
 /** Load the canonical, bounded chat page from SQLite. */
@@ -351,7 +245,25 @@ export async function hydrateTabEvents(
   const requestKey = `${identity}:${sessionId}`
   const requestVersion = (hydrateRequestVersions.get(requestKey) || 0) + 1
   hydrateRequestVersions.set(requestKey, requestVersion)
-  const response = await agentApi.getRecentChatEvents(sessionId, options.workspacePath)
+  let response: Awaited<ReturnType<typeof agentApi.getRecentChatEvents>>
+  try {
+    response = await agentApi.getRecentChatEvents(sessionId, options.workspacePath)
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error
+    // A chat that never received a message has no journal rows. That is an
+    // empty conversation, not a failed restore: surfacing it as an error kept
+    // callers on "Loading conversation…" until their give-up timers fired.
+    assertChatIdentityCurrent(identity)
+    chatStore.setTabHasMoreOlderEvents(sessionId, false)
+    chatStore.setTabHistoryPagination(sessionId, null)
+    return {
+      status: 'inactive',
+      hasRunningBackgroundAgents: false,
+      isSyntheticTurn: false,
+      canSteer: false,
+      restoredEvents: chatStore.getTabEvents(sessionId),
+    }
+  }
   assertChatIdentityCurrent(identity)
   if (hydrateRequestVersions.get(requestKey) !== requestVersion) {
     return {
@@ -363,10 +275,8 @@ export async function hydrateTabEvents(
   }
   const eventsNow = chatStore.getTabEvents(sessionId)
   const concurrentEvents = eventsNow.filter(event => event.id && !startingIDs.has(event.id))
-  const restored = preserveUnconfirmedAcceptedLiveInputs(
-    transferLiveTailInputIdentity(response.events, eventsNow),
-    eventsNow,
-  )
+  // A provisional bubble survives only until its durable row is on the page.
+  const restored = keepUnechoedProvisionals(response.events, eventsNow)
   chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(restored))
   if (concurrentEvents.length > 0) appendRestoredLiveTail(sessionId, concurrentEvents)
   const cursor = response.latest_sequence ?? response.last_processed_index

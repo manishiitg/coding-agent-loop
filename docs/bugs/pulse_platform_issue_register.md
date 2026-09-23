@@ -1,3 +1,36 @@
+## Attached context made query_workflow_db "ambiguous" — PLAT-356
+
+[PLAT-356](pulse_platform/step-execution/plat-356.md) fixes
+`workflow database context is ambiguous`. When `DB_PATH` was not set, the
+session resolver counted every folder grant as a candidate home. An attached
+knowledgebase source (`Workflow/<other>/knowledgebase`) or an attached
+workflow or Crew project (whole-root read grant) therefore made every
+`query_workflow_db` / `query_workflow_costs` call fail, both in builder
+sessions and in Crew chats with other Crews attached. The resolver now checks
+the session's own writable roots and working directory first, then read
+grants, then knowledgebase grants. The costs tool shares the same resolver.
+Live-verified 2026-09-23.
+
+## Scripted-step tool calls borrowed another run's executor — PLAT-355
+
+[PLAT-355](pulse_platform/security-sandbox/plat-355.md) fixes the
+intermittent `caller does not own this tool session` left open by PLAT-338. A
+scripted step's `session-group-*` bridge session has no tool registry of its
+own, so `CallCustomToolWithSession` fell back to the global executor map. The
+last agent to start overwrites that map, so a concurrently starting schedule
+could leave it bound to another run. mcpagent now resolves a live, registered
+child to its parent run's registry and allow list. Unregistered children keep
+the legacy path. Live-verified 2026-09-23.
+
+## Show Muse native multiple-choice questions in chat — PLAT-354
+
+[PLAT-354](pulse_platform/coding-agent-bridge/plat-354.html) proposes reading
+Muse's structured `user_input_prompt_requested` questions and options from its
+native `session.jsonl`, presenting them in chat, then submitting the user's
+selections through the live tmux widget. The matching
+`user_input_prompt_settled` event confirms the recorded answers. This replaces
+the current automatic first-option behavior for user-facing questions.
+
 ## Crews get a read-only Run mode: single owner, inspect-and-run for everyone else — PLAT-353
 
 [PLAT-353](pulse_platform/security-sandbox/plat-353.md) fixes `BUG_ID_001`
@@ -16,13 +49,14 @@ acceptance on the Confida server pending.
 
 ## Simplify chat render and restoration to one durable ordered log — PLAT-352
 
-[PLAT-352](pulse_platform/chat-reliability/plat-352.md) is a design
-proposal (not implemented): replace the volatile-window plus durable-JSON
-reconciliation in chat restore with a single per-session event log that is
-durable on append, sequenced at write time, and read by range for
-restore/resume/pagination/preview, with client idempotency keys replacing
-positional cursors and the identity-transfer machinery. Records the
-migration order and the bounding/crash-window caveats for design review.
+[PLAT-352](pulse_platform/chat-reliability/plat-352.md) replaced the
+volatile-window plus durable-JSON reconciliation in chat restore with one
+chat-only SQLite journal per interactive session, read by sequence range for
+restore, resume and pagination. Shipped on main and deployed to RTS on
+2026-09-23 with its review fixes (cursor, deletes, per-session journal lock,
+startup import on every launch path, access-token carry-over, CORS, stream
+start cursor). Still open: stable client/server message IDs and a journal
+retention/size policy with artifact storage for large messages.
 
 ## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
 
@@ -162,7 +196,7 @@ and live acceptance plus deployment evidence are recorded.
 
 ## Manual workflow contract preflight — PLAT-332
 
-[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Release `bb24ab5-20260918164118` is deployed and verified healthy in production.
+[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the manual-execution migration gap: every interactive `run_full_workflow` and `execute_step` call rechecks `workflow.json` before starting. An old or unknown contract starts no execution and directs the owner to the manual Workshop upgrade path. The 2026-09-22 follow-up removes contract-upgrade turns from cron/calendar and `trigger_schedule` runs: schedules continue on their saved contract and cannot stamp migrations. Direct webhooks remain fail-closed. The original guard release `bb24ab5-20260918164118` is deployed and verified; the schedule-policy follow-up is implemented on `main` with deployment verification pending.
 
 ## Concurrent webhook route isolation — PLAT-331
 

@@ -154,7 +154,12 @@ When call selection requires judgment, use an agentic request-specification step
 
 Contract v1.0.10 removes legacy `type: "code"` items.
 
-Before a scheduled workflow sends its first normal message, the scheduler runs every missing workflow-version upgrade in order and verifies that each upgrade stamped its expected version. The v1.0.10 upgrade calls `migrate_message_sequence_code_items`.
+The v1.0.10 upgrade is started manually from the workflow's interactive Builder
+chat and calls `migrate_message_sequence_code_items`. Migrations run in order
+and each completed migration must stamp its expected version. Schedules do not
+run this migration; they continue against their saved contract, while manual
+chat execution and direct webhooks remain blocked until incompatible legacy
+artifacts are migrated.
 
 Contract v1.0.11 then upgrades `builder/improve.html` to the schema-2 Pulse history contract. It preserves the time-ordered history while adding canonical Signals / Reflection / Improvements attribution used by the Pulse popup. The v1.0.10 migration keeps its own trusted finalizer, so workflows on v1.0.9 can still traverse both upgrades safely.
 
@@ -165,7 +170,7 @@ The migration automatically converts only unambiguous top-level sequences contai
 3. Preserves cumulative dependencies, outputs, validation, and step configuration.
 4. Replaces the legacy sequence only after the migrated plan validates.
 
-Mixed conversational/code sequences, nested sequence code, `input_json`, missing outputs, and unusual write ownership are not guessed. The preflight blocks the scheduled run with `MESSAGE_SEQUENCE_CODE_MIGRATION_BLOCKED` and an actionable split requirement.
+Mixed conversational/code sequences, nested sequence code, `input_json`, missing outputs, and unusual write ownership are not guessed. The manual migration stops with `MESSAGE_SEQUENCE_CODE_MIGRATION_BLOCKED` and an actionable split requirement without stamping v1.0.10.
 
 The runtime also rejects any remaining code item with a precise v1.0.10 upgrade message. This prevents an old workflow from starting and failing halfway through execution.
 

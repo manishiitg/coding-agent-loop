@@ -400,6 +400,67 @@
       },
       "type": "object"
     },
+    "CodingAgentBackgroundTaskEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "native_sequence": {
+          "type": "integer"
+        },
+        "native_session_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "ContextCancelledEvent": {
       "additionalProperties": false,
       "properties": {
@@ -1243,6 +1304,79 @@
       },
       "type": "object"
     },
+    "MuseQuestionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/QuestionAnswer"
+          },
+          "type": "array"
+        },
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "native_sequence": {
+          "type": "integer"
+        },
+        "native_session_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "prompt_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/Question"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "OrchestratorAgentEndEvent": {
       "additionalProperties": false,
       "properties": {
@@ -1779,6 +1913,51 @@
           "type": "string"
         },
         "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Question": {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "QuestionAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "selected_label": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
           "type": "string"
         }
       },
@@ -2829,6 +3008,12 @@
     },
     "background_agent_terminated": {
       "$ref": "#/$defs/BackgroundAgentTerminatedEvent"
+    },
+    "coding_agent_background_task": {
+      "$ref": "#/$defs/CodingAgentBackgroundTaskEvent"
+    },
+    "coding_agent_question": {
+      "$ref": "#/$defs/MuseQuestionEvent"
     },
     "context_cancelled": {
       "$ref": "#/$defs/ContextCancelledEvent"

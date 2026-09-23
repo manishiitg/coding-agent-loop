@@ -341,6 +341,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'mcp_server_selection')) {
     return null
   }
+  // Durable answer/expiry marker for a blocking prompt; consumed by the
+  // pending-prompt logic, never a card of its own.
+  if (event.type === 'human_feedback_resolved') {
+    return null
+  }
 
   // Conversation Events
   if (isEventType(event, 'conversation_start')) {
@@ -404,6 +409,21 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
 
   // System Events
+  if (event.type === 'coding_agent_background_task') {
+    const envelope = event.data as { data?: Record<string, unknown> } | undefined
+    const data = (envelope?.data || event.data || {}) as Record<string, unknown>
+    const kind = typeof data.kind === 'string' ? data.kind : 'update'
+    const message = typeof data.message === 'string' ? data.message : ''
+    const taskID = typeof data.task_id === 'string' ? data.task_id.slice(0, 8) : ''
+    return (
+      <CompactWrapper compact={compact}>
+        <div className={`rounded-md border border-cyan-200 bg-cyan-50/70 text-cyan-800 dark:border-cyan-900 dark:bg-cyan-950/20 dark:text-cyan-300 ${compact ? 'p-2 text-xs' : 'p-3 text-sm'}`}>
+          <span className="font-medium">Background task {taskID} · {kind === 'task_backgrounded' ? 'started' : kind}</span>
+          {message && <p className="mt-1 whitespace-pre-wrap break-words opacity-80">{message}</p>}
+        </div>
+      </CompactWrapper>
+    )
+  }
   if (event.type === 'status_line') {
     const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
     const data = (agentEvent?.data || event.data || {}) as Record<string, unknown>

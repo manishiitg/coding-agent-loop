@@ -53,17 +53,47 @@ describe('hydrateTabEvents SQLite source', () => {
     expect(runtime.restoredEvents).toEqual(events)
   })
 
-  it('preserves an accepted optimistic input until SQLite echoes its message id', async () => {
-    const optimistic = {
-      id: 'user-message-local', type: 'user_message',
-      data: { data: { content: 'hello', metadata: { source: 'coding_agent_live_input', delivery_status: 'sent_to_cli', message_id: 'm-1' } } },
+  it('keeps a provisional bubble until SQLite has its row, then uses the durable row', async () => {
+    const provisional = {
+      id: 'user:sub-1', type: 'user_message',
+      data: { data: { content: 'hello', metadata: { client_message_id: 'sub-1', provisional: true, message_id: 'm-1' } } },
     }
-    mocks.getTabEvents.mockReturnValue([optimistic])
+    mocks.getTabEvents.mockReturnValue([provisional])
     mocks.getRecentChatEvents.mockResolvedValue({ events: [], session_status: 'running', last_processed_index: 0, has_more: false })
 
     await hydrateTabEvents('chat-1')
+    expect(mocks.setTabEvents).toHaveBeenLastCalledWith('chat-1', [provisional])
 
-    expect(mocks.setTabEvents).toHaveBeenCalledWith('chat-1', [optimistic])
+    const durable = {
+      id: 'user:sub-1', type: 'user_message', sequence: 9,
+      data: { data: { content: 'hello', metadata: { client_message_id: 'sub-1', message_id: 'm-1' } } },
+    }
+    mocks.getRecentChatEvents.mockResolvedValue({ events: [durable], session_status: 'running', last_processed_index: 9, has_more: false })
+
+    await hydrateTabEvents('chat-1')
+    expect(mocks.setTabEvents).toHaveBeenLastCalledWith('chat-1', [durable])
+  })
+
+
+  it('restores a never-used chat (404) as an empty conversation instead of failing', async () => {
+    mocks.getRecentChatEvents.mockRejectedValue(
+      Object.assign(new Error('Not Found'), { isAxiosError: true, response: { status: 404 } }),
+    )
+
+    const runtime = await hydrateTabEvents('fresh-chat')
+
+    expect(runtime.status).toBe('inactive')
+    expect(runtime.restoredEvents).toEqual([])
+    expect(mocks.setTabHasMoreOlderEvents).toHaveBeenCalledWith('fresh-chat', false)
+    expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith('fresh-chat', null)
+  })
+
+  it('still surfaces other restore failures', async () => {
+    mocks.getRecentChatEvents.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { isAxiosError: true, response: { status: 500 } }),
+    )
+
+    await expect(hydrateTabEvents('chat-1')).rejects.toThrow('Server Error')
   })
 })
 

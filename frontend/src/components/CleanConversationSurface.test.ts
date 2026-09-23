@@ -14,6 +14,34 @@ function event(id: string, type: string, data: Record<string, unknown>, extra: P
 }
 
 describe('buildCleanConversationItems', () => {
+  it('shows native Muse options and settles the same chat choice', () => {
+    const requested = event('q1', 'coding_agent_question', {
+      kind: 'user_input_prompt_requested', prompt_id: 'prompt-1',
+      questions: [{ id: 'scope', header: 'Scope', question: 'Choose a scope', options: [{ label: 'One', description: 'Small' }, { label: 'Two', description: 'Wide' }] }],
+    })
+    const pending = buildCleanConversationItems([requested])
+    expect(pending[0].museQuestion).toEqual(expect.objectContaining({ state: 'pending', promptId: 'prompt-1' }))
+    const settled = buildCleanConversationItems([requested, event('q2', 'coding_agent_question', {
+      kind: 'user_input_prompt_settled', prompt_id: 'prompt-1', outcome: 'answered', answers: [{ id: 'scope', selected_label: 'Two' }],
+    })])
+    expect(settled).toHaveLength(1)
+    expect(settled[0].museQuestion).toEqual(expect.objectContaining({ state: 'answered', answers: [{ id: 'scope', selectedLabel: 'Two' }] }))
+  })
+  it('keeps Muse background updates after the foreground answer in journal order', () => {
+    const items = buildCleanConversationItems([
+      event('task-start', 'coding_agent_background_task', { kind: 'task_backgrounded', task_id: 'task-a' }),
+      event('answer', 'unified_completion', { final_result: 'I started the job.' }),
+      event('task-status', 'coding_agent_background_task', { kind: 'status', task_id: 'task-a', message: 'still working' }),
+      event('task-done', 'coding_agent_background_task', { kind: 'completed', task_id: 'task-a' }),
+    ])
+    expect(items.map((item) => `${item.role}:${item.content}`)).toEqual([
+      'background:Background task task-a started',
+      'assistant:I started the job.',
+      'background:Background task task-a status: still working',
+      'background:Background task task-a completed',
+    ])
+  })
+
   it('classifies provider restart context as continuity instead of a user message', () => {
     const content = '[AGENTWORKS CONVERSATION CONTINUITY]\nRead the complete 423-message conversation archive.'
     expect(buildCleanConversationItems([

@@ -350,14 +350,14 @@ cd frontend
 
 Deploy your agentic infrastructure where it makes sense for your security posture.
 
-### **1. Azure Virtual Machine (Maximum Security Isolation)**
-The recommended topology for enterprise deployments. Leverages Azure VMs to utilize deep Linux kernel features (namespaces, `unshare`) for absolute filesystem isolation between agent runs.
+Every deployment goes through one entry point, `./deploy.sh <server>`:
 ```bash
-cd deploy/azure/terraform
-terraform init && terraform apply
-cd .. && ./deploy_vm.sh <VM_IP_ADDRESS> all
+./deploy.sh rts          # video.realtrainingsys.com (AWS EC2, rootless systemd)
+./deploy.sh confida      # Confida (rootless Linux product)
+./deploy.sh sparkquill   # SparkQuill (rootless Linux product)
+./deploy.sh dominion     # trader.tectonicmarkets.com (Hetzner)
 ```
-> **[Read the Azure VM Deployment Blueprint](deploy/azure/README.md)**
+> **[Read the deployment overview](deploy/README.md)**
 
 ---
 

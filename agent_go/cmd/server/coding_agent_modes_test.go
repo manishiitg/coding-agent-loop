@@ -307,11 +307,16 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 			defer store.Stop()
 
 			sessionID := "live-coding-session-" + string(tt.provider)
-			api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(), eventStore: store}
+			// Durable-ack providers record the row once the CLI confirms it.
+			api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(), eventStore: store,
+				internalDurableAckHandler: func(context.Context, llmproviders.Provider, string, string) (llmtypes.DurableAck, error) {
+					return llmtypes.DurableAck{Outcome: llmtypes.DurableAckConfirmed}, nil
+				},
+			}
 			sub := store.Subscribe(sessionID)
 			defer store.Unsubscribe(sessionID, sub)
 
-			api.recordLiveCodingAgentUserMessage(sessionID, "show exact sequence item", string(tt.provider), "test-message-id", "sent_to_cli")
+			api.recordLiveCodingAgentUserMessage(sessionID, "show exact sequence item", string(tt.provider), "test-message-id", "sent_to_cli", "")
 
 			var delivered internalevents.Event
 			select {

@@ -74,17 +74,47 @@ export function getBlockingHumanFeedbackDetails(
   }
 }
 
+// The server records a durable human_feedback_resolved marker when a blocking
+// request is answered (from any surface) or expires, so a refreshed chat can
+// tell answered requests apart from ones still waiting.
+function resolvedHumanFeedbackRequestId(event: PollingEvent): string {
+  if (event.type !== 'human_feedback_resolved') return ''
+  const agentEvent = event.data as Record<string, unknown> | undefined
+  const data = agentEvent?.data as { request_id?: unknown } | undefined
+  return typeof data?.request_id === 'string' ? data.request_id.trim() : ''
+}
+
+export function isHumanFeedbackRequestResolved(
+  tabEvents: Record<string, PollingEvent[]>,
+  requestId: string,
+): boolean {
+  if (!requestId) return false
+  for (const events of Object.values(tabEvents)) {
+    for (const event of events) {
+      if (resolvedHumanFeedbackRequestId(event) === requestId) return true
+    }
+  }
+  return false
+}
+
 export function collectPendingHumanFeedback(
   tabEvents: Record<string, PollingEvent[]>,
   isSubmitted: (requestId: string) => boolean,
   nowMs = Date.now(),
 ): BlockingHumanFeedbackDetails[] {
   const byRequestId = new Map<string, BlockingHumanFeedbackDetails>()
+  const resolved = new Set<string>()
+  for (const events of Object.values(tabEvents)) {
+    for (const event of events) {
+      const requestId = resolvedHumanFeedbackRequestId(event)
+      if (requestId) resolved.add(requestId)
+    }
+  }
 
   for (const [sessionId, events] of Object.entries(tabEvents)) {
     for (const event of events) {
       const details = getBlockingHumanFeedbackDetails(event)
-      if (!details || isSubmitted(details.requestId)) continue
+      if (!details || resolved.has(details.requestId) || isSubmitted(details.requestId)) continue
       if (nowMs > details.expiresAtMs + EXPIRY_GRACE_MS) continue
 
       const normalized = details.sessionId ? details : { ...details, sessionId }

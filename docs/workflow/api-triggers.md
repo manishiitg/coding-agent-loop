@@ -114,9 +114,11 @@ rotated into or overwritten by `iteration-0`; duplicate delivery IDs retain thei
 original run. The latest 10 terminal hook folders are retained, plus every active hook. Hook
 retention is independent of ordinary run rotation; delivery payloads remain
 retained separately. A webhook does not drain answered Pulse
-decisions or start post-run Pulse, backup, publish or reviewer turns. Required
-workflow contract upgrades still run before execution. Explicit steps in the
-selected workflow remain part of the run.
+decisions or start post-run Pulse, backup, publish or reviewer turns. A direct
+webhook never performs a workflow contract upgrade: it fails closed when the
+saved contract is incompatible and tells the owner to update the workflow
+manually in Builder before retrying the delivery. Explicit steps in the selected
+workflow remain part of the run.
 
 Poll `GET /api/hooks/workflow/{trigger_id}/runs/{run_id}` using
 `Authorization: Bearer <trigger-secret>`. This read authentication also applies to

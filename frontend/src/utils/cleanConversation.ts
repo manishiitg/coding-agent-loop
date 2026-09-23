@@ -13,12 +13,20 @@ import { isConversationContinuityNotice } from '../components/ConversationContin
 
 export type ConversationItem = {
   id: string
-  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification' | 'continuity'
+  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification' | 'continuity' | 'background' | 'question'
   content: string
   timestamp?: string
   assistantUpdate?: boolean
   usage?: ConversationUsage
   failure?: ProductChatFailure
+  museQuestion?: MuseQuestionPrompt
+}
+
+export type MuseQuestionPrompt = {
+  promptId: string
+  state: 'pending' | 'answered' | 'interrupted'
+  questions: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }> }>
+  answers: Array<{ id: string; selectedLabel: string }>
 }
 
 export type ConversationUsage = {
@@ -132,6 +140,7 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
 	let lastAssistantContent = ''
 	let completedAssistantAwaitingUsage: ConversationItem | undefined
 	const pendingFrontendUserEchoes = new Map<string, number>()
+	const pendingMuseQuestions = new Map<string, ConversationItem>()
 	const pushUnique = (item: ConversationItem) => {
 		const previous = items.at(-1)
 		if (previous?.role === item.role && previous.content === item.content) return
@@ -145,8 +154,11 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
     if (event.type === 'user_message') {
       const content = displaySafeUserMessage(firstText(payload.content, asRecord(event.data)?.content))
       if (!content) continue
+      const metadata = asRecord(payload.metadata)
+      const displayContent = typeof metadata?.display_content === 'string' ? metadata.display_content.trim() : ''
       if (isConversationContinuityNotice(content)) {
         pushUnique({ id: event.id, role: 'continuity', content, timestamp: event.timestamp })
+        if (displayContent) pushUnique({ id: `${event.id}:typed`, role: 'user', content: displayContent, timestamp: event.timestamp })
         continue
       }
       if (content.startsWith('[AUTO-NOTIFICATION]')) {
@@ -167,12 +179,63 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
 					continue
 				}
 			}
-			pushUnique({ id: event.id, role: 'user', content, timestamp: event.timestamp })
+			pushUnique({ id: event.id, role: 'user', content: displayContent || content, timestamp: event.timestamp })
       completedAssistantAwaitingUsage = undefined
       continue
     }
 
     if (isChildExecution(event, payload)) continue
+
+    if (event.type === 'coding_agent_question') {
+      const promptId = firstText(payload.prompt_id)
+      if (!promptId) continue
+      if (payload.kind === 'user_input_prompt_requested' && Array.isArray(payload.questions)) {
+        const questions = payload.questions.map((value) => {
+          const q = asRecord(value) || {}
+          return {
+            id: firstText(q.id), header: firstText(q.header), question: firstText(q.question),
+            options: Array.isArray(q.options) ? q.options.map((option) => {
+              const o = asRecord(option) || {}
+              return { label: firstText(o.label), description: firstText(o.description) }
+            }).filter((option) => option.label) : [],
+          }
+        }).filter((question) => question.id && question.question && question.options.length)
+        if (!questions.length) continue
+        const item: ConversationItem = {
+          id: event.id, role: 'question', content: questions.map((q) => q.question).join(' · '), timestamp: event.timestamp,
+          museQuestion: { promptId, state: 'pending', questions, answers: [] },
+        }
+        items.push(item)
+        pendingMuseQuestions.set(promptId, item)
+      } else if (payload.kind === 'user_input_prompt_settled') {
+        const item = pendingMuseQuestions.get(promptId)
+        if (item?.museQuestion) {
+          const answers = Array.isArray(payload.answers) ? payload.answers.map((value) => {
+            const answer = asRecord(value) || {}
+            return { id: firstText(answer.id), selectedLabel: firstText(answer.selected_label) }
+          }) : []
+          item.museQuestion = { ...item.museQuestion, state: payload.outcome === 'answered' ? 'answered' : 'interrupted', answers }
+          pendingMuseQuestions.delete(promptId)
+        }
+      }
+      continue
+    }
+
+    if (event.type === 'coding_agent_background_task') {
+      const kind = firstText(payload.kind)
+      if (['task_backgrounded', 'status', 'output', 'completed', 'failed', 'cancelled', 'rejected'].includes(kind)) {
+        const label = kind === 'task_backgrounded' ? 'started' : kind
+        const message = firstText(payload.message)
+        const task = firstText(payload.task_id).slice(0, 8)
+        pushUnique({
+          id: event.id,
+          role: 'background',
+          content: `Background task${task ? ` ${task}` : ''} ${label}${message ? `: ${message}` : ''}`,
+          timestamp: event.timestamp,
+        })
+      }
+      continue
+    }
 
     if (event.type === 'conversation_thinking') {
       const content = firstText(payload.thinking)

@@ -202,17 +202,40 @@ done
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
+# Drain before the restart: restarting while a turn is running hands the user
+# a 502 mid-message. Poll the agent's /health "drain" block until it is idle,
+# up to DRAIN_TIMEOUT_SECONDS (default 5 min); new turns can still start
+# during the wait, so this is best-effort, and an agent without the field
+# (older release, or not yet running) drains immediately.
+DRAIN_TIMEOUT_SECONDS="${DRAIN_TIMEOUT_SECONDS:-300}"
+deadline=$(($(date +%s) + DRAIN_TIMEOUT_SECONDS))
+while :; do
+  h="$(curl -s --max-time 5 "http://127.0.0.1:$AGENT_PORT/api/health" || true)"
+  idle="$(printf '%s' "$h" | python3 -c 'import json,sys
+try:
+  d=json.load(sys.stdin)
+  print("false" if d.get("drain",{}).get("idle") is False else "true")
+except Exception:
+  print("true")' 2>/dev/null || echo true)"
+  [[ "$idle" == "true" ]] && { echo "drain: agent idle, restarting"; break; }
+  if [[ $(date +%s) -ge $deadline ]]; then
+    echo "drain: still busy after ${DRAIN_TIMEOUT_SECONDS}s; restarting anyway" >&2
+    break
+  fi
+  echo "drain: waiting for in-flight turns"
+  sleep 5
+done
+
 # Activate the immutable release before any opted-in migration. The migration
 # marker and data live outside releases, while every subsequent service start
 # must resolve binaries and assets from this exact candidate.
 ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
-# Build the canonical chat log while the old agent is stopped. This command is
-# marker-backed and becomes a cheap no-op on later deployments.
+# Stop the old agent once for every migration below. Setting the flag first
+# means any failure from here on restarts the agent via cleanup_build instead
+# of leaving the product down.
+MIGRATION_STOPPED_AGENT=1
 systemctl --user stop "$PRODUCT-agent"
-"$BUILD_DIR/bin/$PRODUCT-agent" server migrate-chat-events \
-  --docs-root "$REMOTE_APP/data/docs" \
-  --state-root "$REMOTE_APP/state"
 
 # One-time migration of legacy Workflow Builder chats, if this product opted
 # in. Runs after `current` points at code that understands the new nested
@@ -228,8 +251,6 @@ if [[ "${RUN_WORKFLOW_BUILDER_MIGRATION:-false}" == "true" ]]; then
     mkdir -p "$BUILD_DIR/migrations"
     install -m 0755 "$REPO_ROOT/scripts/migrate_workflow_builder_chats.py" "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py"
     install -m 0644 "$PRODUCT_DIR/workflow-builder-chat-owners-v1.json" "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json"
-    MIGRATION_STOPPED_AGENT=1
-    systemctl --user stop "$PRODUCT-agent"
     python3 "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py" \
       --workspace-root "$REMOTE_APP/data/docs" \
       --owner-map "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json" \
@@ -256,8 +277,6 @@ if [[ "${RUN_PRODUCT_SECRETS_MIGRATION:-false}" == "true" ]]; then
   install -d -m 0700 "$migration_state"
   if [[ ! -f "$migration_marker" ]]; then
     echo "==> [$RELEASE_ID] Migrating personal secrets into the $PRODUCT box"
-    MIGRATION_STOPPED_AGENT=1
-    systemctl --user stop "$PRODUCT-agent"
     # shellcheck disable=SC1091
     ( set -a; . "$REMOTE_APP/.env"; set +a; exec "$BUILD_DIR/bin/$PRODUCT-agent" server migrate-product-secrets --product "$PRODUCT" --apply )
     marker_tmp="$(mktemp "$migration_state/.product-secrets-v1.XXXXXX")"
@@ -267,29 +286,15 @@ if [[ "${RUN_PRODUCT_SECRETS_MIGRATION:-false}" == "true" ]]; then
   fi
 fi
 
-# Drain before the restart: restarting while a turn is running hands the user
-# a 502 mid-message. Poll the agent's /health "drain" block until it is idle,
-# up to DRAIN_TIMEOUT_SECONDS (default 5 min); new turns can still start
-# during the wait, so this is best-effort, and an agent without the field
-# (older release, or not yet running) drains immediately.
-DRAIN_TIMEOUT_SECONDS="${DRAIN_TIMEOUT_SECONDS:-300}"
-deadline=$(($(date +%s) + DRAIN_TIMEOUT_SECONDS))
-while :; do
-  h="$(curl -s --max-time 5 "http://127.0.0.1:$AGENT_PORT/api/health" || true)"
-  idle="$(printf '%s' "$h" | python3 -c 'import json,sys
-try:
-  d=json.load(sys.stdin)
-  print("false" if d.get("drain",{}).get("idle") is False else "true")
-except Exception:
-  print("true")' 2>/dev/null || echo true)"
-  [[ "$idle" == "true" ]] && { echo "drain: agent idle, restarting"; break; }
-  if [[ $(date +%s) -ge $deadline ]]; then
-    echo "drain: still busy after ${DRAIN_TIMEOUT_SECONDS}s; restarting anyway" >&2
-    break
-  fi
-  echo "drain: waiting for in-flight turns"
-  sleep 5
-done
+# Build the canonical chat log last, so it reads the layout the migrations
+# above produced. Marker-backed; a no-op on later deployments. A failure is not
+# fatal: the new agent runs the same idempotent import at startup and retries
+# on every start until it completes.
+if ! "$BUILD_DIR/bin/$PRODUCT-agent" server migrate-chat-events \
+  --docs-root "$REMOTE_APP/data/docs" \
+  --state-root "$REMOTE_APP/state"; then
+  echo "WARNING: [$RELEASE_ID] legacy chat import failed; the agent retries it at startup" >&2
+fi
 
 systemctl --user daemon-reload
 systemctl --user restart "$PRODUCT-workspace"

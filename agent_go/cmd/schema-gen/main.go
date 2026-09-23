@@ -119,6 +119,8 @@ type EventDataUnion struct {
 	BackgroundAgentStarted    *orchestrator_events.BackgroundAgentStartedEvent    `json:"background_agent_started,omitempty"`
 	BackgroundAgentCompleted  *orchestrator_events.BackgroundAgentCompletedEvent  `json:"background_agent_completed,omitempty"`
 	BackgroundAgentTerminated *orchestrator_events.BackgroundAgentTerminatedEvent `json:"background_agent_terminated,omitempty"`
+	CodingAgentBackgroundTask *events.CodingAgentBackgroundTaskEvent              `json:"coding_agent_background_task,omitempty"`
+	CodingAgentQuestion       *events.MuseQuestionEvent                           `json:"coding_agent_question,omitempty"`
 	SyntheticTurnReady        *orchestrator_events.SyntheticTurnReadyEvent        `json:"synthetic_turn_ready,omitempty"`
 	AutoNotificationSteered   *orchestrator_events.AutoNotificationSteeredEvent   `json:"auto_notification_steered,omitempty"`
 
@@ -220,6 +222,8 @@ var EventRegistry = map[events.EventType]string{
 	orchestrator_events.BackgroundAgentStarted:    "background_agent_started",
 	orchestrator_events.BackgroundAgentCompleted:  "background_agent_completed",
 	orchestrator_events.BackgroundAgentTerminated: "background_agent_terminated",
+	events.CodingAgentBackgroundTask:              "coding_agent_background_task",
+	events.CodingAgentQuestion:                    "coding_agent_question",
 	orchestrator_events.SyntheticTurnReady:        "synthetic_turn_ready",
 	orchestrator_events.AutoNotificationSteered:   "auto_notification_steered",
 
@@ -459,6 +463,8 @@ type UnifiedEvent struct {
 	BackgroundAgentStartedEvent    orchestrator_events.BackgroundAgentStartedEvent    `json:"background_agent_started"`
 	BackgroundAgentCompletedEvent  orchestrator_events.BackgroundAgentCompletedEvent  `json:"background_agent_completed"`
 	BackgroundAgentTerminatedEvent orchestrator_events.BackgroundAgentTerminatedEvent `json:"background_agent_terminated"`
+	CodingAgentBackgroundTaskEvent events.CodingAgentBackgroundTaskEvent              `json:"coding_agent_background_task"`
+	CodingAgentQuestionEvent       events.MuseQuestionEvent                           `json:"coding_agent_question"`
 	SyntheticTurnReadyEvent        orchestrator_events.SyntheticTurnReadyEvent        `json:"synthetic_turn_ready"`
 	AutoNotificationSteeredEvent   orchestrator_events.AutoNotificationSteeredEvent   `json:"auto_notification_steered"`
 	PresentationUpdatedEvent       orchestrator_events.PresentationUpdatedEvent       `json:"presentation_updated"`

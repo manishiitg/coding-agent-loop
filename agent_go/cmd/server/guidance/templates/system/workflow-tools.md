@@ -177,7 +177,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
-- **Workshop** (`mode=workshop`, `workshop_mode=workshop`) — writable scheduled execution, including contract migrations and approved human-decision application before normal workflow execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. The server pins read-only workflow users to Run.
+- **Workshop** (`mode=workshop`, `workshop_mode=workshop`) — writable scheduled execution for approved human-decision application and normal workflow work. Scheduled sessions never authorize, apply, or stamp contract migrations; pending upgrades are started manually in the interactive Builder chat and do not block schedules. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. The server pins read-only workflow users to Run.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 

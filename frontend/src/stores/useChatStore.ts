@@ -37,6 +37,8 @@ import { createHydrationGate, HydrationBackstopError, type HydrationGateSnapshot
 import { createBufferedPersistStorage } from '../utils/bufferedPersistStorage'
 import { retainEventInSessionWorkingSet } from '../utils/sessionEventWorkingSet'
 import { autoNotificationDedupKey } from '../utils/internalChatEvents'
+import { durableStreamStartCursor } from '../utils/forwardCursor'
+import { reconcileDurableUserEchoes } from '../utils/clientMessageIdentity'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -311,7 +313,9 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Background owners - required by tree event continuity
     'background_agent_started',
     'background_agent_completed',
-    'background_agent_terminated'
+    'background_agent_terminated',
+    'coding_agent_background_task',
+    'coding_agent_question'
   ]
   return importantTypes.includes(event.type)
 }
@@ -1118,9 +1122,9 @@ export const useChatStore = create<ChatState>()(
       },
 
       // Internal: immediate store update (called by the batch flush)
-      _addTabEventsImmediate: (sessionId: string, events: PollingEvent[]) => {
+      _addTabEventsImmediate: (sessionId: string, incomingEvents: PollingEvent[]) => {
         set((state) => {
-          const currentEvents = state.tabEvents[sessionId] || []
+          let currentEvents = state.tabEvents[sessionId] || []
 
           // Use persistent event ID index (O(1) lookup instead of rebuilding Set each call)
           let idSet = tabEventIdSets.get(sessionId)
@@ -1129,6 +1133,15 @@ export const useChatStore = create<ChatState>()(
             idSet = new Set(currentEvents.map(e => e.id).filter(Boolean) as string[])
             tabEventIdSets.set(sessionId, idSet)
           }
+          // A durable user_message replaces the provisional bubble with the
+          // same client id instead of being dropped as a duplicate, so it lands
+          // at its own position (after a reply the CLI was still writing).
+          const reconciled = reconcileDurableUserEchoes(currentEvents, incomingEvents)
+          if (reconciled.replacedIds.length > 0) {
+            currentEvents = reconciled.current
+            for (const id of reconciled.replacedIds) idSet.delete(id)
+          }
+          const events = reconciled.incoming
           let autoNotifKeys = tabAutoNotificationKeys.get(sessionId)
           if (!autoNotifKeys) {
             autoNotifKeys = collectAutoNotificationKeys(currentEvents)
@@ -1966,7 +1979,9 @@ export const useChatStore = create<ChatState>()(
           state.sseConnections[sessionId].close()
         }
         const storedLastIndex = state.tabEventIndices[sessionId] ?? 0
-        const lastIndex = storedLastIndex < 0 ? 0 : storedLastIndex
+        const lastIndex = durableChat
+          ? durableStreamStartCursor(storedLastIndex, state.tabEvents[sessionId] || [])
+          : (storedLastIndex < 0 ? 0 : storedLastIndex)
         const conn = new SSEConnection(sessionId, lastIndex, {
           onMessage: message => { if (isChatIdentityCurrent(identity)) onMessage(message) },
           onStatusUpdate: message => { if (isChatIdentityCurrent(identity)) onStatus(message) },

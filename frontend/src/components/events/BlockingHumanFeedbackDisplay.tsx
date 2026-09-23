@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { playNotificationSound } from '../../utils/sound'
 import {
@@ -7,6 +7,8 @@ import {
   hasSubmittedFeedback,
   markFeedbackSubmitted,
 } from '../../utils/notificationDedup'
+import { isHumanFeedbackRequestResolved } from '../../utils/humanFeedbackAttention'
+import { useChatStore } from '../../stores/useChatStore'
 
 export interface BlockingHumanFeedbackEvent {
   question?: string
@@ -46,7 +48,17 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const cachedSubmission = event.data.request_id ? hasSubmittedFeedback(event.data.request_id) : false
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
-  const [hasSubmitted, setHasSubmitted] = useState(cachedSubmission)
+  const [submittedLocally, setHasSubmitted] = useState(cachedSubmission)
+  // The local cache only knows this browser's answers; the durable
+  // human_feedback_resolved marker covers other devices and refreshes.
+  // Subscribe to the events map itself so composer keystrokes (tab config
+  // writes) don't rescan every event; recompute only when events change.
+  const tabEvents = useChatStore(state => state.tabEvents)
+  const resolvedByServer = useMemo(
+    () => isHumanFeedbackRequestResolved(tabEvents, event.data.request_id || ''),
+    [tabEvents, event.data.request_id],
+  )
+  const hasSubmitted = submittedLocally || resolvedByServer
   const [submitError, setSubmitError] = useState('')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const electronAPI = (window as unknown as {

@@ -22,6 +22,8 @@ export type LiveInputConfirmationOutcome = 'confirmed' | 'accepted_but_unflushed
 
 export interface LiveInputConfirmationUpdate {
   messageId: string
+  // The submission's client id; when present it names the row directly.
+  clientMessageId?: string
   outcome: LiveInputConfirmationOutcome
   proofSource?: string
   latencyMs?: number
@@ -51,12 +53,14 @@ export function withDeliveryConfirmation(event: PollingEvent, update: LiveInputC
 // Rows without the id (other turns, other sessions' echoes) pass through
 // untouched, so replayed confirm events are safe to re-apply.
 export function applyLiveInputConfirmation(events: PollingEvent[], update: LiveInputConfirmationUpdate): PollingEvent[] {
-  if (!update.messageId) return events
+  if (!update.messageId && !update.clientMessageId) return events
   return events.map(event => {
     const outer = event.data as unknown as Record<string, unknown> | undefined
     const inner = (outer?.data ?? {}) as Record<string, unknown>
     const metadata = (inner.metadata ?? {}) as Record<string, unknown>
-    if (metadata.message_id !== update.messageId) return event
+    const named = (update.clientMessageId && metadata.client_message_id === update.clientMessageId)
+      || (update.messageId && metadata.message_id === update.messageId)
+    if (!named) return event
     return withDeliveryConfirmation(event, update)
   })
 }
@@ -132,8 +136,10 @@ export function readLiveInputConfirmation(event: PollingEvent): LiveInputConfirm
   const outcome = (inner.outcome ?? inner.confirmation ?? metadata.confirmation ?? metadata.outcome) as string | undefined
   if (!messageId || (outcome !== 'confirmed' && outcome !== 'accepted_but_unflushed' && outcome !== 'failed')) return null
   const latencyRaw = (inner.latency_ms ?? metadata.latency_ms) as number | undefined
+  const clientMessageId = metadata.client_message_id
   return {
     messageId,
+    ...(typeof clientMessageId === 'string' && clientMessageId ? { clientMessageId } : {}),
     outcome,
     proofSource: ((inner.proof_source ?? metadata.proof_source) as string | undefined) ?? undefined,
     latencyMs: typeof latencyRaw === 'number' ? latencyRaw : undefined,

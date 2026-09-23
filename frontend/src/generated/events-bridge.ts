@@ -135,6 +135,8 @@ export interface EventDataUnion {
   background_agent_started?: BackgroundAgentStartedEvent;
   background_agent_completed?: BackgroundAgentCompletedEvent;
   background_agent_terminated?: BackgroundAgentTerminatedEvent;
+  coding_agent_background_task?: CodingAgentBackgroundTaskEvent;
+  coding_agent_question?: MuseQuestionEvent;
   synthetic_turn_ready?: SyntheticTurnReadyEvent;
   auto_notification_steered?: AutoNotificationSteeredEvent;
   presentation_updated?: PresentationUpdatedEvent;
@@ -927,6 +929,66 @@ export interface BackgroundAgentTerminatedEvent {
   name?: string;
   status?: string;
   parent_execution_id?: string;
+}
+export interface CodingAgentBackgroundTaskEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  provider?: string;
+  native_session_id?: string;
+  run_id?: string;
+  task_id?: string;
+  native_sequence?: number;
+  kind?: string;
+  message?: string;
+}
+export interface MuseQuestionEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  provider?: string;
+  native_session_id?: string;
+  run_id?: string;
+  native_sequence?: number;
+  prompt_id?: string;
+  kind?: string;
+  questions?: Question[];
+  answers?: QuestionAnswer[];
+  outcome?: string;
+}
+export interface Question {
+  id?: string;
+  header?: string;
+  question?: string;
+  options?: QuestionOption[];
+}
+export interface QuestionOption {
+  label?: string;
+  description?: string;
+}
+export interface QuestionAnswer {
+  id?: string;
+  selected_label?: string;
 }
 export interface SyntheticTurnReadyEvent {
   timestamp?: string;

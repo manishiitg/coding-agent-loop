@@ -33,7 +33,7 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":  "healthy",
 		"time":    time.Now(),
 		"version": llmtypes.VERSION,
-		// Read by deploy-rootless.sh before it swaps releases: a restart while
+		// Read by the RTS deploy before it swaps releases: a restart while
 		// a turn is running returns 502 to the user mid-message (RTS,
 		// 2026-09-03, twice in one afternoon). active_sessions counts turns
 		// the tracker still considers running; in_flight_requests counts

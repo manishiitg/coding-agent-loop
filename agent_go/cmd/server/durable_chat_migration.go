@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,21 +63,40 @@ func mergeLegacyChatTrace(history, trace []internalevents.Event, sessionID strin
 	if len(trace) == 0 {
 		return history
 	}
+	// Carriers are decoded once per event: decoding inside the nested
+	// history x trace scan made large imports quadratic in JSON round trips.
+	historyCarriers := make([]legacyCarrier, len(history))
+	historyHasCarrier := make(map[legacyCarrier]bool, len(history))
+	for index, event := range history {
+		historyCarriers[index] = newLegacyCarrier(event)
+		if historyCarriers[index].valid() {
+			historyHasCarrier[historyCarriers[index]] = true
+		}
+	}
+	traceCarriers := make([]legacyCarrier, len(trace))
+	traceIndexesByCarrier := make(map[legacyCarrier][]int)
+	for index, event := range trace {
+		traceCarriers[index] = newLegacyCarrier(event)
+		if traceCarriers[index].valid() {
+			traceIndexesByCarrier[traceCarriers[index]] = append(traceIndexesByCarrier[traceCarriers[index]], index)
+		}
+	}
+	// Walk history backwards, anchoring each carrier to the latest matching
+	// trace entry strictly before the previous anchor.
 	anchors := make(map[int]int)
 	nextTrace := len(trace) - 1
-	for historyIndex := len(history) - 1; historyIndex >= 0; historyIndex-- {
-		role, text := legacyEventCarrier(history[historyIndex])
-		if role == "" || text == "" {
+	for historyIndex := len(history) - 1; historyIndex >= 0 && nextTrace >= 0; historyIndex-- {
+		carrier := historyCarriers[historyIndex]
+		if !carrier.valid() {
 			continue
 		}
-		for traceIndex := nextTrace; traceIndex >= 0; traceIndex-- {
-			traceRole, traceText := legacyEventCarrier(trace[traceIndex])
-			if role == traceRole && text == traceText {
-				anchors[traceIndex] = historyIndex
-				nextTrace = traceIndex - 1
-				break
-			}
+		indexes := traceIndexesByCarrier[carrier]
+		position := sort.SearchInts(indexes, nextTrace+1) - 1
+		if position < 0 {
+			continue
 		}
+		anchors[indexes[position]] = historyIndex
+		nextTrace = indexes[position] - 1
 	}
 	imported := make([]internalevents.Event, 0, len(history)+len(trace))
 	historyCursor := 0
@@ -108,12 +128,12 @@ func mergeLegacyChatTrace(history, trace []internalevents.Event, sessionID strin
 			}
 			continue // The matched user/final carrier is already in history.
 		}
-		role, text := legacyEventCarrier(event)
-		if role != "" && text != "" && legacyHistoryHasCarrier(history, role, text) {
+		carrier := traceCarriers[traceIndex]
+		if carrier.valid() && historyHasCarrier[carrier] {
 			continue // Other trace copies of the same carrier are not extra turns.
 		}
 		if event.ID == "" {
-			event.ID = legacyChatEventID(sessionID, traceIndex, "trace:"+event.Type, text)
+			event.ID = legacyChatEventID(sessionID, traceIndex, "trace:"+event.Type, carrier.text)
 		}
 		imported = append(imported, event)
 	}
@@ -121,14 +141,17 @@ func mergeLegacyChatTrace(history, trace []internalevents.Event, sessionID strin
 	return imported
 }
 
-func legacyHistoryHasCarrier(history []internalevents.Event, role, text string) bool {
-	for _, event := range history {
-		candidateRole, candidateText := legacyEventCarrier(event)
-		if candidateRole == role && candidateText == text {
-			return true
-		}
-	}
-	return false
+type legacyCarrier struct {
+	role, text string
+}
+
+func newLegacyCarrier(event internalevents.Event) legacyCarrier {
+	role, text := legacyEventCarrier(event)
+	return legacyCarrier{role: role, text: text}
+}
+
+func (carrier legacyCarrier) valid() bool {
+	return carrier.role != "" && carrier.text != ""
 }
 
 func legacyEventCarrier(event internalevents.Event) (string, string) {

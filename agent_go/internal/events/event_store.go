@@ -83,33 +83,36 @@ const (
 // STRUCTURAL_EVENTS are required to preserve hierarchy and important terminal
 // state even when the initial event window is capped.
 var STRUCTURAL_EVENTS = map[string]bool{
-	"agent_end":                   true,
-	"agent_error":                 true,
-	"background_agent_completed":  true,
-	"background_agent_started":    true,
-	"background_agent_terminated": true,
-	"batch_execution_canceled":    true,
-	"blocking_human_feedback":     true,
-	"context_cancelled":           true, //nolint:misspell // Event schema uses the British spelling.
-	"conversation_end":            true,
-	"conversation_error":          true,
-	"conversation_resumed":        true,
-	"delegation_end":              true,
-	"delegation_start":            true,
-	"learn_code_script_execution": true,
-	"orchestrator_agent_end":      true,
-	"orchestrator_agent_error":    true,
-	"orchestrator_agent_start":    true,
-	"orchestrator_end":            true,
-	"plan_approval":               true,
-	"pre_validation_completed":    true,
-	"request_human_feedback":      true,
-	"routing_evaluated":           true,
-	"todo_task_route_selected":    true,
-	"todo_task_step_completed":    true,
-	"unified_completion":          true,
-	"user_message":                true,
-	"workflow_error":              true,
+	"agent_end":                    true,
+	"agent_error":                  true,
+	"background_agent_completed":   true,
+	"background_agent_started":     true,
+	"background_agent_terminated":  true,
+	"batch_execution_canceled":     true,
+	"blocking_human_feedback":      true,
+	"context_cancelled":            true, //nolint:misspell // Event schema uses the British spelling.
+	"coding_agent_background_task": true,
+	"coding_agent_question":        true,
+	"conversation_end":             true,
+	"conversation_error":           true,
+	"conversation_resumed":         true,
+	"delegation_end":               true,
+	"delegation_start":             true,
+	"human_feedback_resolved":      true,
+	"learn_code_script_execution":  true,
+	"orchestrator_agent_end":       true,
+	"orchestrator_agent_error":     true,
+	"orchestrator_agent_start":     true,
+	"orchestrator_end":             true,
+	"plan_approval":                true,
+	"pre_validation_completed":     true,
+	"request_human_feedback":       true,
+	"routing_evaluated":            true,
+	"todo_task_route_selected":     true,
+	"todo_task_step_completed":     true,
+	"unified_completion":           true,
+	"user_message":                 true,
+	"workflow_error":               true,
 }
 
 // LEGACY_REMOVED_EVENT_TYPES tombstones wire names deleted in event-deletion
@@ -656,15 +659,29 @@ type EventStore struct {
 	sessionStartIndices map[string]int    // sessionID -> startIndex (offset for events in memory)
 	sessionOwners       map[string]string // sessionID -> userID
 	persistenceClasses  map[string]SessionPersistenceClass
-	mu                  sync.RWMutex
-	maxEvents           int // Maximum events per session
-	cleanupTicker       *time.Ticker
-	stopCh              chan struct{}
-	activityCallback    ActivityCallback // Optional callback to update session activity
-	eventAddedCallback  EventAddedCallback
-	durableJournal      DurableEventJournal
-	hydratedSessions    map[string]bool
-	hydrateMu           sync.Mutex
+	// expectedClientMessages: sessionID -> client identity for the next
+	// main-agent user_message (see ExpectClientUserMessage). Guarded by mu.
+	expectedClientMessages map[string]expectedClientMessage
+	mu                     sync.RWMutex
+	maxEvents              int // Maximum events per session
+	cleanupTicker          *time.Ticker
+	stopCh                 chan struct{}
+	activityCallback       ActivityCallback // Optional callback to update session activity
+	eventAddedCallback     EventAddedCallback
+	durableJournal         DurableEventJournal
+	hydratedSessions       map[string]bool
+	hydrateMu              sync.Mutex
+	// journalProbed caches "journal has no history for this session" so an
+	// unclassified live-only session pays for the probe once, not per event.
+	journalProbed map[string]bool
+
+	// appendLocks serialize AddEvent per session so the durable SQLite write
+	// can run outside mu: one session's fsync must not stall every other
+	// session's AddEvent and GetEvents.
+	// Entries are reference-counted and removed once no caller holds or waits
+	// on them, so the map does not grow with every session ever seen.
+	appendLocks   map[string]*sessionAppendLockEntry
+	appendLocksMu sync.Mutex
 
 	// SSE subscriber registry: sessionID -> list of subscribers
 	subscribers   map[string][]*Subscriber
@@ -690,6 +707,8 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 		stopCh:              make(chan struct{}),
 		activityCallback:    activityCallback,
 		hydratedSessions:    make(map[string]bool),
+		journalProbed:       make(map[string]bool),
+		appendLocks:         make(map[string]*sessionAppendLockEntry),
 		subscribers:         make(map[string][]*Subscriber),
 	}
 
@@ -711,6 +730,7 @@ func (es *EventStore) hydrateSession(sessionID string) {
 	if es == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	es.adoptJournaledSession(sessionID)
 	if !es.sessionUsesDurableChatJournal(sessionID) {
 		return
 	}
@@ -831,6 +851,79 @@ func (es *EventStore) Unsubscribe(sessionID string, sub *Subscriber) {
 	}
 }
 
+type sessionAppendLockEntry struct {
+	mu   sync.Mutex
+	refs int // holders plus waiters, guarded by EventStore.appendLocksMu
+}
+
+// lockSessionAppend acquires the session's append lock and returns its release.
+// A caller registers on the entry before blocking, and the entry is deleted
+// only when no holder or waiter remains, so two appends for one session can
+// never run under different mutexes.
+func (es *EventStore) lockSessionAppend(sessionID string) func() {
+	es.appendLocksMu.Lock()
+	entry := es.appendLocks[sessionID]
+	if entry == nil {
+		entry = &sessionAppendLockEntry{}
+		es.appendLocks[sessionID] = entry
+	}
+	entry.refs++
+	es.appendLocksMu.Unlock()
+
+	entry.mu.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			entry.mu.Unlock()
+			es.appendLocksMu.Lock()
+			entry.refs--
+			if entry.refs == 0 && es.appendLocks[sessionID] == entry {
+				delete(es.appendLocks, sessionID)
+			}
+			es.appendLocksMu.Unlock()
+		})
+	}
+}
+
+// adoptJournaledSession classifies an unclassified session as an interactive
+// chat when the durable journal already holds its history. After a restart or
+// buffer eviction the first event may come from a pane observer or background
+// notification rather than the query handler; without this the chat would stay
+// live-only for the life of the process and its restore would be refused.
+func (es *EventStore) adoptJournaledSession(sessionID string) {
+	if es == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	es.mu.RLock()
+	_, classified := es.persistenceClasses[sessionID]
+	probed := es.journalProbed[sessionID]
+	probe, ok := es.durableJournal.(DurableEventJournalSessionProbe)
+	es.mu.RUnlock()
+	if classified || probed || !ok {
+		return
+	}
+	known, lastSequence, err := probe.KnownSession(sessionID)
+	if err != nil {
+		log.Printf("[EventStore] durable session probe failed session=%s: %v", sessionID, err)
+		return
+	}
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.journalProbed[sessionID] = true
+	if !known {
+		return
+	}
+	if _, classified := es.persistenceClasses[sessionID]; classified {
+		return
+	}
+	es.persistenceClasses[sessionID] = SessionPersistenceInteractiveChat
+	// Eviction keeps a hydration tombstone, so seed the live sequence from the
+	// journal: new live-only events must not number below the durable tip.
+	if lastSequence > es.nextSequence[sessionID] {
+		es.nextSequence[sessionID] = lastSequence
+	}
+}
+
 // AddEvent adds an event for a specific session. Legacy callers that cannot
 // propagate an observer error retain this compatibility entry point; durable
 // failures are logged and the event is not published.
@@ -843,6 +936,11 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 // append can stop or retry upstream delivery.
 func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	es.hydrateSession(sessionID)
+	// The per-session lock spans sequence assignment, the durable append and the
+	// in-memory insert, so a session's events stay ordered while mu is released
+	// around SQLite I/O. It is released before callbacks and SSE fan-out, as mu
+	// was before, so a callback that adds another event cannot deadlock.
+	unlockSession := es.lockSessionAppend(sessionID)
 	es.mu.Lock()
 	if event.Data != nil {
 		if cloned := events.CloneAgentEvent(event.Data); cloned != nil {
@@ -859,6 +957,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 		es.sessionStartIndices[sessionID] = 0
 	}
 	event.ensureExecutionOwnership(sessionID, es.events[sessionID])
+	es.stampExpectedClientUserMessage(sessionID, &event)
 	if event.TerminalOwnerID == "" {
 		event.TerminalOwnerID = ResolveTerminalOwnerID(sessionID, event, nil)
 	}
@@ -872,23 +971,30 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 		es.nextSequence[sessionID] = event.Sequence
 	}
 	projected, durable := projectDurableChatEvent(event)
-	if es.durableJournal != nil && es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat && durable {
+	journal := es.durableJournal
+	if journal != nil && es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat && durable {
+		es.mu.Unlock()
 		started := time.Now()
-		persisted, inserted, err := es.durableJournal.Append(sessionID, projected)
+		persisted, inserted, err := journal.Append(sessionID, projected)
 		elapsed := time.Since(started)
 		if elapsed >= durableAppendSlowThreshold {
 			log.Printf("[EventStore] slow durable append session=%s type=%s id=%s duration=%s", sessionID, event.Type, event.ID, elapsed.Round(time.Millisecond))
 		}
 		if err != nil {
-			es.mu.Unlock()
+			unlockSession()
 			log.Printf("[EventStore] durable append failed; event not published session=%s type=%s id=%s: %v", sessionID, event.Type, event.ID, err)
 			return err
 		}
 		if !inserted {
-			es.mu.Unlock()
+			unlockSession()
 			return nil
 		}
 		event = persisted
+		es.mu.Lock()
+		if _, exists := es.events[sessionID]; !exists {
+			es.events[sessionID] = make([]Event, 0)
+			es.sessionStartIndices[sessionID] = 0
+		}
 	}
 	if event.Sequence > es.nextSequence[sessionID] {
 		es.nextSequence[sessionID] = event.Sequence
@@ -924,6 +1030,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	activityCallback := es.activityCallback
 	eventAddedCallback := es.eventAddedCallback
 	es.mu.Unlock()
+	unlockSession()
 
 	// Update session activity (call outside lock to avoid potential deadlock)
 	if activityCallback != nil && sessionID != "" {
@@ -1431,6 +1538,7 @@ func (es *EventStore) RemoveSession(sessionID string) {
 	delete(es.sessionStartIndices, sessionID)
 	delete(es.sessionOwners, sessionID)
 	delete(es.persistenceClasses, sessionID)
+	delete(es.journalProbed, sessionID)
 	// Explicit removal is an in-process tombstone. A later read or new event
 	// must not resurrect the old durable tail; a new process may restore it.
 	es.hydratedSessions[sessionID] = true

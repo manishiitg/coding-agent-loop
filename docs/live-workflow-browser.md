@@ -134,9 +134,9 @@ workflow Browser tab. Keep shared-CDP mode disabled on these servers.
 
 | Deployment | Deployment entry point | Rollout order |
 | --- | --- | --- |
-| RTS / Video Studio | `deploy/aws-ec2/deploy-rootless.sh` | First: stage and verify the live-browser integration here. |
-| Dominion | `deploy/dedicated-vm/deploy-dominion.sh` | Follow after RTS validation. |
-| Confida | `deploy/rootless-linux/deploy.sh confida` | Follow after RTS validation and restoration of server access. |
+| RTS / Video Studio | `./deploy.sh rts` | First: stage and verify the live-browser integration here. |
+| Dominion | `./deploy.sh dominion --activate` | Follow after RTS validation. |
+| Confida | `./deploy.sh confida` | Follow after RTS validation and restoration of server access. |
 
 Each rollout must include the frontend, agent API, and workspace service, and
 verify a real managed browser session while shared CDP remains disabled. Keep

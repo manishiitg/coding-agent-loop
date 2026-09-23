@@ -2,7 +2,7 @@
 
 This is the deployment contract for the isolated Dominion product at
 `trader.tectonicmarkets.com`. It deliberately does **not** reuse the legacy
-shared-host deployment described in `README.md`.
+shared-host deployment (retired; its scripts were removed on 2026-09-23).
 
 Before standing up (or re-verifying) this deployment, run through
 [`../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md`](../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md)
@@ -570,7 +570,7 @@ undocumented elsewhere only.
       now builds all 5 binaries + frontend natively on the box, stages a
       release, and (with `--activate`) flips `current` and restarts services
       with a health check + automatic rollback — mirroring
-      `deploy-rootless.sh` as originally proposed here. Also wired into the
+      the RTS deploy (now `./deploy.sh rts`) as originally proposed here. Also wired into the
       shared top-level `./deploy.sh dominion [--activate]` entry point, which
       SSHes in and invokes the on-box copy at its fixed path
       (`/srv/dominion/deploy-dominion.sh`).

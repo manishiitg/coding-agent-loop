@@ -25,16 +25,61 @@ export async function fetchSessionEvents(cfg: SessionClientConfig, sessionId: st
   return (await res.json()) as GetEventsResponse
 }
 
-/** GET the newest bounded page from the durable chat journal. */
-export async function fetchRecentSessionEvents(cfg: SessionClientConfig, sessionId: string, limit = 300): Promise<GetEventsResponse> {
+export class SessionEventsHTTPError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`session events HTTP ${status}`)
+    this.status = status
+  }
+}
+
+/** GET the newest bounded page (or the page before `beforeSequence`) from the durable chat journal. */
+export async function fetchRecentSessionEvents(cfg: SessionClientConfig, sessionId: string, limit = 300, beforeSequence?: number): Promise<GetEventsResponse> {
   const token = await cfg.token()
   const params = new URLSearchParams({ limit: String(limit), working_set: cfg.workingSet ?? 'session' })
   if (cfg.durableChat) params.set('durable_chat', '1')
+  if (beforeSequence && beforeSequence > 0) params.set('before_sequence', String(beforeSequence))
   const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(sessionId)}/events?${params}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
-  if (!res.ok) throw new Error(`session events HTTP ${res.status}`)
+  if (!res.ok) throw new SessionEventsHTTPError(res.status)
   return (await res.json()) as GetEventsResponse
+}
+
+/**
+ * Pages the durable chat journal backwards until the oldest row, returning
+ * events oldest-first. `maxPages` bounds a pathological history; `truncated`
+ * reports when it cut the read short.
+ */
+export async function fetchCompleteSessionEvents(
+  cfg: SessionClientConfig,
+  sessionId: string,
+  opts: { pageSize?: number; maxPages?: number } = {},
+): Promise<{ events: GetEventsResponse['events']; truncated: boolean }> {
+  const pageSize = opts.pageSize ?? 500
+  const maxPages = opts.maxPages ?? 20
+  const pages: GetEventsResponse['events'][] = []
+  let before: number | undefined
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await fetchRecentSessionEvents(cfg, sessionId, pageSize, before)
+    pages.unshift(batch.events ?? [])
+    const oldest = batch.oldest_sequence
+    if (!batch.has_more || !oldest || oldest <= 1 || (before !== undefined && oldest >= before)) {
+      return { events: dedupeEventsById(pages.flat()), truncated: false }
+    }
+    before = oldest
+  }
+  return { events: dedupeEventsById(pages.flat()), truncated: true }
+}
+
+function dedupeEventsById(events: GetEventsResponse['events']): GetEventsResponse['events'] {
+  const seen = new Set<string>()
+  return events.filter(event => {
+    if (!event.id) return true
+    if (seen.has(event.id)) return false
+    seen.add(event.id)
+    return true
+  })
 }
 
 export interface FollowHandlers {

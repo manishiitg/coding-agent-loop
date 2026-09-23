@@ -87,6 +87,8 @@ const (
 	RequestHumanFeedback  events.EventType = "request_human_feedback"
 	BlockingHumanFeedback events.EventType = "blocking_human_feedback"
 	PlanApproval          events.EventType = "plan_approval"
+	// Durable answer/expiry marker for a blocking_human_feedback request.
+	HumanFeedbackResolved events.EventType = "human_feedback_resolved"
 
 	// Step token usage event
 	StepTokenUsage events.EventType = "step_token_usage"
@@ -118,7 +120,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		VariablesExtracted,
 		StepTokenUsage,
 		BatchExecutionCanceled,
-		RequestHumanFeedback, BlockingHumanFeedback, PlanApproval,
+		RequestHumanFeedback, BlockingHumanFeedback, PlanApproval, HumanFeedbackResolved,
 		RoutingEvaluated, PreValidationCompleted,
 		OrchestratorRouteSelected, OrchestratorStepCompleted:
 		return "orchestrator"

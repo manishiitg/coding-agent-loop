@@ -1429,6 +1429,13 @@ export const agentApi = {
     return response.data
   },
 
+  submitMuseQuestion: async (sessionId: string, promptId: string, answers: Array<{ id: string; selectedLabel: string }>): Promise<void> => {
+    await api.post(`/api/sessions/${sessionId}/muse-question/answer`, {
+      prompt_id: promptId,
+      answers: answers.map((answer) => ({ id: answer.id, selected_label: answer.selectedLabel })),
+    }, { headers: { 'X-Session-ID': sessionId } })
+  },
+
 
   // Human Feedback Management
   // Submit human feedback response

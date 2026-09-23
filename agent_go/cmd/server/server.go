@@ -850,7 +850,8 @@ type QueryRequest struct {
 	// snapshot that may not have flipped to busy yet.
 	DisableLiveInputDelivery bool `json:"disable_live_input_delivery,omitempty"`
 	// KeepNativeSessionAlive keeps one native coding-CLI process alive while a
-	// scheduler sends its known consecutive turns (upgrade → run → Pulse).
+	// scheduler sends its known consecutive turns (run → Pulse). Contract
+	// upgrades are manual Builder work and never belong to this sequence.
 	KeepNativeSessionAlive bool `json:"keep_native_session_alive,omitempty"`
 	// PulseLifecycleTurn marks a scheduler-sent Pulse turn (Gate, review
 	// dispatch, Finalize). The main conversation keeps the Builder model on
@@ -1840,10 +1841,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
+	carryOverLegacyStateRoot()
 	eventStateRoot, err := workflowCLIStateRoot()
 	if err != nil {
 		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
 	}
+	migrateDurableChatsAtStartup(eventStateRoot)
 	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events-v2.sqlite"))
 	if err != nil {
 		log.Fatalf("Failed to initialize durable structured-event journal: %v", err)
@@ -2504,6 +2507,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
 
 	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/sessions/{session_id}/muse-question/answer", api.handleMuseQuestionAnswer).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/chat/submissions/{submission_id}", api.handleChatSubmissionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
@@ -3315,7 +3319,7 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery, X-Client-Submitted-At")
 
 		if r.Method == "OPTIONS" {
 			if origin != "" && !originAllowed {
@@ -3809,6 +3813,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Claimed queue workers and non-human producers skip retained delivery.
 	if preferRetainedDelivery && api.queueOccupiedConversationTurn(w, r, currentUserID, sessionID, req) {
 		return
+	}
+
+	// This request starts a new turn: its user_message comes from the agent
+	// library, so tell the event store which client id that echo carries.
+	if clientMessageID := clientMessageIDFromContext(r.Context()); clientMessageID != "" && api.eventStore != nil {
+		api.eventStore.ExpectClientUserMessage(sessionID, clientMessageID, req.Query)
 	}
 
 	// Only genuinely new turns use the backend lane. Taking this before the
@@ -7194,7 +7204,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						restoredConversationPathForFallback,
 						restoredConversationWorkspace,
-						len(historyForAgent),
 					)
 				} else {
 					chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
@@ -7234,10 +7243,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						codingFallbackConversationPath,
 						codingFallbackWorkspace,
-						len(historyForAgent),
 					)
 					historyToReplay = nil
-					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
+					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for conversation archive %s (in-memory history: %d messages)", codingFallbackConversationPath, len(historyForAgent))
 				} else {
 					// A missing archive is an exceptional durability failure. Preserve
 					// enough immediate context to answer rather than starting blind.
@@ -7256,7 +7264,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if modeChangedThisTurn && isCodingAgentProvider(finalProvider, finalModelID) && modeChangeConversationPath != "" {
-			chatQuery = prependCodingAgentContinuityNotice(chatQuery, modeChangeConversationPath, workflowPhaseFolder, len(preModeChangeSnapshot))
+			chatQuery = prependCodingAgentContinuityNotice(chatQuery, modeChangeConversationPath, workflowPhaseFolder)
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background
@@ -8770,15 +8778,15 @@ func (api *StreamingAPI) deliverRetainedMainTerminalInput(ctx context.Context, s
 	return provider, true, llmproviders.SendCodingAgentRetainedInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
 }
 
-func (api *StreamingAPI) recordRetainedTerminalLiveInput(sessionID, message, provider string, executionIDs ...string) string {
-	return api.recordRetainedLiveInput(sessionID, message, provider, false, executionIDs...)
+func (api *StreamingAPI) recordRetainedTerminalLiveInput(sessionID, message, provider, clientMessageID string, executionIDs ...string) string {
+	return api.recordRetainedLiveInput(sessionID, message, provider, clientMessageID, false, executionIDs...)
 }
 
-func (api *StreamingAPI) recordMCPAgentSessionLiveInput(sessionID, message, provider string, executionIDs ...string) string {
-	return api.recordRetainedLiveInput(sessionID, message, provider, true, executionIDs...)
+func (api *StreamingAPI) recordMCPAgentSessionLiveInput(sessionID, message, provider, clientMessageID string, executionIDs ...string) string {
+	return api.recordRetainedLiveInput(sessionID, message, provider, clientMessageID, true, executionIDs...)
 }
 
-func (api *StreamingAPI) recordRetainedLiveInput(sessionID, message, provider string, sessionOwnsCompletion bool, executionIDs ...string) string {
+func (api *StreamingAPI) recordRetainedLiveInput(sessionID, message, provider, clientMessageID string, sessionOwnsCompletion bool, executionIDs ...string) string {
 	messageID := newSteerMessageID()
 	executionID := "live-turn:" + messageID
 	if len(executionIDs) > 0 && strings.TrimSpace(executionIDs[0]) != "" {
@@ -8792,7 +8800,7 @@ func (api *StreamingAPI) recordRetainedLiveInput(sessionID, message, provider st
 	}
 	api.lastQueryMu.RUnlock()
 	api.trackConversationTurnStart(executionID, sessionID, request)
-	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, "sent_to_cli")
+	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, "sent_to_cli", clientMessageID)
 	if sessionOwnsCompletion {
 		api.markMCPAgentSessionTurnRunning(sessionID, executionID)
 	} else {
@@ -8801,8 +8809,8 @@ func (api *StreamingAPI) recordRetainedLiveInput(sessionID, message, provider st
 	return messageID
 }
 
-func writeRetainedTerminalLiveInputResponse(w http.ResponseWriter, sessionID, message, provider string, api *StreamingAPI) {
-	messageID := api.recordRetainedTerminalLiveInput(sessionID, message, provider)
+func writeRetainedTerminalLiveInputResponse(w http.ResponseWriter, sessionID, message, provider, clientMessageID string, api *StreamingAPI) {
+	messageID := api.recordRetainedTerminalLiveInput(sessionID, message, provider, clientMessageID)
 	writeRetainedTerminalLiveInputResponseWithMessageID(w, sessionID, provider, messageID)
 }
 
@@ -9049,6 +9057,29 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
 	log.Printf("[HUMAN_FEEDBACK] Emitted blocking_human_feedback event (request_id: %s, session: %s)", requestID, e.sessionID)
+}
+
+// EmitHumanFeedbackResolved records a durable answer/expiry marker for a
+// blocking request so restore does not show an answered prompt as pending.
+func (e *sessionEventEmitter) EmitHumanFeedbackResolved(requestID, outcome string) {
+	now := time.Now()
+	e.eventStore.AddEvent(e.sessionID, events.Event{
+		ID:        fmt.Sprintf("%s_human_feedback_resolved_%s", e.sessionID, requestID),
+		Type:      "human_feedback_resolved",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      unifiedevents.EventType("human_feedback_resolved"),
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "delegation",
+			Data: events.NewGenericEventData("human_feedback_resolved", map[string]interface{}{
+				"request_id": requestID,
+				"outcome":    outcome,
+				"session_id": e.sessionID,
+			}),
+		},
+	})
 }
 
 // EmitProductInteraction publishes the identical event a product.yaml tool
@@ -9613,7 +9644,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 				return true
 			} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 				provider := string(delivery.Provider)
-				messageID := api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
+				messageID := api.recordMCPAgentSessionLiveInput(sessionID, message, provider, clientMessageIDFromContext(r.Context()), queryID)
 				api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 				w.Header().Set("Content-Type", "application/json")
 				response := QueryResponse{
@@ -9650,7 +9681,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
 			}
-			messageID := api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
+			messageID := api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, clientMessageIDFromContext(r.Context()), queryID)
 			api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 			w.Header().Set("Content-Type", "application/json")
 			response := QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility, MessageID: messageID}
@@ -9725,7 +9756,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		api.setSessionBusy(sessionID, false)
 		api.markRetainedMainCodingTurnRunning(sessionID, queryID)
 	}
-	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus)
+	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus, clientMessageIDFromContext(r.Context()))
 	api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 	log.Printf("[QUERY→LIVE] Delivered /api/query message to retained CLI for session %s status=%s: %.80s", sessionID, deliveryStatus, message)
 
@@ -9868,7 +9899,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 				return
 			} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 				provider := string(delivery.Provider)
-				messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider)
+				messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider, clientMessageIDFromContext(r.Context()))
 				writeRetainedTerminalLiveInputResponseWithMessageID(w, sessionID, provider, messageID)
 				log.Printf("[LIVE INPUT] Delivered through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, req.Message)
 				api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
@@ -9890,7 +9921,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return
 			}
-			writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, api)
+			writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, clientMessageIDFromContext(r.Context()), api)
 			api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 			return
 		}
@@ -9976,7 +10007,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	if deliveryStatus == "" {
 		deliveryStatus = "queued_for_injection"
 	}
-	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus)
+	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus, clientMessageIDFromContext(r.Context()))
 	api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 	if !hasActiveForegroundTurn {
 		executionID := "live-turn:" + messageID
@@ -10299,7 +10330,7 @@ func (api *StreamingAPI) deliverControlKeyToLiveMainTerminal(ctx context.Context
 	return "", "", nil
 }
 
-func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus string) {
+func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus, clientMessageID string) {
 	message = strings.TrimSpace(message)
 	if sessionID == "" || message == "" || api == nil || api.eventStore == nil {
 		return
@@ -10312,26 +10343,37 @@ func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, pr
 		"message_id":      messageID,
 		"delivery_status": deliveryStatus,
 	}
+	eventID := messageID
+	if clientMessageID != "" {
+		eventData.Metadata["client_message_id"] = clientMessageID
+		eventID = clientUserMessageEventID(clientMessageID)
+	}
 	agentEvent := unifiedevents.NewAgentEvent(eventData)
 	agentEvent.SessionID = sessionID
 	agentEvent.Component = "coding_agent_live_input"
 
 	event := events.Event{
-		ID:        messageID,
+		ID:        eventID,
 		Type:      string(unifiedevents.UserMessage),
 		Timestamp: time.Now(),
 		Data:      agentEvent,
 		SessionID: sessionID,
 	}
-	api.eventStore.AddEvent(sessionID, event)
 	// Every accepted tmux live delivery funnels through here (running
 	// agent, durable mcpagent session, cold-retained compatibility, and
 	// background-agent steers), so the durability watch starts here too:
-	// one choke point no future path can miss. Providers without
-	// SupportsDurableAck are ignored inside the watch.
+	// one choke point no future path can miss. When the provider can confirm
+	// the CLI took the message, the row is recorded at that point so it sits
+	// after any answer the CLI was still writing when the message was sent.
 	if deliveryStatus == string(mcpagent.UserMessageDeliveryStatusSentToCLI) {
-		api.watchLiveInputDurable(sessionID, provider, messageID, message)
+		if liveInputHasDurableAck(provider) {
+			api.watchLiveInputDurableRecording(sessionID, provider, messageID, message, clientMessageID, &event)
+			return
+		}
+		api.eventStore.AddEvent(sessionID, event)
+		return
 	}
+	api.eventStore.AddEvent(sessionID, event)
 }
 
 // handleSubmitHumanFeedback handles human feedback submission

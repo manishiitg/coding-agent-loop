@@ -72,6 +72,13 @@ type SessionEventEmitter interface {
 	EmitProductInteraction(kind string, payload map[string]interface{})
 }
 
+// HumanFeedbackResolutionEmitter is optionally implemented by a
+// SessionEventEmitter. It records that a blocking request was answered or
+// expired, so a refreshed chat does not resurrect the prompt as pending.
+type HumanFeedbackResolutionEmitter interface {
+	EmitHumanFeedbackResolved(requestID, outcome string)
+}
+
 // GetChatsFolder returns the workspace-relative Chats folder for the current session.
 // Reads ChatsFolderKey from context first (per-user path set at session setup) and falls
 // back to the global ChatsFolderPath constant if no session-scoped value is present.

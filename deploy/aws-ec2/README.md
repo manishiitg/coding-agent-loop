@@ -6,7 +6,7 @@ always present; Finance, Dominion, and other product surfaces are not exposed,
 and only the `video-studio` backend product is loaded. The release script
 validates both allowlists before every deployment.
 
-`deploy-rootless.sh` already guarantees most of
+`./deploy.sh rts` already guarantees most of
 [`../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md`](../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md)
 automatically on every release — that doc exists because a sibling
 deployment without an equivalent script had to rediscover each item as a
@@ -30,8 +30,12 @@ From the repository root:
 ./deploy.sh rts
 ```
 
-The shared root command delegates to `deploy/aws-ec2/deploy-rootless.sh`, so
-the remote build, immediate activation, and health gates remain centralized.
+The RTS case in `deploy.sh` (`deploy_rts`) sends the deployment instructions
+and secrets; the server-side `server/bootstrap-build.sh` and
+`server/build-and-activate.sh` do the build, activation, and health gates.
+After the deploy it prints the CloudFront usage report
+(`report_rts_cloudfront_usage`; override the distribution with
+`CLOUDFRONT_DISTRIBUTION_ID`).
 Its defaults use the `RTS` AWS profile, `us-west-2`, and
 `~/.ssh/id_ed25519`; set `AWS_PROFILE_NAME`, `AWS_REGION`, or `SSH_KEY_PATH`
 only when overriding those defaults.
@@ -63,14 +67,8 @@ managed by an admin in the app ("Users & access" in the workflow toolbar)
 — see `docs/design/user_accounts_and_workflow_sharing.md` and
 `docs/core/multi_user_authentication.md`.
 
-The switch-over on a box that ran the shared password is one script, run
-once as `video-studio` BEFORE deploying the release that carries accounts:
-
-```bash
-bash migrate-to-user-accounts.sh <admin-username>
-```
-
-It sets `MULTI_USER_MODE`, `ADMIN_USERS`, a bootstrap `AUTH_USERS` (initial
+The one-time switch-over from the shared password (done on RTS in
+September 2026; the script has since been removed) set `MULTI_USER_MODE`, `ADMIN_USERS`, a bootstrap `AUTH_USERS` (initial
 password = the old `ACCESS_PASSWORD`; remove that line once the admin has
 logged in), `GATEWAY_DISABLE_PASSWORD_GATE`, and moves everything the shared
 identity owned (`_users/default`: projects, history, secrets) to the admin's
@@ -88,9 +86,6 @@ the first mic click offers a one-time ~690MB download (NVIDIA's Nemotron
 English streaming model plus a punctuation model) into
 `~/.agentworks/voice-models/`, with progress shown in the composer; pre-place
 the files there to skip it. No Docker or Go installation is required on the deployer's Mac.
-
-`deploy-aws-ec2.sh` is retained only as the original bootstrap installer; do
-not use it for normal releases.
 
 After the agent passes its health check, normal deployments remove older release
 copies. Only the current release, releases referenced by running processes, and
@@ -177,7 +172,7 @@ address:
 MCP_API_URL=http://127.0.0.1:8000
 ```
 
-This is a deployment setting, not a secret. `deploy-rootless.sh` preserves an
+This is a deployment setting, not a secret. The RTS deploy preserves an
 existing value or writes this default into
 `/var/lib/video-studio/video-studio/.env` before restarting the services.
 Do not set it to `http://host.docker.internal:8000`: that hostname is only

@@ -5,6 +5,7 @@ import { buildCleanConversationItems, buildProductionActivityTurns } from '../ut
 import type { ProductionActivityItem, ProductionActivityTurn } from '../utils/cleanConversation'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import { ConversationContinuityNotice } from './ConversationContinuityNotice'
+import { MuseQuestionCard } from './MuseQuestionCard'
 
 // The agent's foreground and background status travel in separate event
 // updates. During a hand-off both can briefly read false even though work is
@@ -19,6 +20,7 @@ export interface CleanConversationSurfaceProps {
   streamingText: string
   landingContent?: ReactNode
   onRetryLastMessage?: () => void | Promise<void>
+  onAnswerMuseQuestion?: (promptId: string, answers: Array<{ id: string; selectedLabel: string }>) => Promise<void>
 }
 
 function messageTime(timestamp?: string): string {
@@ -114,6 +116,7 @@ export function CleanConversationSurface({
   streamingText,
   landingContent,
   onRetryLastMessage,
+  onAnswerMuseQuestion,
 }: CleanConversationSurfaceProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [retryingFailureId, setRetryingFailureId] = useState<string | null>(null)
@@ -188,6 +191,13 @@ export function CleanConversationSurface({
           </details>
         ) : item.role === 'progress' ? (
           <ProgressUpdate key={item.id} content={item.content} isStreaming={isStreaming} />
+        ) : item.role === 'background' ? (
+          <div key={item.id} className="flex items-start gap-2 text-xs text-cyan-700 dark:text-cyan-300" data-testid="clean-background-task-update">
+            <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="whitespace-pre-wrap break-words">{item.content}</span>
+          </div>
+        ) : item.role === 'question' && item.museQuestion ? (
+          <MuseQuestionCard prompt={item.museQuestion} onAnswer={onAnswerMuseQuestion} />
         ) : item.role === 'notification' ? (
           // An automatic update the runtime delivered to the agent (a background
           // step finishing), not something the user typed or the agent said. It

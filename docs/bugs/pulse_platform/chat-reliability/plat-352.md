@@ -4,9 +4,9 @@
 
 | Field | Value |
 |---|---|
-| Status | `partial implementation; verification in progress` |
+| Status | `chat-only journal shipped (main 0c737fdae; RTS 5cef1d8 on 2026-09-23); message-ID contract + retention open` |
 | Priority | P2 architecture |
-| Owner | unassigned — design review first |
+| Owner | platform (chat reliability) |
 | Reported | 2026-09-22 |
 | Related | PLAT-324 (retain conversations across reloads), PLAT-351 (retained-turn settle), commit `df8254c1a` (cursor-only restore) |
 
@@ -379,10 +379,104 @@ new server.
   silently rewritten by this importer change. Repair of any such database
   needs an explicit, separately verified migration before deployment.
 
-Still open before PLAT-352 is complete: the versioned canonical event envelope
-and type names, a total-size/retention policy with referenced-artifact cleanup,
-and replacing content-based optimistic-message identity transfer with a stable
-client/server message ID contract. Do not describe the full design as shipped.
+### Review fixes (2026-09-23)
+
+A full review of the cutover found deploy, restore and performance defects.
+All of the following are on `main`:
+
+Read path (`9346aeab2`):
+- An empty forward poll returns the requested cursor clamped to the journal
+  tip instead of `0`. With `since=0` meaning "from the first row", the old
+  value made every quiet poll re-walk the whole history.
+- The client never moves a durable cursor backwards and only treats `has_more`
+  as "older rows exist" on backward reads.
+- Every conversation-deleting path (single delete even when the JSON is already
+  gone, bulk cleanup, agent-profile, project and workflow-folder deletes)
+  removes the session's journal rows.
+- Durable reads reuse the history list's access rule (`durableChatReadAllowed`)
+  for legacy `default` owners and workflow bot chats. On multi-user servers
+  `default` chats stay hidden, as the list already does.
+
+Journal (`9346aeab2`):
+- The SQLite append runs under a per-session lock instead of the global
+  event-store lock, so one chat's fsync no longer blocks every session.
+- A journal-known session is adopted as `interactive_chat` after a restart even
+  when a live event arrives before the first query or restore poll.
+- An already-classified interactive chat accepts later automated turns instead
+  of returning 409; execution to interactive promotion is still refused.
+- Answered or expired blocking feedback emits a durable
+  `human_feedback_resolved` marker (request id); the pending list and the inline
+  card honour it, so a refresh no longer resurrects an answered approval.
+
+Migration and deploy (`9346aeab2`):
+- The legacy import decodes each message once (identical output, ~0.01s on a
+  6k x 6k session), reads files one at a time, and skips unreadable or
+  malformed files instead of aborting.
+- The import also runs at server startup before the listener, so every launch
+  path (Dominion, dedicated VM, Azure, desktop, local) is covered.
+- When `AGENTWORKS_STATE_ROOT` is newly pinned, state under the old default
+  root (access tokens, native-resume recovery, CLI runtimes) is copied over
+  once without overwriting. Before this, every `aw_pat_` token died on deploy.
+- Deploy scripts restart the agent when a migration step fails, and rootless
+  runs the chat import after the Builder-chat move.
+
+Follow-ups found while testing locally and on RTS:
+- CORS allows `X-Client-Submitted-At` (`9346aeab2`). Local dev sends
+  cross-origin, and the rejected preflight turned every chat send into a bare
+  "Network Error".
+- The continuity notice no longer states a message count (`397c1ad77`). After a
+  restart the in-memory history holds only the current turn, so it claimed
+  "1 earlier message". The banner now reads "Previous conversation loaded".
+- Durable SSE never starts below the newest sequence the tab already holds
+  (`0c737fdae`). The submit flow reconnected with a reset cursor of 0, which
+  replayed the whole journal before every reply.
+- A never-used chat whose durable read returns 404 restores as an empty
+  conversation instead of an error that kept "Loading conversation..." up
+  until a give-up timer.
+- Composer keystrokes no longer re-render the whole transcript:
+  `loadOlderConversationPage` depended on the entire tab object (replaced on
+  every keystroke) and is a prop of the memoized transcript. The approval card's
+  resolution lookup now recomputes only when events change.
+
+RTS deploy verification (release `5cef1d8`, 2026-09-23): 61 interactive chats
+imported, 0 failed (72 schedule/bot sessions skipped by design); 9,832 files
+carried from the legacy state root, including the access-token store; all
+services active with no restarts. The deploy reported a failed prune only
+because the first boot took ~55s while the prune health check gave up early.
+
+Decisions:
+- The versioned canonical envelope and type renames (`schema_version`,
+  `tool_call_started`, ...) are **dropped**. The existing wire types already
+  work end to end through the allowlist projector; renaming them would churn
+  every consumer for no behavioural gain.
+- The historical batch-4 note that `workflow_error` has no emitter was wrong:
+  `server.go` emits it and it stays live.
+
+Still open:
+1. Stable client/server message IDs. Plan: reuse the existing
+   `Idempotency-Key` / submission id as `client_message_id`, stamp it on every
+   keyed `user_message` with event id `user:<id>` (the journal's unique key
+   makes retries idempotent) and on `live_input_confirmed`, reconcile optimistic
+   rows by id, then delete the content-based identity transfer. Fresh-turn
+   echoes come from mcpagent, so the bridge must carry the submission id.
+2. Journal retention/size policy with referenced-artifact cleanup, together
+   with storing >64 KiB messages as artifacts instead of the current silent
+   48 KiB truncation.
+
+Small follow-ups (done, 2026-09-23):
+- `orchestrator_agent_error` is visible again in the diagnostics rail; it is
+  the failure that explains why a child execution stopped.
+- SparkQuill history pages backwards through the whole journal
+  (`fetchCompleteSessionEvents`, 500 rows per page, 20-page cap) instead of
+  showing only the newest 300 events.
+- The workflow-orchestrator prompts (`RequestHumanFeedback`,
+  `RequestYesNoFeedback`, `RequestMultipleChoiceFeedback`) also emit
+  `human_feedback_resolved`. `request_human_feedback` and `plan_approval` have
+  no producer (`EmitPlanApproval` has no callers), so they need no marker and
+  are deletion candidates.
+- Per-session append locks are reference counted and pruned once idle.
+- `prune-releases.py` waits up to 180s for health; a failed prune on a healthy
+  release is a warning, an unhealthy agent still fails the deploy.
 
 ## Caveats
 

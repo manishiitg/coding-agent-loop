@@ -14,28 +14,31 @@ const maxDurableChatEventBytes = 64 * 1024
 // not make it part of conversation history until its bounded, user-visible
 // meaning is reviewed here.
 var durableChatEventTypes = map[string]bool{
-	"agent_end":                   true,
-	"agent_error":                 true,
-	"background_agent_completed":  true,
-	"background_agent_started":    true,
-	"background_agent_terminated": true,
-	"batch_execution_canceled":    true,
-	"blocking_human_feedback":     true,
-	"context_cancelled":           true, //nolint:misspell // Wire contract.
-	"conversation_end":            true,
-	"conversation_error":          true,
-	"conversation_resumed":        true,
-	"live_input_confirmed":        true,
-	"orchestrator_end":            true,
-	"plan_approval":               true,
-	"pre_validation_completed":    true,
-	"product_interaction":         true,
-	"request_human_feedback":      true,
-	"tool_call_end":               true,
-	"tool_call_error":             true,
-	"tool_call_start":             true,
-	"unified_completion":          true,
-	"user_message":                true,
+	"agent_end":                    true,
+	"agent_error":                  true,
+	"background_agent_completed":   true,
+	"background_agent_started":     true,
+	"background_agent_terminated":  true,
+	"batch_execution_canceled":     true,
+	"blocking_human_feedback":      true,
+	"context_cancelled":            true, //nolint:misspell // Wire contract.
+	"coding_agent_background_task": true,
+	"coding_agent_question":        true,
+	"conversation_end":             true,
+	"conversation_error":           true,
+	"conversation_resumed":         true,
+	"human_feedback_resolved":      true,
+	"live_input_confirmed":         true,
+	"orchestrator_end":             true,
+	"plan_approval":                true,
+	"pre_validation_completed":     true,
+	"product_interaction":          true,
+	"request_human_feedback":       true,
+	"tool_call_end":                true,
+	"tool_call_error":              true,
+	"tool_call_start":              true,
+	"unified_completion":           true,
+	"user_message":                 true,
 }
 
 var durableChildSummaryTypes = map[string]bool{
@@ -84,7 +87,7 @@ func compactDurableChatEvent(event Event) Event {
 	}
 	if metadata, ok := payload["metadata"].(map[string]interface{}); ok {
 		boundedMetadata := make(map[string]interface{})
-		for _, key := range []string{"kind", "message_id", "turn_id", "provider", "confirmation", "delivery_status"} {
+		for _, key := range []string{"kind", "message_id", "client_message_id", "display_content", "turn_id", "provider", "confirmation", "delivery_status"} {
 			if value, exists := metadata[key]; exists && isDurableScalar(value) {
 				boundedMetadata[key] = value
 			}
@@ -159,6 +162,7 @@ func (es *EventStore) ReadDurableChatPage(sessionID string, opts DurableEventPag
 	if es == nil || strings.TrimSpace(sessionID) == "" {
 		return DurableEventPage{Events: []Event{}}, nil
 	}
+	es.adoptJournaledSession(sessionID)
 	es.mu.RLock()
 	journal, ok := es.durableJournal.(DurableEventJournalPageReader)
 	class := es.persistenceClasses[sessionID]
@@ -179,7 +183,18 @@ func (es *EventStore) DeleteDurableChatSession(sessionID string) error {
 	if !ok || journal == nil {
 		return nil
 	}
-	return journal.DeleteSession(sessionID)
+	// Hold the session's append lock so an in-flight turn cannot write a row
+	// after the delete, then drop the in-memory class and buffer: a still
+	// running turn continues live-only instead of re-creating ownerless rows.
+	defer es.lockSessionAppend(sessionID)()
+	if err := journal.DeleteSession(sessionID); err != nil {
+		return err
+	}
+	es.RemoveSession(sessionID)
+	es.mu.Lock()
+	es.journalProbed[sessionID] = true
+	es.mu.Unlock()
+	return nil
 }
 
 // ImportDurableChatEvents seeds the canonical journal without publishing old

@@ -202,7 +202,7 @@ func (c *RuntimeCoordinator) StartGeneration(sessionID, reason string) (RuntimeS
 }
 
 // BusyCount reports how many sessions have a generation in flight (starting
-// or running). It is the drain signal deploy-rootless.sh waits on: the
+// or running). It is the drain signal the RTS deploy waits on: the
 // session tracker's "running" status and the in-flight HTTP request count
 // both read idle during a steered coding-agent turn (the request returns
 // at once and the model runs in the background), which let a deploy restart

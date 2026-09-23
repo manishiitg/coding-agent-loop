@@ -1083,6 +1083,13 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 
 	// Wait only for the bounded duration selected by the agent.
 	response, err := feedbackStore.WaitForResponse(uniqueID, waitTimeout)
+	if resolver, ok := ctx.Value(SessionEventEmitterKey).(HumanFeedbackResolutionEmitter); ok && resolver != nil {
+		outcome := "answered"
+		if err != nil {
+			outcome = "expired"
+		}
+		resolver.EmitHumanFeedbackResolved(uniqueID, outcome)
+	}
 	if err != nil {
 		return "", fmt.Errorf("human feedback request %s expired after %s: %w", uniqueID, waitTimeout, err)
 	}

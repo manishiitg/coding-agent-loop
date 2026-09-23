@@ -2632,7 +2632,7 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	// to the queue path so the completion is reliably re-delivered.
 	if delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
 		log.Printf("[BG AGENT] Steer for agent %s in session %s returned status=%s — falling back to queue", agentID, sessionID, deliveryStatus)
-		api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus)
+		api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, newSteerMessageID(), deliveryStatus, "")
 		return false
 	}
 
@@ -2650,7 +2650,7 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	// continuation is present in the execution tree.
 	delivered = true
 
-	api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, messageID, deliveryStatus)
+	api.recordLiveCodingAgentUserMessage(sessionID, msg, provider, messageID, deliveryStatus, "")
 	api.emitAutoNotificationSteered(sessionID, snap.ID, snap.Name, string(snap.Status), provider)
 	log.Printf("[BG AGENT] Steered completion for agent %s into busy session %s (provider=%s status=%s)", agentID, sessionID, provider, deliveryStatus)
 	return true

@@ -52,10 +52,9 @@ class SlackInstallerTest(unittest.TestCase):
         self.assertNotEqual(self.run_installer('relative').returncode, 0)
 
     def test_server_deploys_and_images_use_shared_pinned_installer(self):
-        for filename in ['deploy/rootless-linux/deploy.sh',
+        for filename in ['deploy.sh',
                          'deploy/aws-ec2/server/build-and-activate.sh', 'deploy/aws-ec2/server/repair-bootstrap.sh',
-                         'deploy/dedicated-vm/deploy-dominion.sh', 'deploy/dedicated-vm/quick-deploy.sh',
-                         'agent_go/Dockerfile', 'deploy/azure/Dockerfile.base', 'deploy/dedicated-vm/Dockerfile.base']:
+                         'deploy/dedicated-vm/deploy-dominion.sh', 'agent_go/Dockerfile']:
             self.assertIn('install-slack-cli.sh', (REPO / filename).read_text(), filename)
 
 if __name__ == '__main__':

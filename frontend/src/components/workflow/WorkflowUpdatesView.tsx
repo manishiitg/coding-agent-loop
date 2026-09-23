@@ -3,9 +3,9 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock3, Loader2, Pac
 import { workflowManifestApi } from '../../services/api'
 import type { WorkflowContractUpgradeItem, WorkflowContractUpgradeStatus } from '../../services/api-types'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { AskAIButton } from './AskAIButton'
-
-const MANUAL_UPDATE_MESSAGE = 'Update this workflow to the current platform contract now. Use get_contract_upgrades, complete and verify each pending migration in order, and stamp each completed version before continuing to the next. Do not run the workflow as part of the migration. If a migration requires a genuine product, business, or safety choice, stop and ask me in this chat instead of guessing. When all migrations are complete, confirm the final workflow contract version.'
+import { MANUAL_CONTRACT_UPGRADE_MESSAGE, WORKFLOW_CONTRACT_UPGRADE_CHAT_EVENT, WORKFLOW_CONTRACT_UPGRADE_STATUS_EVENT, type WorkflowContractUpgradeStatusEvent } from './workflowContractUpgradeEvents'
 
 function formatUpgradeLabel(label: string): string {
   return label
@@ -90,10 +90,16 @@ export default function WorkflowUpdatesView({ workspacePath }: { workspacePath: 
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
-    if (!status?.required) return
-    const timer = window.setInterval(() => { void load() }, 10_000)
-    return () => window.clearInterval(timer)
-  }, [load, status?.required])
+    const onStatus = (event: Event) => {
+      const detail = (event as WorkflowContractUpgradeStatusEvent).detail
+      if (detail?.workspacePath !== workspacePath) return
+      setStatus(detail.status)
+      setError(null)
+      setLoading(false)
+    }
+    window.addEventListener(WORKFLOW_CONTRACT_UPGRADE_STATUS_EVENT, onStatus)
+    return () => window.removeEventListener(WORKFLOW_CONTRACT_UPGRADE_STATUS_EVENT, onStatus)
+  }, [workspacePath])
 
   const pending = status?.pending ?? []
   const applied = useMemo(() => [...(status?.applied ?? [])].reverse(), [status?.applied])
@@ -125,7 +131,18 @@ export default function WorkflowUpdatesView({ workspacePath }: { workspacePath: 
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">Current v{currentVersion} · platform v{platformVersion}</p>
               </div>
-              {canWrite && status.required && <AskAIButton workspacePath={workspacePath} label="Update workflow" message={MANUAL_UPDATE_MESSAGE} />}
+              {canWrite && status.required && <AskAIButton
+                workspacePath={workspacePath}
+                label="Update workflow"
+                message={MANUAL_CONTRACT_UPGRADE_MESSAGE}
+                onAsk={async message => {
+                  if (!workspacePath) return
+                  const result = await sendWorkspacePaneMessageToChat({ workspacePath, message })
+                  window.dispatchEvent(new CustomEvent(WORKFLOW_CONTRACT_UPGRADE_CHAT_EVENT, {
+                    detail: { workspacePath, tabId: result.tabId },
+                  }))
+                }}
+              />}
             </section>
 
             <section>

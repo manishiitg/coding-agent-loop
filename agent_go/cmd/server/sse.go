@@ -96,7 +96,7 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				http.Error(w, "Failed to authorize durable chat", http.StatusInternalServerError)
 				return
 			}
-			if ownerID == "" || ownerID != GetUserIDFromContext(r.Context()) {
+			if ownerID == "" || !durableChatReadAllowed(r, sessionID, ownerID, r.URL.Query().Get("workspace_path")) {
 				http.Error(w, "Session not found or access denied", http.StatusNotFound)
 				return
 			}
@@ -286,9 +286,11 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				}
 				runtimeState, _ := api.authoritativeRuntimeSnapshot(sessionID)
 				runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
+				// -2 is the client's "no cursor information" sentinel; -1 would
+				// be read as "server lost this session" and trigger a resync.
 				msg := sseEventMessage{
 					Events: []events.Event{event}, SessionStatus: sessionStatus,
-					DisplayStatus: runtimeStatus.Status, LastProcessedIndex: lastIndex,
+					DisplayStatus: runtimeStatus.Status, LastProcessedIndex: -2,
 					HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
 					IsSyntheticTurn:            api.isSyntheticTurn(sessionID), CanSteer: runtimeStatus.CanSteer,
 					RuntimeState: &runtimeState,

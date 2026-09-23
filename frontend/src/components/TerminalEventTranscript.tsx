@@ -206,14 +206,18 @@ const TranscriptEvent: React.FC<{
     return <EventDispatcher event={event} onSendMessage={onSendMessage} compact hideOrchestratorContext />
   }
 
-  if (isConversationContinuityNotice(content)) {
-    return <ConversationContinuityNotice content={content} timestamp={timestamp} />
-  }
-
   const metadata = payload.metadata && typeof payload.metadata === 'object'
     ? payload.metadata as Record<string, unknown>
     : undefined
-  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} />
+  // The server keeps the typed text beside a wrapped prompt (continuity
+  // notice), so the user's own message renders instead of the wrapper.
+  const displayContent = typeof metadata?.display_content === 'string' ? metadata.display_content.trim() : ''
+  if (isConversationContinuityNotice(content)) {
+    const notice = <ConversationContinuityNotice content={content} timestamp={timestamp} />
+    if (!displayContent) return notice
+    return <>{notice}<UserTranscriptMessage content={displayContent} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} /></>
+  }
+  return <UserTranscriptMessage content={displayContent || content || 'Message'} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} />
 }
 
 const USER_MESSAGE_PREVIEW_LIMIT = 480

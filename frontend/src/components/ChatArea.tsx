@@ -37,6 +37,8 @@ import type { ChatTab } from '../stores/useChatStore'
 import { appendTimelineAndApplyConfirmations, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
 import { isExecutionConversationTab } from '../utils/sessionEventSource'
+import { nextForwardCursor } from '../utils/forwardCursor'
+import { clientMessageEventId, readClientMessageId } from '../utils/clientMessageIdentity'
 import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { logger } from '../utils/logger'
 
@@ -61,6 +63,7 @@ import {
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
+import { buildCleanConversationItems } from '../utils/cleanConversation'
 import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
@@ -106,7 +109,7 @@ function getEventTimestampMs(event: PollingEvent): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function createNextOptimisticUserMessage(sessionId: string, content: string, existing: PollingEvent[]): PollingEvent {
+function createNextOptimisticUserMessage(sessionId: string, content: string, existing: PollingEvent[], clientMessageId: string): PollingEvent {
   const indexed = existing.filter(event => typeof event.event_index === 'number')
   const eventIndex = indexed.length > 0
     ? indexed.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
@@ -115,12 +118,21 @@ function createNextOptimisticUserMessage(sessionId: string, content: string, exi
     const timestamp = getEventTimestampMs(event)
     return timestamp === null ? latest : Math.max(latest, timestamp)
   }, 0)
-  return createUserMessageEvent(
+  const event = createUserMessageEvent(
     content,
     eventIndex,
     new Date(Math.max(Date.now(), latestTimestamp + 1)).toISOString(),
     sessionId,
   )
+  // Shares the id of the server's durable row for this submission, which
+  // replaces it (and repositions it) when it arrives.
+  const outer = event.data as unknown as Record<string, unknown>
+  const inner = (outer.data ?? {}) as Record<string, unknown>
+  return {
+    ...event,
+    id: clientMessageEventId(clientMessageId),
+    data: { ...outer, data: { ...inner, metadata: { client_message_id: clientMessageId, provisional: true } } } as PollingEvent['data'],
+  }
 }
 
 function formatAutoNotificationTime(event: PollingEvent): string {
@@ -946,7 +958,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? [...olderHistory.events, ...displayEvents]
       : displayEvents
   ), [activeSessionId, displayEvents, olderHistory.events, olderHistory.sessionId])
+  const pendingMuseChoice = useMemo(() => buildCleanConversationItems(transcriptEvents).some(
+    (item) => item.museQuestion?.state === 'pending',
+  ), [transcriptEvents])
 
+  // Primitive deps only: the tab object changes on every composer keystroke,
+  // and this callback is a prop of the memoized transcript.
+  const activeTabIsExecution = isExecutionConversationTab(activeTab)
+  const activeTabProfileWorkspace = activeTab?.metadata?.agentProfileWorkspace
   const loadOlderConversationPage = useCallback(async () => {
     if (!activeSessionId || !historyPagination?.hasMore || olderHistory.loading) return
 
@@ -958,14 +977,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       error: undefined,
     }))
     try {
-      const execution = isExecutionConversationTab(activeTab)
+      const execution = activeTabIsExecution
       let olderEvents: PollingEvent[]
       let hasMore: boolean
       let nextOffset: number | undefined
       if (execution) {
         const conversation = await agentApi.getChatHistoryResumeConversation(
           sessionId,
-          activeTab?.metadata?.agentProfileWorkspace || activeWorkflowPreset?.selectedFolder?.filepath,
+          activeTabProfileWorkspace || activeWorkflowPreset?.selectedFolder?.filepath,
           100,
           historyPagination.nextOffset,
           true,
@@ -1012,7 +1031,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         error: error instanceof Error ? error.message : 'Could not load earlier messages',
       }))
     }
-  }, [activeSessionId, activeTab, activeWorkflowPreset, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
+  }, [activeSessionId, activeTabIsExecution, activeTabProfileWorkspace, activeWorkflowPreset, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
 
   const hasConversationContent = useMemo(() => {
     return displayEvents.some(event =>
@@ -1723,13 +1742,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // SSE backfill may contain only streaming events (handled immediately in handleSSEMessage),
     // leaving the batched events array empty. Without updating the index here, tabEventIndices
     // stays at 0 and every SSE reconnection re-fetches all events from the beginning.
+    // Every caller here is a forward read, where has_more means "newer rows",
+    // so it must never drive the older-history pager.
     if (response.last_processed_index !== undefined && response.last_processed_index >= 0) {
       const newLastEventIndex = response.last_processed_index
       if (tab) {
-        setTabLastEventIndex(actualSessionId, newLastEventIndex)
-        if (response.has_more !== undefined) {
-          chatStore.setTabHasMoreOlderEvents(actualSessionId, response.has_more)
-        }
+        setTabLastEventIndex(actualSessionId, nextForwardCursor(
+          getTabLastEventIndex(actualSessionId),
+          newLastEventIndex,
+          response.events.length,
+          !isExecutionConversationTab(tab),
+        ))
       } else {
         setLastEventIndex(newLastEventIndex)
       }
@@ -1844,7 +1867,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // (avoids duplicate user message bubbles in the chat). Internal
       // [AUTO-NOTIFICATION] messages still enter the event store, but the
       // displayEvents filter keeps them out of the human timeline.
-      if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
+      // Keyed echoes reconcile by id in the store (the durable row replaces its
+      // provisional bubble). Text matching remains only for legacy rows.
+      const isKeyedUserEcho = event.type === 'user_message' && Boolean(readClientMessageId(event))
+      if (!isKeyedUserEcho && event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
@@ -1870,7 +1896,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Allow distinct backend user_message events through when there's no
       // matching frontend-created message. Internal auto-notifications are
       // retained here for orchestration and filtered only at display time.
-      if (event.type === 'user_message' && hasFrontendUserMessage) {
+      if (!isKeyedUserEcho && event.type === 'user_message' && hasFrontendUserMessage) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
@@ -3047,6 +3073,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         tabSessionId,
         displayQueryWithContext,
         chatStore.getTabEvents(tabSessionId),
+        receipt.id,
       )
       optimisticUserEventID = optimisticUserMessage.id
       chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
@@ -3395,10 +3422,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const retryTarget = pending?.message === query.trim() && pending.targetTabId
       ? useChatStore.getState().getTab(pending.targetTabId) : undefined
     const retry = retryTarget && retryTarget.sessionId === pending?.sessionId ? pending : undefined
+    const submissionId = options?.submissionId ?? retry?.id ?? crypto.randomUUID()
     const captured: ChatSubmissionOptions = { ...options, identity,
       sourceTabId: sourceTab?.tabId,
       sourceSessionId: options?.sourceSessionId ?? (!isBuilder ? sourceTab?.sessionId ?? undefined : undefined),
-      submissionId: options?.submissionId ?? retry?.id ?? crypto.randomUUID(),
+      submissionId,
       submittedAtPerformanceMS: options?.submittedAtPerformanceMS ?? performance.now(),
       submittedAtClientTime: options?.submittedAtClientTime ?? new Date().toISOString(),
       builderHandoff: retry ? { tabId: retry.targetTabId, sessionId: retry.sessionId } : builder?.target,
@@ -3423,6 +3451,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           sourceTab.sessionId,
           query.trim(),
           store.getTabEvents(sourceTab.sessionId),
+          submissionId,
         )
         captured.optimisticUserEventId = optimistic.id
         store.addTabEvents(sourceTab.sessionId, [optimistic])
@@ -3790,6 +3819,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onLoadOlder={historyPagination?.hasMore ? loadOlderConversationPage : undefined}
             landingContent={landingContent}
             onRetryLastMessage={retryLastProductMessage}
+            onAnswerMuseQuestion={async (promptId, answers) => {
+              if (!activeSessionId) throw new Error('The Muse session is no longer active')
+              await agentApi.submitMuseQuestion(activeSessionId, promptId, answers)
+            }}
             onSubmitQuery={(query) => submitQueryWithQuery(query)}
           />
         ) : selectedModeCategory === 'workflow' ? (
@@ -3942,6 +3975,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           showProductTerminalControl={showProductTerminalControl}
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
+          pendingNativeChoice={pendingMuseChoice}
         />
       )}
 

@@ -40,9 +40,19 @@ describe('shared transcript failure retry', () => {
     const host = await mount([event('continuity', 'user_message', { content: raw })])
     const notice = host.querySelector('[data-testid="conversation-continuity-notice"]')!
     expect(notice.textContent).toContain('Conversation restored')
-    expect(notice.textContent).toContain('423 earlier messages loaded')
+    expect(notice.textContent).toContain('Previous conversation loaded')
     expect((notice as HTMLDetailsElement).open).toBe(false)
     expect(notice.querySelector('summary')?.textContent).not.toContain('builder/conversation/private.json')
+  })
+
+  it('shows the typed message beside a continuity notice', async () => {
+    const raw = '[AGENTWORKS CONVERSATION CONTINUITY]\nThis provider session was restarted.\n[/AGENTWORKS CONVERSATION CONTINUITY]\n\n[USER MESSAGE]\nhi'
+    const host = await mount([event('user:sub-1', 'user_message', { content: raw, metadata: { client_message_id: 'sub-1', display_content: 'hi' } })])
+    expect(host.querySelector('[data-testid="conversation-continuity-notice"]')).not.toBeNull()
+    const bubbles = Array.from(host.querySelectorAll('div.whitespace-pre-wrap'))
+      .filter(element => !element.closest('[data-testid="conversation-continuity-notice"]'))
+    expect(bubbles.map(element => element.textContent)).toEqual(['hi'])
+    expect(host.querySelectorAll('[data-testid="conversation-continuity-notice"]')).toHaveLength(1)
   })
 
   it('renders Muse progress as an assistant response without a Thinking disclosure', async () => {

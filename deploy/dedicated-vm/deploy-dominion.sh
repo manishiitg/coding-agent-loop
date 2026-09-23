@@ -120,7 +120,7 @@ command -v slack >/dev/null
 # agent_go/go.mod does), so without a go.work tying all three siblings
 # together, building them here would resolve multi-llm-provider-go/mcpagent
 # from the public Go module proxy instead of the exact commits just synced
-# above. Mirrors deploy/aws-ec2/deploy-rootless.sh's approach.
+# above. Mirrors the RTS server-side build (deploy/aws-ec2/server/build-and-activate.sh).
 GOWORK_FILE="$SRC_ROOT/go.work"
 rm -f "$GOWORK_FILE" # regenerate fresh each run so it can never point at a stale sibling state
 (cd "$SRC_ROOT" && "$GO_BIN" work init "$REPO/agent_go" "$REPO/workspace" "$MCPAGENT" "$MLP")

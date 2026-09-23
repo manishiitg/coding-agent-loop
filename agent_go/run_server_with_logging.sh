@@ -960,6 +960,23 @@ if [ -z "$FRONTEND_PORT_EXPLICIT" ] && [ "$FRONTEND_PORT" != "51733" ]; then
 fi
 FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
 
+# Device approval needs the current React app. The API server's static bundle
+# may be older during local development, so use Vite when it belongs to this
+# agent server. A frontend started by this script comes up after the API.
+if [ -z "${AGENTWORKS_CLI_BROWSER_URL:-}" ]; then
+    if [ "$WITH_FRONTEND" = true ]; then
+        export AGENTWORKS_CLI_BROWSER_URL="$FRONTEND_URL"
+    else
+        CLI_BROWSER_CANDIDATE="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT_EXPLICIT:-51733}"
+        if curl -fsS --max-time 2 "$CLI_BROWSER_CANDIDATE/runtime-config.js" 2>/dev/null | grep -Fq "apiBaseUrl: \"$MCP_AGENT_SERVER_URL\""; then
+            export AGENTWORKS_CLI_BROWSER_URL="$CLI_BROWSER_CANDIDATE"
+        fi
+    fi
+fi
+if [ -n "${AGENTWORKS_CLI_BROWSER_URL:-}" ]; then
+    echo "🔗 Local CLI browser approval: $AGENTWORKS_CLI_BROWSER_URL"
+fi
+
 # Change to script directory to ensure relative paths work correctly
 cd "$SCRIPT_DIR" || {
     echo "❌ Error: Failed to change to script directory: $SCRIPT_DIR"
@@ -1922,6 +1939,15 @@ if [ -n "$PLATFORM_REVISION" ] && [ -n "$(git -C "$(dirname "$0")/.." status --p
     PLATFORM_REVISION="${PLATFORM_REVISION}+dirty"
 fi
 GO_LDFLAGS="-X github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow.injectedPlatformVersion=${PLATFORM_REVISION}"
+
+# go run places the agent binary in a temporary build directory, so it cannot
+# discover release-style downloads beside its executable. Package the native
+# CLI for this machine and point the development server at that directory.
+if [ -z "${AGENTWORKS_CLI_DOWNLOAD_DIR:-}" ]; then
+    export AGENTWORKS_CLI_DOWNLOAD_DIR="${SCRIPT_DIR}/bin/cli-downloads"
+    bash "${SCRIPT_DIR}/../scripts/package-agentworks-cli-local.sh" "$AGENTWORKS_CLI_DOWNLOAD_DIR" || exit 1
+fi
+
 if [ -n "$PLATFORM_REVISION" ]; then
     echo "🔖 Platform revision: $PLATFORM_REVISION"
 else

@@ -26,8 +26,10 @@ the CLI always matches the API it talks to. `agentworks version` prints the
 build; `agentworks update` (or `update --check`) self-updates from the
 connected server. Confida and other rootless deployments build and package
 all supported CLI binaries with each release, then verify the public installer
-URL before marking the deploy successful. Developers can still build from
-source as below.
+URL before marking the deploy successful. The local `run_server_with_logging.sh`
+script packages the native CLI for its machine before starting the server, so
+the same installer command works against a loopback URL. Developers can still
+build from source as below.
 
 ## Build and server setup
 

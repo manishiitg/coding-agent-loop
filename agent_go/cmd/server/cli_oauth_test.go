@@ -175,4 +175,16 @@ func TestCLIDeviceOAuthLocalOrigin(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "http://localhost:3000/oauth/cli") {
 		t.Fatal("configured local origin rejected", w.Code, w.Body)
 	}
+	t.Setenv("AGENTWORKS_CLI_BROWSER_URL", "http://127.0.0.1:51733")
+	w = httptest.NewRecorder()
+	api.handleCLIOAuthDevice(w, local)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "http://127.0.0.1:51733/oauth/cli") {
+		t.Fatal("local frontend approval URL unavailable", w.Code, w.Body)
+	}
+	t.Setenv("PUBLIC_URL", "https://agentworks.example.com")
+	w = httptest.NewRecorder()
+	api.handleCLIOAuthDevice(w, local)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "https://agentworks.example.com/oauth/cli") {
+		t.Fatal("public approval URL was overridden by local frontend", w.Code, w.Body)
+	}
 }

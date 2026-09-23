@@ -65,6 +65,27 @@ describe('hydrateTabEvents SQLite source', () => {
 
     expect(mocks.setTabEvents).toHaveBeenCalledWith('chat-1', [optimistic])
   })
+
+  it('restores a never-used chat (404) as an empty conversation instead of failing', async () => {
+    mocks.getRecentChatEvents.mockRejectedValue(
+      Object.assign(new Error('Not Found'), { isAxiosError: true, response: { status: 404 } }),
+    )
+
+    const runtime = await hydrateTabEvents('fresh-chat')
+
+    expect(runtime.status).toBe('inactive')
+    expect(runtime.restoredEvents).toEqual([])
+    expect(mocks.setTabHasMoreOlderEvents).toHaveBeenCalledWith('fresh-chat', false)
+    expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith('fresh-chat', null)
+  })
+
+  it('still surfaces other restore failures', async () => {
+    mocks.getRecentChatEvents.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { isAxiosError: true, response: { status: 500 } }),
+    )
+
+    await expect(hydrateTabEvents('chat-1')).rejects.toThrow('Server Error')
+  })
 })
 
 describe('legacy JSON diagnostic converter', () => {

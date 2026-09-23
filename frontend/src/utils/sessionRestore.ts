@@ -350,7 +350,25 @@ export async function hydrateTabEvents(
   const requestKey = `${identity}:${sessionId}`
   const requestVersion = (hydrateRequestVersions.get(requestKey) || 0) + 1
   hydrateRequestVersions.set(requestKey, requestVersion)
-  const response = await agentApi.getRecentChatEvents(sessionId, options.workspacePath)
+  let response: Awaited<ReturnType<typeof agentApi.getRecentChatEvents>>
+  try {
+    response = await agentApi.getRecentChatEvents(sessionId, options.workspacePath)
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error
+    // A chat that never received a message has no journal rows. That is an
+    // empty conversation, not a failed restore: surfacing it as an error kept
+    // callers on "Loading conversation…" until their give-up timers fired.
+    assertChatIdentityCurrent(identity)
+    chatStore.setTabHasMoreOlderEvents(sessionId, false)
+    chatStore.setTabHistoryPagination(sessionId, null)
+    return {
+      status: 'inactive',
+      hasRunningBackgroundAgents: false,
+      isSyntheticTurn: false,
+      canSteer: false,
+      restoredEvents: chatStore.getTabEvents(sessionId),
+    }
+  }
   assertChatIdentityCurrent(identity)
   if (hydrateRequestVersions.get(requestKey) !== requestVersion) {
     return {

@@ -116,7 +116,8 @@ const TERMINAL_RAIL_HIDDEN_TYPES = new Set([
   'delegation_end',
   'orchestrator_agent_start',
   'orchestrator_agent_end',
-  'orchestrator_agent_error',
+  // orchestrator_agent_error stays visible: it is the failure that explains
+  // why a routing, todo, message-sequence, human-input, or Crew child stopped.
   'background_agent_started',
   'background_agent_completed',
   'background_agent_terminated',

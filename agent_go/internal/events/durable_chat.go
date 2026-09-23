@@ -184,9 +184,7 @@ func (es *EventStore) DeleteDurableChatSession(sessionID string) error {
 	// Hold the session's append lock so an in-flight turn cannot write a row
 	// after the delete, then drop the in-memory class and buffer: a still
 	// running turn continues live-only instead of re-creating ownerless rows.
-	sessionLock := es.sessionAppendLock(sessionID)
-	sessionLock.Lock()
-	defer sessionLock.Unlock()
+	defer es.lockSessionAppend(sessionID)()
 	if err := journal.DeleteSession(sessionID); err != nil {
 		return err
 	}

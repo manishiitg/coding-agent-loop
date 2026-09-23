@@ -25,13 +25,14 @@ acceptance on the Confida server pending.
 
 ## Simplify chat render and restoration to one durable ordered log — PLAT-352
 
-[PLAT-352](pulse_platform/chat-reliability/plat-352.md) is a design
-proposal (not implemented): replace the volatile-window plus durable-JSON
-reconciliation in chat restore with a single per-session event log that is
-durable on append, sequenced at write time, and read by range for
-restore/resume/pagination/preview, with client idempotency keys replacing
-positional cursors and the identity-transfer machinery. Records the
-migration order and the bounding/crash-window caveats for design review.
+[PLAT-352](pulse_platform/chat-reliability/plat-352.md) replaced the
+volatile-window plus durable-JSON reconciliation in chat restore with one
+chat-only SQLite journal per interactive session, read by sequence range for
+restore, resume and pagination. Shipped on main and deployed to RTS on
+2026-09-23 with its review fixes (cursor, deletes, per-session journal lock,
+startup import on every launch path, access-token carry-over, CORS, stream
+start cursor). Still open: stable client/server message IDs and a journal
+retention/size policy with artifact storage for large messages.
 
 ## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
 

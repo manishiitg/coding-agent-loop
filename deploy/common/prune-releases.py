@@ -7,13 +7,19 @@ from pathlib import Path
 import re
 import shutil
 import json
+import sys
 import time
 from urllib.request import urlopen
 
 RELEASE_NAME = re.compile(r"(?:[a-z][a-z0-9-]*-)?[0-9a-f]{7,40}-[0-9]{14}\Z")
 
 
-def wait_for_health(urls, timeout=30):
+# A first boot can run one-time state carry-over and chat migration before the
+# listener opens (about a minute on RTS), so wait well past that.
+DEFAULT_HEALTH_TIMEOUT = 180
+
+
+def wait_for_health(urls, timeout=DEFAULT_HEALTH_TIMEOUT):
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -88,6 +94,13 @@ if __name__ == '__main__':
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--keep', action='append', default=[], help='Preserve this explicitly staged release for this cleanup only')
     parser.add_argument('--health-url', action='append', default=[], help='Require a healthy JSON response before cleanup (repeat for each service)')
+    parser.add_argument('--health-timeout', type=int, default=DEFAULT_HEALTH_TIMEOUT, help='Seconds to wait for every --health-url to report healthy')
     args = parser.parse_args()
-    wait_for_health(args.health_url)
-    print('release copies removed:' if args.apply else 'unused release copies:', len(prune(args.app, args.apply, keep=args.keep)))
+    # An agent that never becomes healthy fails the deployment.
+    wait_for_health(args.health_url, timeout=args.health_timeout)
+    # The release is live and healthy; failing to delete old copies is only a
+    # warning so a cleanup problem never reports a good deployment as failed.
+    try:
+        print('release copies removed:' if args.apply else 'unused release copies:', len(prune(args.app, args.apply, keep=args.keep)))
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f'warning: release cleanup skipped: {error}', file=sys.stderr)

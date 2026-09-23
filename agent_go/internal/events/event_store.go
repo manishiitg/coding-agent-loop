@@ -673,7 +673,9 @@ type EventStore struct {
 	// appendLocks serialize AddEvent per session so the durable SQLite write
 	// can run outside mu: one session's fsync must not stall every other
 	// session's AddEvent and GetEvents.
-	appendLocks   map[string]*sync.Mutex
+	// Entries are reference-counted and removed once no caller holds or waits
+	// on them, so the map does not grow with every session ever seen.
+	appendLocks   map[string]*sessionAppendLockEntry
 	appendLocksMu sync.Mutex
 
 	// SSE subscriber registry: sessionID -> list of subscribers
@@ -701,7 +703,7 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 		activityCallback:    activityCallback,
 		hydratedSessions:    make(map[string]bool),
 		journalProbed:       make(map[string]bool),
-		appendLocks:         make(map[string]*sync.Mutex),
+		appendLocks:         make(map[string]*sessionAppendLockEntry),
 		subscribers:         make(map[string][]*Subscriber),
 	}
 
@@ -844,15 +846,38 @@ func (es *EventStore) Unsubscribe(sessionID string, sub *Subscriber) {
 	}
 }
 
-func (es *EventStore) sessionAppendLock(sessionID string) *sync.Mutex {
+type sessionAppendLockEntry struct {
+	mu   sync.Mutex
+	refs int // holders plus waiters, guarded by EventStore.appendLocksMu
+}
+
+// lockSessionAppend acquires the session's append lock and returns its release.
+// A caller registers on the entry before blocking, and the entry is deleted
+// only when no holder or waiter remains, so two appends for one session can
+// never run under different mutexes.
+func (es *EventStore) lockSessionAppend(sessionID string) func() {
 	es.appendLocksMu.Lock()
-	defer es.appendLocksMu.Unlock()
-	lock := es.appendLocks[sessionID]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		es.appendLocks[sessionID] = lock
+	entry := es.appendLocks[sessionID]
+	if entry == nil {
+		entry = &sessionAppendLockEntry{}
+		es.appendLocks[sessionID] = entry
 	}
-	return lock
+	entry.refs++
+	es.appendLocksMu.Unlock()
+
+	entry.mu.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			entry.mu.Unlock()
+			es.appendLocksMu.Lock()
+			entry.refs--
+			if entry.refs == 0 && es.appendLocks[sessionID] == entry {
+				delete(es.appendLocks, sessionID)
+			}
+			es.appendLocksMu.Unlock()
+		})
+	}
 }
 
 // adoptJournaledSession classifies an unclassified session as an interactive
@@ -910,8 +935,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	// in-memory insert, so a session's events stay ordered while mu is released
 	// around SQLite I/O. It is released before callbacks and SSE fan-out, as mu
 	// was before, so a callback that adds another event cannot deadlock.
-	sessionLock := es.sessionAppendLock(sessionID)
-	sessionLock.Lock()
+	unlockSession := es.lockSessionAppend(sessionID)
 	es.mu.Lock()
 	if event.Data != nil {
 		if cloned := events.CloneAgentEvent(event.Data); cloned != nil {
@@ -951,12 +975,12 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 			log.Printf("[EventStore] slow durable append session=%s type=%s id=%s duration=%s", sessionID, event.Type, event.ID, elapsed.Round(time.Millisecond))
 		}
 		if err != nil {
-			sessionLock.Unlock()
+			unlockSession()
 			log.Printf("[EventStore] durable append failed; event not published session=%s type=%s id=%s: %v", sessionID, event.Type, event.ID, err)
 			return err
 		}
 		if !inserted {
-			sessionLock.Unlock()
+			unlockSession()
 			return nil
 		}
 		event = persisted
@@ -1000,7 +1024,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	activityCallback := es.activityCallback
 	eventAddedCallback := es.eventAddedCallback
 	es.mu.Unlock()
-	sessionLock.Unlock()
+	unlockSession()
 
 	// Update session activity (call outside lock to avoid potential deadlock)
 	if activityCallback != nil && sessionID != "" {

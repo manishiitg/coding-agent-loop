@@ -205,3 +205,44 @@ func TestHumanFeedbackResolutionIsDurable(t *testing.T) {
 		t.Fatal("human_feedback_resolved is hidden from polling, so the client cannot see it")
 	}
 }
+
+func TestSessionAppendLocksArePrunedOnceIdle(t *testing.T) {
+	journal := newGatedJournal("")
+	journal.delay = time.Millisecond
+	store := NewEventStore(1000)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+
+	var wg sync.WaitGroup
+	for s := 0; s < 8; s++ {
+		sessionID := fmt.Sprintf("chat-%d", s)
+		classifyInteractiveTestSession(t, store, sessionID)
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(sessionID string, i int) {
+				defer wg.Done()
+				store.AddEvent(sessionID, journalTestEvent(fmt.Sprintf("%s-%d", sessionID, i), "message"))
+			}(sessionID, i)
+		}
+	}
+	wg.Wait()
+
+	for s := 0; s < 8; s++ {
+		sessionID := fmt.Sprintf("chat-%d", s)
+		events := store.GetAllEventsRaw(sessionID)
+		if len(events) != 10 {
+			t.Fatalf("%s events = %d, want 10", sessionID, len(events))
+		}
+		for i := 1; i < len(events); i++ {
+			if events[i].Sequence <= events[i-1].Sequence {
+				t.Fatalf("%s sequence not increasing at %d", sessionID, i)
+			}
+		}
+	}
+	store.appendLocksMu.Lock()
+	remaining := len(store.appendLocks)
+	store.appendLocksMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("append lock entries left after all appends finished: %d", remaining)
+	}
+}

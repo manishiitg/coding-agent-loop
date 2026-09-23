@@ -948,6 +948,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       : displayEvents
   ), [activeSessionId, displayEvents, olderHistory.events, olderHistory.sessionId])
 
+  // Primitive deps only: the tab object changes on every composer keystroke,
+  // and this callback is a prop of the memoized transcript.
+  const activeTabIsExecution = isExecutionConversationTab(activeTab)
+  const activeTabProfileWorkspace = activeTab?.metadata?.agentProfileWorkspace
   const loadOlderConversationPage = useCallback(async () => {
     if (!activeSessionId || !historyPagination?.hasMore || olderHistory.loading) return
 
@@ -959,14 +963,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       error: undefined,
     }))
     try {
-      const execution = isExecutionConversationTab(activeTab)
+      const execution = activeTabIsExecution
       let olderEvents: PollingEvent[]
       let hasMore: boolean
       let nextOffset: number | undefined
       if (execution) {
         const conversation = await agentApi.getChatHistoryResumeConversation(
           sessionId,
-          activeTab?.metadata?.agentProfileWorkspace || activeWorkflowPreset?.selectedFolder?.filepath,
+          activeTabProfileWorkspace || activeWorkflowPreset?.selectedFolder?.filepath,
           100,
           historyPagination.nextOffset,
           true,
@@ -1013,7 +1017,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         error: error instanceof Error ? error.message : 'Could not load earlier messages',
       }))
     }
-  }, [activeSessionId, activeTab, activeWorkflowPreset, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
+  }, [activeSessionId, activeTabIsExecution, activeTabProfileWorkspace, activeWorkflowPreset, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
 
   const hasConversationContent = useMemo(() => {
     return displayEvents.some(event =>

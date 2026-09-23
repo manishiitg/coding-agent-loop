@@ -1307,6 +1307,16 @@ describe('a terminal does not repeat its own name as an opening card', () => {
     expect(events.map(e => e.id)).toEqual([])
   })
 
+  it('keeps a child execution failure visible in the rail', () => {
+    const failure = evt({
+      id: 'failed', type: 'orchestrator_agent_error', session_id: 's1', execution_id: 'exec-1',
+      data: { data: { error: 'routing step failed: no route matched' } } as never,
+    })
+    const events = selectTerminalEvents([ev('start', 'background_agent_started', 'exec-1'), failure], t)
+
+    expect(events.map(e => e.id)).toEqual(['failed'])
+  })
+
   it('drops the terminal\'s own completion card', () => {
     const events = selectTerminalEvents(
       [ev('start', 'background_agent_started', 'exec-1'), ev('done', 'background_agent_completed', 'exec-1')],

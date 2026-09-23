@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { playNotificationSound } from '../../utils/sound'
 import {
@@ -51,8 +51,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const [submittedLocally, setHasSubmitted] = useState(cachedSubmission)
   // The local cache only knows this browser's answers; the durable
   // human_feedback_resolved marker covers other devices and refreshes.
-  const resolvedByServer = useChatStore(state =>
-    isHumanFeedbackRequestResolved(state.tabEvents, event.data.request_id || ''))
+  // Subscribe to the events map itself so composer keystrokes (tab config
+  // writes) don't rescan every event; recompute only when events change.
+  const tabEvents = useChatStore(state => state.tabEvents)
+  const resolvedByServer = useMemo(
+    () => isHumanFeedbackRequestResolved(tabEvents, event.data.request_id || ''),
+    [tabEvents, event.data.request_id],
+  )
   const hasSubmitted = submittedLocally || resolvedByServer
   const [submitError, setSubmitError] = useState('')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')

@@ -19,7 +19,7 @@ import type {
 } from './familyApi'
 import { messagesFromEvents, type PlatformEvent } from './platform/events'
 import { quickCommandsFromProfile } from './platform/commands'
-import { fetchRecentSessionEvents } from '../../../../shared/session'
+import { fetchCompleteSessionEvents, fetchRecentSessionEvents, SessionEventsHTTPError } from '../../../../shared/session'
 import { FAMILY_ROOT, FamilyWorkspace, documentsURL } from './platform/workspace'
 
 export const PARENT_PROFILE = 'sparkquill'
@@ -112,18 +112,24 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     const cached = conversations.get(cacheKey)
     if (cached) return cached
     const resolved = await request<{ session_id: string }>('POST', `/api/agent-profiles/${profile}/conversation`, key ? { conversation_key: key } : {})
-    const batch = await fetchRecentSessionEvents(sessionClient, resolved.session_id).catch(() => null)
+    // Only the journal tip is needed here; one row carries it.
+    const batch = await fetchRecentSessionEvents(sessionClient, resolved.session_id, 1).catch(() => null)
     const cursor = batch && typeof batch.last_processed_index === 'number' && batch.last_processed_index >= 0 ? batch.last_processed_index : 0
     const conv = { sessionID: resolved.session_id, cursor }
     conversations.set(cacheKey, conv)
     return conv
   }
 
-  /** Reads the canonical durable SQLite transcript. */
+  /** Reads the complete canonical durable SQLite transcript, oldest first. */
   async function history(profile: string, key: string): Promise<StoredConversation | null> {
     const conv = await conversation(profile, key)
-    const events = ((await fetchRecentSessionEvents(sessionClient, conv.sessionID)).events ?? []) as PlatformEvent[]
-    return { messages: messagesFromEvents(events, conv.sessionID) }
+    try {
+      const { events } = await fetchCompleteSessionEvents(sessionClient, conv.sessionID)
+      return { messages: messagesFromEvents(events as PlatformEvent[], conv.sessionID) }
+    } catch (err) {
+      if (err instanceof SessionEventsHTTPError && err.status === 404) return null
+      throw err
+    }
   }
 
   // ---- workspace -----------------------------------------------------------

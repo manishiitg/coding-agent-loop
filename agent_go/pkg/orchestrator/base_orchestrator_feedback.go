@@ -68,6 +68,7 @@ func (bo *BaseOrchestrator) RequestHumanFeedback(
 
 	// BLOCKING CALL - waits here until response or timeout
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	bo.emitHumanFeedbackResolved(ctx, requestID, sessionID, err)
 	if err != nil {
 		return false, "", fmt.Errorf("timeout waiting for human feedback: %w", err)
 	}
@@ -138,6 +139,7 @@ func (bo *BaseOrchestrator) RequestYesNoFeedback(
 	// Removed verbose logging
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	bo.emitHumanFeedbackResolved(ctx, requestID, sessionID, err)
 	if err != nil {
 		return false, fmt.Errorf("timeout waiting for feedback: %w", err)
 	}
@@ -203,6 +205,7 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	// Removed verbose logging
 
 	response, err := feedbackStore.WaitForResponse(requestID, 10*time.Minute)
+	bo.emitHumanFeedbackResolved(ctx, requestID, sessionID, err)
 	if err != nil {
 		return "", fmt.Errorf("timeout waiting for feedback: %w", err)
 	}
@@ -242,4 +245,30 @@ func (bo *BaseOrchestrator) RequestMultipleChoiceFeedback(
 	// Default to option0 if response is unclear
 	bo.GetLogger().Warn(fmt.Sprintf("⚠️ Unexpected response format: %s, defaulting to option0", response))
 	return "option0", nil
+}
+
+// emitHumanFeedbackResolved records the durable answered/expired marker for a
+// blocking request once its wait ends, from whichever surface answered it.
+func (bo *BaseOrchestrator) emitHumanFeedbackResolved(ctx context.Context, requestID, sessionID string, waitErr error) {
+	bridge := bo.GetContextAwareBridge()
+	if bridge == nil || requestID == "" {
+		return
+	}
+	outcome := "answered"
+	if waitErr != nil {
+		outcome = "expired"
+	}
+	now := time.Now()
+	if err := bridge.HandleEvent(ctx, &baseevents.AgentEvent{
+		Type:      events.HumanFeedbackResolved,
+		Timestamp: now,
+		Data: &events.HumanFeedbackResolvedEvent{
+			BaseEventData: baseevents.BaseEventData{Timestamp: now},
+			RequestID:     requestID,
+			Outcome:       outcome,
+			SessionID:     sessionID,
+		},
+	}); err != nil {
+		bo.GetLogger().Warn(fmt.Sprintf("failed to emit human_feedback_resolved for %s: %v", requestID, err))
+	}
 }

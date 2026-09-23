@@ -257,6 +257,20 @@ func (e *RequestHumanFeedbackEvent) GetEventType() events.EventType {
 	return RequestHumanFeedback
 }
 
+// HumanFeedbackResolvedEvent marks a blocking request answered or expired so a
+// restored chat never shows it as still pending. Fields stay flat: readers
+// look up data.request_id.
+type HumanFeedbackResolvedEvent struct {
+	events.BaseEventData
+	RequestID string `json:"request_id"`
+	Outcome   string `json:"outcome"` // "answered" or "expired"
+	SessionID string `json:"session_id,omitempty"`
+}
+
+func (e *HumanFeedbackResolvedEvent) GetEventType() events.EventType {
+	return HumanFeedbackResolved
+}
+
 type BlockingHumanFeedbackEvent struct {
 	events.BaseEventData
 	Question           string   `json:"question"`       // Question to ask user

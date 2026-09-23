@@ -47,11 +47,22 @@ class ReleaseCleanupTest(unittest.TestCase):
             current.mkdir()
             (app / 'current').symlink_to(current)
             args = ['prune-releases.py', str(app), '--apply', '--health-url', 'http://agent/api/health']
-            with patch('sys.argv', args), patch('urllib.request.urlopen', return_value=BytesIO(b'{}')), patch('time.monotonic', side_effect=[0, 31]):
+            with patch('sys.argv', args), patch('urllib.request.urlopen', return_value=BytesIO(b'{}')), patch('time.monotonic', side_effect=[0, 181]):
                 with self.assertRaises(RuntimeError):
                     runpy.run_path(str(Path(__file__).with_name('prune-releases.py')), run_name='__main__')
             self.assertTrue(old.is_dir())
             self.assertTrue(current.is_dir())
+
+    def test_healthy_release_with_failed_cleanup_is_only_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp)
+            args = ['prune-releases.py', str(app), '--apply', '--health-url', 'http://agent/api/health']
+            # No releases/current layout: prune() raises, but the health check passed.
+            with patch('sys.argv', args), patch('urllib.request.urlopen', return_value=BytesIO(b'{"status":"healthy"}')):
+                runpy.run_path(str(Path(__file__).with_name('prune-releases.py')), run_name='__main__')
+
+    def test_health_timeout_defaults_past_first_boot(self):
+        self.assertGreaterEqual(module.DEFAULT_HEALTH_TIMEOUT, 180)
 
     def test_only_unused_release_copies_are_removed(self):
         with tempfile.TemporaryDirectory() as tmp:

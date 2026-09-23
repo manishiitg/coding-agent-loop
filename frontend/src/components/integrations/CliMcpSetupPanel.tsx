@@ -335,7 +335,7 @@ export function CliMcpSetupPanel() {
                 <Button variant={localClient === 'json-client' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'json-client'} onClick={() => setLocalClient('json-client')}>JSON MCP client</Button>
               </div>
               {localClient === 'claude-code' ? (
-                <CommandRow label="Add AgentWorks to Claude Code" command={`claude mcp add --transport stdio --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
+                <CommandRow label="Add AgentWorks to Claude Code" command={`claude mcp add agentworks -e AGENTWORKS_SERVER=${quoted(origin)} -e AGENTWORKS_TOKEN=${quoted(displayToken)} -- agentworks mcp serve`} />
               ) : localClient === 'codex' ? (
                 <CommandRow label="Add AgentWorks to Codex" command={`codex mcp add agentworks --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} -- agentworks mcp serve`} />
               ) : (

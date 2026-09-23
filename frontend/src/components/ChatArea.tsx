@@ -2,7 +2,7 @@ import { sessionStreamingState, type SessionActivitySnapshot } from '../utils/se
 import { isForegroundSessionEvent } from '../../shared/session/foreground'
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
-import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
+import { intermediateUpdateFromTranscriptChunk, normalizeTranscriptChunkEvents } from '../utils/transcriptChunkUpdates'
 import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
@@ -893,7 +893,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       displayEventsRef.current = []
     }
 
-    const filtered = tabEvents.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(event => {
+    const filtered = normalizeTranscriptChunkEvents(tabEvents).filter(event => {
       // See the Formatted View Visibility Contract in
       // utils/terminalEventTranscript.ts. Streaming packets drive the transient
       // live buffer; they are not durable conversation records.
@@ -955,7 +955,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // while the stable server cursor prevents loading the same page twice.
   const transcriptEvents = useMemo(() => (
     olderHistory.sessionId === activeSessionId && olderHistory.events.length > 0
-      ? [...olderHistory.events, ...displayEvents]
+      ? normalizeTranscriptChunkEvents([...olderHistory.events, ...displayEvents])
       : displayEvents
   ), [activeSessionId, displayEvents, olderHistory.events, olderHistory.sessionId])
   const pendingCodingAgentChoice = useMemo(() => buildCleanConversationItems(transcriptEvents).some(

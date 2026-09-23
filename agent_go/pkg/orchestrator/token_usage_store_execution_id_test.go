@@ -81,14 +81,14 @@ func TestReadRunAcrossDatesUsesExecutionKeyedRecordsNotLegacyProjection(t *testi
 				"execution-1": {
 					RunFolder: run,
 					TokenUsage: &TokenUsageFile{ByModel: map[string]*ModelTokenUsage{
-						"gpt-5.6-terra": {InputTokens: tokens},
+						"gpt-6-sol": {InputTokens: tokens},
 					}},
 				},
 			},
 			// This is the stale v1 projection from before the schema migration.
 			// It must not be added a second time.
 			RunFolders: map[string]*TokenUsageFile{run: {ByModel: map[string]*ModelTokenUsage{
-				"gpt-5.6-terra": {InputTokens: 999},
+				"gpt-6-sol": {InputTokens: 999},
 			}}},
 		})
 		if err != nil {
@@ -120,7 +120,7 @@ func TestReadRunAcrossDatesUsesExecutionKeyedRecordsNotLegacyProjection(t *testi
 	}
 
 	got := store.readRunAcrossDates(context.Background(), run)
-	if got.ByModel["gpt-5.6-terra"].InputTokens != 350 {
-		t.Fatalf("execution-keyed total = %d, want 350 without stale v1 projection", got.ByModel["gpt-5.6-terra"].InputTokens)
+	if got.ByModel["gpt-6-sol"].InputTokens != 350 {
+		t.Fatalf("execution-keyed total = %d, want 350 without stale v1 projection", got.ByModel["gpt-6-sol"].InputTokens)
 	}
 }

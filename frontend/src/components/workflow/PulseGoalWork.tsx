@@ -61,7 +61,11 @@ function ItemRow({ item, workspacePath }: { item: PulseGoalWorkItem; workspacePa
       Rule: “{item.constraint_text}”{item.constraint_class ? ` · ${constraintClassLabels[item.constraint_class] || item.constraint_class}` : ''}
     </p>}
     {item.action_taken && <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.action_taken}</p>}
-    {!item.action_taken && item.detail && <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>}
+    {!item.action_taken && item.detail && <p className="mt-1 whitespace-pre-line text-xs leading-5 text-muted-foreground">{item.detail}</p>}
+    {item.action_taken && item.detail && <details className="mt-1 text-xs">
+      <summary className="cursor-pointer font-medium text-foreground/80">Why this should move the goal</summary>
+      <p className="mt-1 whitespace-pre-line leading-5 text-muted-foreground">{item.detail}</p>
+    </details>}
     {(item.metric || item.effect_note) && <p className="mt-1 text-[11px] text-muted-foreground">
       {item.metric && <>Should move <span className="font-medium text-foreground/80">{item.metric}</span>{item.expected_direction ? ` (${item.expected_direction})` : ''}</>}
       {item.metric && item.effect_note && ' · '}{item.effect_note}

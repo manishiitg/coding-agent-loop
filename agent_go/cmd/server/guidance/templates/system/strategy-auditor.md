@@ -52,10 +52,25 @@ hand those off once and keep your pass on the goal.
    For each item state its expected value for the goal and the hypothesis
    behind it, kept separate from what you observed, and any guardrails that
    must not regress.
-   When a focus area asks for tests, design a real experiment: one variable,
-   a comparison against the current approach, the metric and how it is
-   attributed (for example which audience new followers came from), the run
-   length or sample needed, and a stop rule. Prepare it; running it goes
+
+   **Prove why it should move the goal.** Every item carries a short "Why this
+   should move <metric>" (in the item's `detail` and the prepared work), built
+   in this order:
+   1. *Your own data first.* Query the workflow database for the closest
+      comparable past evidence (for example outcomes of similar targets,
+      content or actions already tried) and give the numbers, time window and
+      sample size. Say so plainly when no comparable data exists.
+   2. *External evidence second*, labelled by strength: measured data or a
+      study versus opinion or a blog post.
+   3. *Mechanism:* how the action produces the metric change.
+   4. *Confidence* (low, medium, high) and what result would prove it wrong.
+   Weak evidence does not block a small reversible test, but it must be
+   labelled weak.
+   When an item is a test (whether or not a focus area asks for one), design
+   a real experiment: one variable, a comparison against the current
+   approach, the metric and how it is attributed (for example which audience
+   new followers came from), the run length or sample needed, and a stop
+   rule. Name all of them; do not defer them to later formalization. Prepare it; running it goes
    through the Run level and any account action through a decision.
 5. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
    `reason` is the short user-facing result: what you did for them, what needs

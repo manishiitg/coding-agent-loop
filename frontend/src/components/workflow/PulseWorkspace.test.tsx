@@ -13,7 +13,7 @@ describe('PulseWorkspace information hierarchy', () => {
       planDriftDue planDriftDueItems={[{ step_id: 'prepare-booking', step_type: 'regular', reason: 'The plan changed or a prior drift check remains unresolved.' }]}
       finalCommandStates={[]} reviewFocuses={[]} reviewFocusSelections={[]} statusError={null}
       goalWork={[
-        { id: 'GW-1', kind: 'goal_work', title: 'Nobody replies to commenters', status: 'done', action_taken: 'Drafted replies for 12 commenters', links: ['pulse/work/2026-09-23/replies.md'], metric: 'followers', expected_direction: 'increase', check_at: '2026-09-30', created_at: '2026-09-23', updated_at: '2026-09-23' },
+        { id: 'GW-1', kind: 'goal_work', title: 'Nobody replies to commenters', status: 'done', action_taken: 'Drafted replies for 12 commenters', detail: 'Own data: commenters we replied to followed back 22% vs 6% (n=40, 60 days).', links: ['pulse/work/2026-09-23/replies.md'], metric: 'followers', expected_direction: 'increase', check_at: '2026-09-30', created_at: '2026-09-23', updated_at: '2026-09-23' },
         { id: 'GW-2', kind: 'goal_work', title: 'Try a weekly carousel', status: 'idea', links: [], created_at: '2026-09-23', updated_at: '2026-09-23' },
         { id: 'GW-3', kind: 'constraint_challenge', title: 'Longer posts may grow followers', status: 'needs_user', decision_id: 'goal-work-length', constraint_text: 'Posts remain 150-350 words', constraint_class: 'choice', links: [], created_at: '2026-09-23', updated_at: '2026-09-23' },
       ]}
@@ -26,6 +26,8 @@ describe('PulseWorkspace information hierarchy', () => {
     expect(html.indexOf('Challenging your rules')).toBeLessThan(html.indexOf('Next up'))
     expect(html.indexOf('Next up')).toBeLessThan(html.indexOf('Pulse permissions'))
     expect(html).toContain('Drafted replies for 12 commenters')
+    expect(html).toContain('Why this should move the goal')
+    expect(html).toContain('followed back 22% vs 6%')
     expect(html).toContain('replies.md')
     expect(html).toContain('Waiting to see the effect')
     expect(html).toContain('Try a weekly carousel')

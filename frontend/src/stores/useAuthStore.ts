@@ -1,4 +1,5 @@
 import { rememberSharedReturnPath, sharedReturnPath } from '../utils/sharedLinks'
+import { mcpConsentReturnPath, rememberMcpConsentReturnPath } from '../utils/mcpOAuthReturn'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
@@ -142,6 +143,8 @@ export const useAuthStore = create<AuthState>()(
             const response = await authApi.startOAuth(provider, redirectUri)
 
             rememberSharedReturnPath(returnTo, response.state)
+            rememberMcpConsentReturnPath(mcpConsentReturnPath(window.location.pathname + window.location.search)
+              || mcpConsentReturnPath(new URLSearchParams(window.location.search).get('next')), response.state)
 
             // Save state to sessionStorage for verification on callback
             saveOAuthState(response.state, provider)

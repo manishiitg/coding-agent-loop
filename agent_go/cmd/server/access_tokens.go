@@ -351,6 +351,18 @@ func (api *StreamingAPI) watchAccessTokenSession(c *UserClaims, sessionID, works
 }
 
 func accessTokenSessionAllowed(ctx context.Context, entry accessTokenSession) bool {
+	if strings.HasPrefix(entry.tokenID, "oauth-") {
+		grant, err := mcpOAuthFamilyActive(ctx, strings.TrimPrefix(entry.tokenID, "oauth-"))
+		if err != nil {
+			return false
+		}
+		claims, err := accessTokenClaims(mcpOAuthTokenForGrant(grant))
+		if err != nil {
+			return false
+		}
+		level, manifest := workflowAccessForWorkspacePath(ctx, claims, entry.workspace)
+		return manifest != nil && level == entry.access
+	}
 	store, err := openAccessTokens()
 	if err != nil {
 		return false

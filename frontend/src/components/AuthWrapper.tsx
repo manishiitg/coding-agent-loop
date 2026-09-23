@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuthStore } from "../stores/useAuthStore";
 import { Login } from "../pages/Login";
 import { AuthCallback } from "../pages/AuthCallback";
+import { MCPOAuthConsent } from "../pages/MCPOAuthConsent";
 import { SharedFile } from "../pages/SharedFile";
 import { SharedFolder } from "../pages/SharedFolder";
 import { ReportPage } from "../pages/ReportPage";
@@ -52,6 +53,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [reportWorkspacePath, setReportWorkspacePath] = useState<string | null>(null);
   const [sharedUid, setSharedUid] = useState<string | null>(null);
   const [isAuthCallback, setIsAuthCallback] = useState(false);
+  const [isMcpConsent, setIsMcpConsent] = useState(false);
   const [singleUserAuthAttempted, setSingleUserAuthAttempted] = useState(false);
 
   // Check for shared file/folder URL or OAuth callback
@@ -61,6 +63,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       setSharedFolderPath(null);
       setReportWorkspacePath(null);
       setIsAuthCallback(false);
+      setIsMcpConsent(false);
       setSharedUid(null);
       const path = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
@@ -117,6 +120,10 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       // Check for OAuth callback
       if (path === "/auth/callback") {
         setIsAuthCallback(true);
+        return;
+      }
+      if (path === "/oauth/consent") {
+        setIsMcpConsent(true);
         return;
       }
     };
@@ -198,6 +205,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     );
   }
 
+  if (isMcpConsent && isAuthenticated) return <MCPOAuthConsent />;
+
   // Single-user mode: no auth required, render children directly
   if (!isMultiUserMode) {
     if (isDesktopAppOnlyMode() && !window.electronAPI) {
@@ -228,6 +237,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       </>
     );
   }
+
 
   // Authenticated: render children
   if (isDesktopAppOnlyMode() && !window.electronAPI) {

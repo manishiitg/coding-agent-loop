@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, Copy, Download, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
-import { authApi, externalSkillApi, getApiBaseUrl } from '../../services/api'
+import api, { authApi, externalSkillApi, getApiBaseUrl } from '../../services/api'
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
@@ -52,6 +52,7 @@ interface Connection {
   id: string
   token: string
 }
+interface OAuthConnection { id: string; client_name: string; scopes: string[]; expires_at: string }
 
 type Destination = 'terminal' | 'local-assistant' | 'hosted-assistant'
 type LocalClient = 'claude-code' | 'codex' | 'json-client'
@@ -77,8 +78,8 @@ function loadStored(server: string): Connection | null {
 
 /**
  * Shared Setup → Integrations tab for Crew projects and Builder automations.
- * Provisions its own read-and-run token and shows ready-to-paste commands —
- * no separate token dialog. The token secret is kept in this browser and
+ * Provisions a read-and-run token for local clients and shows ready-to-paste
+ * commands. Hosted MCP clients use OAuth. The local token is kept in this browser and
  * reused on every visit until it is revoked or expires; the server only ever
  * confirms the token id is still valid. The token reads and runs every
  * workflow the user can access and expires after 30 days; revoke it here
@@ -89,6 +90,7 @@ export function CliMcpSetupPanel() {
   const [localClient, setLocalClient] = useState<LocalClient>('claude-code')
   const [hostedClient, setHostedClient] = useState<HostedClient>('chatgpt')
   const [connection, setConnection] = useState<Connection | null>(null)
+  const [oauthConnections, setOAuthConnections] = useState<OAuthConnection[]>([])
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -96,6 +98,22 @@ export function CliMcpSetupPanel() {
   const [skillMsg, setSkillMsg] = useState<string | null>(null)
   const [tokenCopied, setTokenCopied] = useState(false)
   const server = getApiBaseUrl() || window.location.origin
+
+  useEffect(() => {
+    if (destination !== 'hosted-assistant') return
+    let cancelled = false
+    api.get<{ connections: OAuthConnection[] }>('/api/oauth/mcp/connections')
+      .then(({ data }) => { if (!cancelled) setOAuthConnections(data.connections) })
+      .catch(() => { /* Connection instructions still work without the list. */ })
+    return () => { cancelled = true }
+  }, [destination])
+
+  const revokeOAuthConnection = async (id: string) => {
+    try {
+      await api.delete(`/api/oauth/mcp/connections/${encodeURIComponent(id)}`)
+      setOAuthConnections(current => current.filter(item => item.id !== id))
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not revoke connection') }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -255,7 +273,7 @@ export function CliMcpSetupPanel() {
         <div>
           <h3 className="text-base font-semibold text-foreground">Where will you use AgentWorks?</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose one setup path. All three use the same connection and can read workflows and run them.
+            Choose one setup path. Hosted apps ask you to sign in; local tools use a personal token.
           </p>
         </div>
         <div className="grid gap-2" role="group" aria-label="Connection destination">
@@ -276,10 +294,10 @@ export function CliMcpSetupPanel() {
           ))}
         </div>
       </div>
-      <SettingsCard
+      {destination !== 'hosted-assistant' && <SettingsCard
         icon={<KeyRound className="h-4 w-4 text-primary" />}
         title="Connection"
-        description="Create one 30-day token that works with any setup path. It can read and run workflows you can access; it cannot edit plans or files."
+        description="Create a 30-day token for the CLI or a local AI app. It can read and run workflows you can access; it cannot edit plans or files."
         actions={
           connection ? (
             <div className="flex flex-wrap gap-2">
@@ -306,13 +324,45 @@ export function CliMcpSetupPanel() {
         ) : (
           <p className="text-sm text-muted-foreground">Create a connection to see the instructions for your chosen destination.</p>
         )}
-      </SettingsCard>
+      </SettingsCard>}
       <SettingsCard
         icon={destination === 'terminal' ? <Terminal className="h-4 w-4 text-primary" /> : destination === 'local-assistant' ? <Plug className="h-4 w-4 text-primary" /> : <Globe className="h-4 w-4 text-primary" />}
         title={destination === 'terminal' ? 'Set up the command line' : destination === 'local-assistant' ? 'Connect a local AI app' : 'Connect a hosted AI app'}
         description={destination === 'terminal' ? 'Use this for terminal commands and scripts.' : destination === 'local-assistant' ? 'Install the CLI on this computer, then add its MCP bridge to your AI app.' : 'Use the HTTPS MCP URL in an AI app that connects from the cloud. No CLI install is needed.'}
       >
-        {checking ? (
+        {destination === 'hosted-assistant' ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Hosted MCP client">
+              <Button variant={hostedClient === 'chatgpt' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'chatgpt'} onClick={() => setHostedClient('chatgpt')}>ChatGPT</Button>
+              <Button variant={hostedClient === 'cowork' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'cowork'} onClick={() => setHostedClient('cowork')}>Claude Cowork</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {hostedClient === 'chatgpt'
+                ? 'In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.'
+                : 'In Claude Cowork, open Settings → Connectors → Add custom connector.'}
+            </p>
+            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} />
+            {isLoopbackOrigin && <p className="text-xs text-amber-500">Hosted apps need a public server URL; open Connect on that server instead.</p>}
+            <p className="text-xs text-muted-foreground">Choose OAuth when the app asks how to authenticate. AgentWorks will open a sign-in and permission screen.</p>
+            {oauthConnections.length > 0 && <div className="space-y-2 border-t border-border pt-3">
+              <p className="text-xs font-medium text-foreground">Connected apps</p>
+              {oauthConnections.map(item => <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate">{item.client_name}</span>
+                <Button variant="outline" size="sm" onClick={() => void revokeOAuthConnection(item.id)}>Revoke</Button>
+              </div>)}
+            </div>}
+            {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+            <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Optional: give the assistant workflow guidance</summary>
+              <p className="mt-2">Upload the skill where Skills are supported, or paste its text into the app&apos;s custom instructions.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={skillBusy !== null} onClick={() => void downloadSkill()}><Download className="mr-1 h-3.5 w-3.5" />Download skill .zip</Button>
+                <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}><Copy className="mr-1 h-3.5 w-3.5" />Copy skill text</Button>
+              </div>
+              {skillMsg && <p className="mt-2">{skillMsg}</p>}
+            </details>
+          </div>
+        ) : checking ? (
           <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
         ) : !connection ? (
           <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">Create a connection above to get the setup details.</p>
@@ -350,37 +400,7 @@ export function CliMcpSetupPanel() {
               </details>
             )}
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Hosted MCP client">
-              <Button variant={hostedClient === 'chatgpt' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'chatgpt'} onClick={() => setHostedClient('chatgpt')}>ChatGPT</Button>
-              <Button variant={hostedClient === 'cowork' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'cowork'} onClick={() => setHostedClient('cowork')}>Claude Cowork</Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {hostedClient === 'chatgpt'
-                ? 'In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.'
-                : 'In Claude Cowork, open Settings → Connectors → Add custom connector.'}
-            </p>
-            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(displayToken)}`} />
-            {isLoopbackOrigin && (
-              <p className="text-xs text-amber-500">This installation is only reachable on your computer. Hosted apps need a public server URL; open Connect on that server instead.</p>
-            )}
-            <p className="text-xs text-muted-foreground">The URL contains your token. Share it only with the app you are connecting.</p>
-            <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
-              <summary className="cursor-pointer font-medium text-foreground">Optional: give the assistant workflow guidance</summary>
-              <p className="mt-2">Upload the skill where Skills are supported, or paste its text into the app&apos;s custom instructions. The skill contains no token.</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={skillBusy !== null} onClick={() => void downloadSkill()}>
-                  <Download className="mr-1 h-3.5 w-3.5" />{skillBusy === 'download' ? 'Downloading…' : 'Download skill .zip'}
-                </Button>
-                <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}>
-                  <Copy className="mr-1 h-3.5 w-3.5" />{skillBusy === 'copy' ? 'Copying…' : 'Copy skill text'}
-                </Button>
-              </div>
-              {skillMsg && <p className="mt-2">{skillMsg}</p>}
-            </details>
-          </div>
-        )}
+        ) : null}
       </SettingsCard>
     </div>
   )

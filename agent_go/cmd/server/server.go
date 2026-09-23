@@ -2237,6 +2237,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/auth/password", api.handleChangeOwnPassword).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/access-tokens", api.handleAccessTokens).Methods("GET", "POST")
 	apiRouter.HandleFunc("/auth/access-tokens/{id}", api.handleAccessTokens).Methods("DELETE")
+	apiRouter.HandleFunc("/oauth/mcp/register", api.handleMCPOAuthRegister).Methods("POST")
+	apiRouter.HandleFunc("/oauth/mcp/authorize", api.handleMCPOAuthAuthorize).Methods("GET")
+	apiRouter.HandleFunc("/oauth/mcp/token", api.handleMCPOAuthToken).Methods("POST")
+	apiRouter.HandleFunc("/oauth/mcp/consent", api.handleMCPOAuthConsent).Methods("GET", "POST")
+	apiRouter.HandleFunc("/oauth/mcp/connections", api.handleMCPOAuthConnections).Methods("GET")
+	apiRouter.HandleFunc("/oauth/mcp/connections/{id}", api.handleMCPOAuthConnections).Methods("DELETE")
 	// Per-workflow ownership and sharing (workflow_access.go).
 	apiRouter.HandleFunc("/workflow/access", api.handleGetWorkflowAccess).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/access", api.handleSetWorkflowAccess).Methods("PUT", "POST")
@@ -2866,6 +2872,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		w.Header().Set("Cache-Control", "no-store")
 		fmt.Fprint(w, runtimeFrontendConfigJS(actualPort, workspaceURL))
 	}).Methods("GET")
+
+	// OAuth discovery must resolve before the SPA fallback.
+	router.HandleFunc("/.well-known/oauth-protected-resource", api.handleMCPOAuthProtectedResource).Methods("GET")
+	router.HandleFunc(mcpOAuthProtectedResourcePath, api.handleMCPOAuthProtectedResource).Methods("GET")
+	router.HandleFunc(mcpOAuthMetadataPath, api.handleMCPOAuthMetadata).Methods("GET")
 
 	// Headless report preview page (preview_report tool): embedded in the
 	// binary, so it works wherever the server runs regardless of how the SPA

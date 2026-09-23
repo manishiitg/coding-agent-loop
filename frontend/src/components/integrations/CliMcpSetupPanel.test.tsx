@@ -3,15 +3,17 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../services/api', () => ({
+  default: { get: vi.fn().mockResolvedValue({ data: { connections: [] } }), delete: vi.fn() },
   authApi: { createAccessToken: vi.fn(), revokeAccessToken: vi.fn(), listAccessTokens: vi.fn() },
   getApiBaseUrl: vi.fn(),
 }))
-import { authApi, getApiBaseUrl } from '../../services/api'
+import api, { authApi, getApiBaseUrl } from '../../services/api'
 import { CliMcpSetupPanel } from './CliMcpSetupPanel'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let stored: Map<string, string>
 beforeEach(() => {
+  vi.mocked(api.get).mockResolvedValue({ data: { connections: [] } })
   stored = new Map()
   Object.defineProperty(window, 'localStorage', {
     value: {
@@ -42,6 +44,22 @@ function button(host: HTMLElement, label: string) {
 }
 
 describe('CLI & MCP setup panel', () => {
+  it('shows hosted OAuth setup without creating a personal token', async () => {
+    vi.mocked(getApiBaseUrl).mockReturnValue(SERVER)
+    const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
+    try {
+      await act(async () => button(host, 'Hosted AI app').click())
+      expect(host.textContent).toContain(`${SERVER}/api/external/v1/mcp`)
+      expect(host.textContent).toContain('Choose OAuth')
+      expect(host.textContent).not.toContain('Create connection')
+      expect(host.textContent).not.toContain('YOUR_TOKEN')
+      expect(authApi.createAccessToken).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
   it('shows one setup path at a time after creating a shared connection', async () => {
     vi.mocked(getApiBaseUrl).mockReturnValue(SERVER)
     vi.mocked(authApi.listAccessTokens).mockResolvedValue({ tokens: [] })
@@ -74,7 +92,8 @@ describe('CLI & MCP setup panel', () => {
       expect(host.textContent).not.toContain('claude mcp add')
 
       await act(async () => button(host, 'Hosted AI app').click())
-      expect(host.textContent).toContain('https://agentworks.example.com/api/external/v1/mcp?token=aw_pat_test')
+      expect(host.textContent).toContain('https://agentworks.example.com/api/external/v1/mcp')
+      expect(host.textContent).not.toContain('?token=aw_pat_test')
       expect(host.textContent).not.toContain('install-agentworks.sh')
       expect(host.textContent).not.toContain('MCP client config')
       const cowork = Array.from(host.querySelectorAll('button')).find(item => item.textContent === 'Claude Cowork')!
@@ -82,6 +101,7 @@ describe('CLI & MCP setup panel', () => {
       expect(host.textContent).toContain('Settings → Connectors → Add custom connector')
 
       expect(window.localStorage.getItem(KEY)).toBe(JSON.stringify({ id: 'tok-1', token: 'aw_pat_test' }))
+      await act(async () => button(host, 'Terminal or scripts').click())
       await act(async () => button(host, 'Revoke').click())
       expect(authApi.revokeAccessToken).toHaveBeenCalledWith('tok-1')
       expect(host.textContent).toContain('Create a connection to see the instructions')

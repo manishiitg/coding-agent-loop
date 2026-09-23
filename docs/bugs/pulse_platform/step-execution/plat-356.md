@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `implemented locally; focused tests green; live acceptance pending` |
+| Ticket state | `fixed; live-verified 2026-09-23` |
 | Last synchronized | `2026-09-23` |
 | Priority | `P1 execution` |
 | Category | step-execution (runner-up: security-sandbox) |
@@ -62,7 +62,10 @@ Two genuine candidates in the same tier are still ambiguous.
 
 The `virtual-tools` package is green.
 
-## Pending
+## Live acceptance
 
-Restart the server, then run `query_workflow_db` in the `websiteaeo` builder
-chat with the salesoutreach KB still attached.
+Verified on 2026-09-23 on the restarted local server. The `websiteaeo` builder
+session `6eaa17e1-…` still had `Workflow/salesoutreach/knowledgebase` in its
+read paths. Its `query_workflow_db` call at 11:52:13 succeeded, and no
+`context is ambiguous` error appeared for the rest of the run. Before the fix,
+the same session failed every call.

@@ -839,6 +839,56 @@ func TestListSharedProjects(t *testing.T) {
 	}
 }
 
+func TestListSharedProjectsDeduplicatesWorkspaceListing(t *testing.T) {
+	fx := newCrewRunModeFixture(t)
+	// The live workspace API returns the requested root with nested projects
+	// and repeats each project folder as a top-level item.
+	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/documents" {
+			fx.mock.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		fx.mock.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
+			return
+		}
+		var response struct {
+			Success bool                                `json:"success"`
+			Data    virtualtools.WorkspaceFolderListing `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Errorf("decode workspace listing: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if len(response.Data) > 0 {
+			response.Data = append(response.Data, response.Data[0].Children...)
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": response.Success, "data": response.Data})
+	}))
+	t.Cleanup(ws.Close)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+
+	req := mux.SetURLVars(profileRouteRequest(http.MethodGet, "/api/agent-profiles/work/shared-projects", nil, "reader"), map[string]string{"id": "work"})
+	rec := httptest.NewRecorder()
+	fx.api.handleListSharedProjects(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("shared projects status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var decoded struct {
+		Projects []sharedProjectSummary `json:"projects"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Projects) != 1 || decoded.Projects[0].ID != "crew-aaa" {
+		t.Fatalf("duplicate workspace folder produced duplicate Crews: %+v", decoded.Projects)
+	}
+}
+
 func TestSharedProjectFilesAndFile(t *testing.T) {
 	fx := newCrewRunModeFixture(t)
 	filesReq := func(caller string) (int, []byte) {

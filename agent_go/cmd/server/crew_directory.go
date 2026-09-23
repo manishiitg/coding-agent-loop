@@ -152,10 +152,14 @@ func listSharedProjectsForOwner(ctx context.Context, claims *UserClaims, profile
 	var paths []string
 	collectWorkspaceFilePaths(listing, &paths)
 	rows := []sharedProjectSummary{}
+	seenManifests := make(map[string]bool)
 	for _, candidate := range paths {
-		if !strings.HasSuffix(candidate, "/product.json") {
+		if !strings.HasSuffix(candidate, "/product.json") || seenManifests[candidate] {
 			continue
 		}
+		// The workspace API can include a folder both beneath the requested
+		// root and as a top-level item, yielding the same manifest twice.
+		seenManifests[candidate] = true
 		projectRoot := strings.TrimSuffix(candidate, "/product.json")
 		manifest, err := readCrewProjectManifests(ctx, profile.ID, projectRoot)
 		if err != nil {

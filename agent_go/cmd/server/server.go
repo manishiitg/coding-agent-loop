@@ -850,7 +850,8 @@ type QueryRequest struct {
 	// snapshot that may not have flipped to busy yet.
 	DisableLiveInputDelivery bool `json:"disable_live_input_delivery,omitempty"`
 	// KeepNativeSessionAlive keeps one native coding-CLI process alive while a
-	// scheduler sends its known consecutive turns (upgrade → run → Pulse).
+	// scheduler sends its known consecutive turns (run → Pulse). Contract
+	// upgrades are manual Builder work and never belong to this sequence.
 	KeepNativeSessionAlive bool `json:"keep_native_session_alive,omitempty"`
 	// PulseLifecycleTurn marks a scheduler-sent Pulse turn (Gate, review
 	// dispatch, Finalize). The main conversation keeps the Builder model on

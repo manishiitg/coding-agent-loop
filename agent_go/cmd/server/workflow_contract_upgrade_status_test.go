@@ -124,9 +124,10 @@ func TestContractUpgradeStatusExplainsCurrentVersionWithLegacyCodeLayout(t *test
 	}
 }
 
-// A version this server does not know has no upgrade path at all, and every
-// scheduled run refuses to start. That is the least self-evident failure in the
-// subsystem, so it gets said plainly rather than rendered as an empty list.
+// A version this server does not know has no upgrade path at all. Interactive
+// execution and direct webhooks fail closed, while schedules keep the saved
+// contract. That distinction is said plainly rather than rendered as an empty
+// list.
 func TestContractUpgradeStatusExplainsAnUnknownVersion(t *testing.T) {
 	const workspacePath = "Workflow/newer"
 	manifestJSON, _ := json.Marshal(map[string]interface{}{
@@ -148,7 +149,7 @@ func TestContractUpgradeStatusExplainsAnUnknownVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("describeWorkflowContractUpgrades: %v", err)
 	}
-	for _, want := range []string{"not one this server knows", "no upgrade path", "refuse to start"} {
+	for _, want := range []string{"not one this server knows", "no upgrade path", "direct webhooks will refuse to start", "schedules continue using the saved contract"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("unknown-version status missing %q:\n%s", want, out)
 		}

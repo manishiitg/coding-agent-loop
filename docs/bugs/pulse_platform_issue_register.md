@@ -1,3 +1,12 @@
+## Show Muse native multiple-choice questions in chat — PLAT-354
+
+[PLAT-354](pulse_platform/coding-agent-bridge/plat-354.md) proposes reading
+Muse's structured `user_input_prompt_requested` questions and options from its
+native `session.jsonl`, presenting them in chat, then submitting the user's
+selections through the live tmux widget. The matching
+`user_input_prompt_settled` event confirms the recorded answers. This replaces
+the current automatic first-option behavior for user-facing questions.
+
 ## Crews get a read-only Run mode: single owner, inspect-and-run for everyone else — PLAT-353
 
 [PLAT-353](pulse_platform/security-sandbox/plat-353.md) fixes `BUG_ID_001`
@@ -162,7 +171,7 @@ and live acceptance plus deployment evidence are recorded.
 
 ## Manual workflow contract preflight — PLAT-332
 
-[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Release `bb24ab5-20260918164118` is deployed and verified healthy in production.
+[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the manual-execution migration gap: every interactive `run_full_workflow` and `execute_step` call rechecks `workflow.json` before starting. An old or unknown contract starts no execution and directs the owner to the manual Workshop upgrade path. The 2026-09-22 follow-up removes contract-upgrade turns from cron/calendar and `trigger_schedule` runs: schedules continue on their saved contract and cannot stamp migrations. Direct webhooks remain fail-closed. The original guard release `bb24ab5-20260918164118` is deployed and verified; the schedule-policy follow-up is implemented on `main` with deployment verification pending.
 
 ## Concurrent webhook route isolation — PLAT-331
 

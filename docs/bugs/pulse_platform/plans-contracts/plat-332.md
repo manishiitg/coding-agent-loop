@@ -4,8 +4,8 @@
 
 | Coordination | Value |
 |---|---|
-| State | Deployed and verified in production |
-| Date | 2026-09-18 |
+| State | Deployed; schedule-policy follow-up implemented on `main` |
+| Date | 2026-09-18; updated 2026-09-22 |
 | Owner | workflow execution / contract migrations |
 
 ## Problem
@@ -27,10 +27,21 @@ retries the original run.
 
 The guard lives on the shared execution-tool registrar, so toolbar actions,
 chat requests, restored sessions, and agent-profile callers receive the same
-behavior. Scheduled sessions retain their existing blocking migration
-preflight, and direct webhooks retain their own fail-closed preflight.
+behavior. Direct webhooks retain their own fail-closed preflight.
+
+As of the 2026-09-22 follow-up, cron/calendar schedules and `trigger_schedule`
+runs no longer execute contract migrations and are not blocked by a pending
+migration. They keep running the workflow's saved contract. Contract upgrades
+are operator-started work in the interactive Builder chat, and scheduled
+sessions cannot authorize or stamp one. The pending-upgrade banner and
+**Setup → Identity → Upgrades** provide the manual entry points and upgrade
+history. This avoids turning a platform-maintenance operation into an
+unattended schedule turn while preserving the interactive execution guard.
 
 Release `bb24ab5-20260918164118` (`bb24ab544`) was deployed on 2026-09-18.
 Post-deployment verification confirmed the exact source revision, all four
 services active, a healthy planner endpoint, and the migration guard present in
 the production binary.
+
+The schedule-policy follow-up is implemented on `main`; deployment verification
+for that follow-up is recorded separately from the original 2026-09-18 release.

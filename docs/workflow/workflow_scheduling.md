@@ -133,7 +133,18 @@ That runtime state is not written back into `workflow.json`.
 
 Workflow schedules use the workflow-phase transport (`mode = workshop`, `agent_mode = workflow_phase`). Normal scheduled messages execute with `workshop_mode = run`, which gives them the constrained Run prompt, tool catalog, projected skills, and—when CLI isolation is enabled—a private runtime working directory. The old direct orchestrator schedule mode (`mode = workflow`, `agent_mode = workflow`) is no longer generated or executed. Existing manifests with `mode = workflow` are normalized to the workflow-phase transport at runtime.
 
-Contract-upgrade and answered-decision preflight turns temporarily use `workshop_mode = workshop` because they are explicitly allowed to update workflow artifacts. Post-run Pulse turns also use Workshop mode. The scheduler switches modes per turn, so a normal unattended run never inherits the maintenance surface.
+Pending contract upgrades are not schedule preflight turns. Cron/calendar runs,
+including runs started through `trigger_schedule`, continue against the saved
+workflow contract and never authorize, apply, or stamp a migration. Owners start
+upgrades manually from the interactive Builder chat; interactive
+`run_full_workflow` and `execute_step` calls remain blocked until the required
+migrations are complete. Direct API/webhook triggers also remain fail-closed on
+an incompatible contract.
+
+Answered-decision preflight turns temporarily use `workshop_mode = workshop`
+because they are explicitly allowed to update workflow artifacts. Post-run
+Pulse turns also use Workshop mode. The scheduler switches modes per turn, so a
+normal unattended run never inherits the maintenance surface.
 
 Multi-agent schedules remain separate under `_users/{userID}/multiagent-schedules.json`.
 

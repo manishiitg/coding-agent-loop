@@ -29,11 +29,11 @@ put a concrete defect in `docs/bugs/`.
 
 ## Current architecture (2026-08)
 
-Pulse is a **dynamic post-run steward**, not a fixed checklist. Before a
-scheduled workflow is allowed to run, any mandatory workflow-contract upgrade
-is completed and stamped through a real registered Workshop tool. After the
-scheduled run, Pulse continues in that workflow run's main-agent conversation
-with up to four ordered turns:
+Pulse is a **dynamic post-run steward**, not a fixed checklist. Pending workflow
+contract upgrades are operator-started in the interactive Builder chat; a
+schedule neither performs nor stamps them and continues on its saved contract.
+After the scheduled run, Pulse continues in that workflow run's main-agent
+conversation with up to four ordered turns:
 
 1. **Gate / Worklist.** One turn reads the run evidence (run summary, `CONCERNS:`
    markers, changelog, eval/report/DB/KB/learnings state, human inputs, Chief of

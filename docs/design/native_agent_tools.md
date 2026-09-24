@@ -51,6 +51,22 @@ Crew page → **Models** tab → **Native agent tools** toggle. This writes
 then sets `hybrid` on a copy of the resolved profile, and only when the owner
 runs the crew. Live-checked on and off through `/api/agent-profiles/work/query`.
 
+## Turning it on for a workflow
+
+A workflow has the same switch: **Identity → Models → Agent tools → Native
+agent tools**, stored as `capabilities.native_agent_tools` in `workflow.json`.
+It applies only to the workflow's **interactive Builder and Run-mode chats**
+of owners and editors. The following always keep AgentWorks-only tools:
+
+- the plan's step agents;
+- schedules, webhooks, bots, auto-notifications and Pulse turns;
+- read-only users.
+
+Step agents are limited to their own folders, and the CLI's native file
+reading is not bound by those limits. Flipping the switch starts a fresh CLI
+session on the next message, carrying the recent dialogue, as for a Crew.
+Code: `workflowChatNativeAgentTools` (`workflow_chat_policy.go`).
+
 ## Background subagents
 
 With subagents on, both Claude and Muse used to end a turn early with an interim

@@ -3364,6 +3364,9 @@ export interface WorkflowCapabilities {
   notifications?: WorkflowNotificationConfig
   // Named Slack app this workflow talks through; empty inherits the default.
   slack_connection_id?: string
+  // Builder and Run-mode chats use the coding CLI's own read/search, skills,
+  // todos and subagents (agent_tools hybrid). Steps and automations never do.
+  native_agent_tools?: boolean
 }
 
 export interface WorkflowNotificationConfig {

@@ -273,3 +273,48 @@ func TestFunctionTriggerVariablesPassRunStartCheck(t *testing.T) {
 		t.Fatal("webhook must still reject variables outside allowed_variables")
 	}
 }
+
+// A workflow's "Native agent tools" applies to its interactive Builder and
+// Run-mode chats of editors only; steps, automations, bots and read-only
+// users keep AgentWorks tools.
+func TestWorkflowChatNativeAgentToolsScope(t *testing.T) {
+	env := newTriggerLinkEnv(t)
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	chat := QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder", SelectedFolder: "Workflow/reports"}
+	if env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
+		t.Fatal("switch off: native tools must stay off")
+	}
+	manifest, _, err := ReadWorkflowManifest(ctx, "Workflow/reports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Capabilities.NativeAgentTools = true
+	raw, _ := json.Marshal(manifest)
+	env.mock.mu.Lock()
+	env.mock.files[manifestPath("Workflow/reports")] = string(raw)
+	env.mock.mu.Unlock()
+
+	if !env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
+		t.Fatal("interactive Builder chat with the switch on must use native tools")
+	}
+	run := chat
+	run.PinRunMode = true
+	if !env.api.workflowChatNativeAgentTools(ctx, run, "sess-2", false) {
+		t.Fatal("interactive Run-mode chat must use native tools")
+	}
+	for name, tc := range map[string]struct {
+		req      QueryRequest
+		readOnly bool
+	}{
+		"read-only user":    {chat, true},
+		"step agent":        {func() QueryRequest { r := chat; r.ParentSessionID = "parent"; return r }(), false},
+		"scheduled run":     {func() QueryRequest { r := chat; r.TriggeredBy = "cron"; return r }(), false},
+		"bot":               {func() QueryRequest { r := chat; r.BotPlatform = "slack"; return r }(), false},
+		"notification":      {func() QueryRequest { r := chat; r.IsAutoNotification = true; return r }(), false},
+		"headless workflow": {func() QueryRequest { r := chat; r.AgentMode = "workflow"; return r }(), false},
+	} {
+		if env.api.workflowChatNativeAgentTools(ctx, tc.req, "sess-"+name, tc.readOnly) {
+			t.Fatalf("%s must keep AgentWorks-only tools", name)
+		}
+	}
+}

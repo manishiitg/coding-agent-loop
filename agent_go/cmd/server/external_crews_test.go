@@ -110,3 +110,14 @@ func TestExternalAskCrewRunsInCrewChatAndIsPollable(t *testing.T) {
 		t.Fatal("crews:read may poll")
 	}
 }
+
+func TestOAuthGrantCrewAccessFollowsApprovedScopes(t *testing.T) {
+	withCrews := mcpOAuthTokenForGrant(mcpOAuthGrant{UserID: "u", Scopes: []string{"workflows:read", "crews:run"}})
+	if !withCrews.AllCrews || !withCrews.AllowsCrew("any") {
+		t.Fatal("an OAuth grant approving a Crew permission must reach the user's Crews")
+	}
+	legacy := mcpOAuthTokenForGrant(mcpOAuthGrant{UserID: "u", Scopes: []string{"workflows:read", "files:read", "runs:execute"}})
+	if legacy.AllCrews || legacy.AllowsCrew("any") {
+		t.Fatal("an OAuth grant without Crew permissions must not reach Crews")
+	}
+}

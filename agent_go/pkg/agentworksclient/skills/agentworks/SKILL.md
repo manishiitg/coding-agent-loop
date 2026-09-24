@@ -16,7 +16,7 @@ agentworks login --server https://your-server
 claude mcp add agentworks -e AGENTWORKS_SERVER='https://your-server' -- agentworks mcp serve
 ```
 
-Approve the CLI in your browser. The CLI and MCP bridge share that connection. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access. Unavailable tools are omitted from the catalog.
+Approve the CLI in your browser. The CLI and MCP bridge share that connection. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access, and reading (`crews:read`) and asking or calling (`crews:run`) its Crews. Unavailable tools are omitted from the catalog.
 
 ## First step
 

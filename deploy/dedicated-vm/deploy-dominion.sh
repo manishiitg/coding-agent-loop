@@ -285,6 +285,19 @@ printf '%s\n' '[Unit]' 'Description=Keep Dominion service logs bounded' '' '[Tim
   'AccuracySec=1m' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > "$HOME/.config/systemd/user/dominion-logrotate.timer"
 systemctl --user daemon-reload
 systemctl --user enable --now dominion-logrotate.timer || echo "WARNING: could not enable dominion-logrotate.timer" >&2
+# gog (Gmail integration) must use its file keyring on this headless box.
+# Left on "auto" it picks the user's gnome-keyring over D-Bus, which has no
+# unlocked default collection here, and every Gmail reconnect fails with
+# "store token: set token: Object does not exist at path /". Same idempotent
+# block as deploy/aws-ec2/server/build-and-activate.sh: generate the
+# encryption password once, keep it only in the mode-0600 env file, and
+# preserve it across releases (changing it would orphan stored tokens).
+DOMINION_ENV_FILE=/srv/dominion/.env
+if ! grep -q '^GOG_KEYRING_PASSWORD=' "$DOMINION_ENV_FILE"; then
+  printf 'GOG_KEYRING_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$DOMINION_ENV_FILE"
+fi
+grep -q '^GOG_KEYRING_BACKEND=' "$DOMINION_ENV_FILE" || echo 'GOG_KEYRING_BACKEND=file' >> "$DOMINION_ENV_FILE"
+chmod 600 "$DOMINION_ENV_FILE"
 # dominion-agent depends on dominion-workspace (After=dominion-workspace.service
 # in its unit), so restart it first -- and it must actually be restarted here:
 # until now this script only ever restarted dominion-agent, so dominion-workspace

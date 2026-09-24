@@ -97,3 +97,20 @@ it('lists Crew projects with identity and selects their guarded workspace path',
     kind: 'crew',
   }))
 })
+
+it('closes itself when the typed reference matches nothing (e.g. a ticket number)', async () => {
+  vi.mocked(loadProductProjects).mockResolvedValue([])
+  vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValue(allowed as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>)
+  const onClose = vi.fn()
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  await act(async () => root.render(<WorkflowSelectionDialog isOpen onClose={onClose} onSelectWorkflow={vi.fn()} searchQuery="1764" position={{ bottom: 0, left: 0 }} />))
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(host.textContent).not.toContain('No references found')
+  // A matching query keeps it open.
+  onClose.mockClear()
+  await act(async () => root.render(<WorkflowSelectionDialog isOpen onClose={onClose} onSelectWorkflow={vi.fn()} searchQuery="shared" position={{ bottom: 0, left: 0 }} />))
+  expect(host.textContent).toContain('Shared automation')
+  expect(onClose).not.toHaveBeenCalled()
+})

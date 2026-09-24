@@ -127,6 +127,19 @@ import { isMainAgentTerminal } from '../utils/terminalIdentity'
 import { loadProfileAtFiles } from '../utils/profileAtFiles'
 import { proxyCrewFileClient, sharedCrewFileClient } from '../products/work/sharedCrewFiles'
 
+// A dismissed picker stays closed while the user keeps typing the same token
+// (same trigger kind and start, query extended), e.g. "#1764" after the
+// reference picker found nothing for "#17".
+function isDismissedComposerTrigger(trigger: { kind: string; start: number; query: string }, dismissed: string | null): boolean {
+  if (!dismissed) return false
+  try {
+    const previous = JSON.parse(dismissed) as { kind?: string; start?: number; query?: string }
+    return previous.kind === trigger.kind && previous.start === trigger.start && typeof previous.query === 'string' && trigger.query.startsWith(previous.query)
+  } catch {
+    return false
+  }
+}
+
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 const FALLBACK_LIVE_INPUT_PROVIDERS = FALLBACK_CODING_AGENT_PROVIDERS
@@ -1912,7 +1925,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Setup panels. Their slash menu is likewise manifest-owned: a product
     // with no product.yaml commands must not fall through to legacy globals.
     if (isProductProfile && (trigger?.kind === '!' || trigger?.kind === '$' || (trigger?.kind === '/' && !productCommandsAvailable))) trigger = null
-    if (trigger && JSON.stringify(trigger) === dismissedTriggerRef.current) trigger = null
+    if (trigger && isDismissedComposerTrigger(trigger, dismissedTriggerRef.current)) trigger = null
     else dismissedTriggerRef.current = null
     composerTriggerRef.current = trigger
     setShowCommandDialog(trigger?.kind === '/')

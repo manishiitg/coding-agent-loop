@@ -146,23 +146,33 @@ describe('queued notification and human message ownership', () => {
     state.tabs.B.config.queuedMessages = ['replacement']
     release(true)
     await run
+    // The accepted message is removed by content; the user's edit stays
+    // queued as a new message and no dead-end error is raised.
     expect(state.tabs.B.config.queuedMessages).toEqual(['replacement'])
-    expect(state.tabs.B.config.queuedSubmission.accepted).toBe(true)
-    state.tabs.B.config.queueError = undefined
+    expect(state.tabs.B.config.queuedSubmission).toBeUndefined()
+    expect(state.tabs.B.config.queueError).toBeUndefined()
+    send.mockImplementation(async () => true)
     await drainChatQueue('B', send, build)
-    expect(send).toHaveBeenCalledTimes(1)
-    expect(state.tabs.B.config.queueError).toContain('will not be resent')
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(send.mock.calls[1][0]).toBe('replacement')
+    expect(send.mock.calls.filter(call => call[0] === 'message for B')).toHaveLength(1)
   })
-  it('snapshots queued messages before waiting for server verification', async () => {
-    let verify!: () => void
-    state.verify.mockImplementationOnce(() => new Promise(resolve => { verify = () => resolve([]) }))
+  it('snapshots queued messages before delivery; later entries stay queued', async () => {
     const send = vi.fn(async (_message: string, _options: unknown) => true)
     const run = drainChatQueue('B', send, build)
     state.tabs.B.config.queuedMessages.push('later')
-    verify()
     await run
     expect(send).toHaveBeenCalledWith('message for B', expect.anything())
     expect(state.tabs.B.config.queuedMessages).toEqual(['later'])
+  })
+  it('delivers to the server even while the tab believes a turn is streaming', async () => {
+    // A stale streaming flag (event stream dropped during a server restart)
+    // must not strand queued input; the server orders it behind a live turn.
+    state.tabs.B.isStreaming = true
+    const send = vi.fn(async (_message: string, _options: unknown) => true)
+    await drainChatQueue('B', send, build)
+    expect(send).toHaveBeenCalledWith('message for B', expect.anything())
+    expect(state.tabs.B.config.queuedMessages).toEqual([])
   })
   it('shares the background delivery lock with manual Send now', async () => {
     let release!: (value: boolean) => void

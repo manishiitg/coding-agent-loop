@@ -62,3 +62,27 @@ func TestUpdateWorkSessionWorkflowGuardBlocksAttachedCrewChats(t *testing.T) {
 		t.Fatalf("blocked after detach = %v", cfg.BlockedPaths)
 	}
 }
+
+// A Crew reads another Crew's database but writes only its own.
+func TestAttachedCrewDatabaseIsReadOnly(t *testing.T) {
+	if got := foreignCrewDBWriteBlockedPaths("_users/alice/Chats/Work/projects/sde", []string{"_users/alice/Chats/Work/projects/sde", "_users/bob/Chats/Work/projects/qa/", "Workflow/reports"}); len(got) != 1 || got[0] != "_users/bob/Chats/Work/projects/qa/db/" {
+		t.Fatalf("foreign db write blocks = %v", got)
+	}
+	session := "session-crew-db-scope"
+	common.SetSessionFolderGuard(session, []string{"_users/alice/Chats/Work/projects/sde/"}, []string{"_users/alice/Chats/Work/projects/sde/"})
+	common.SetSessionFolderGuardBlockedWritePaths(session, []string{"_users/alice/Chats/Work/projects/sde/db/db.sqlite"})
+	defer common.ClearSessionShellConfig(session)
+
+	updateWorkSessionWorkflowGuard(session, []string{"_users/bob/Chats/Work/projects/qa"})
+	cfg := common.GetSessionShellConfig(session)
+	if !stringSliceContains(cfg.BlockedWritePaths, "_users/bob/Chats/Work/projects/qa/db/") || !stringSliceContains(cfg.BlockedWritePaths, "_users/alice/Chats/Work/projects/sde/db/db.sqlite") {
+		t.Fatalf("write blocks after attach = %v", cfg.BlockedWritePaths)
+	}
+	if stringSliceContains(cfg.BlockedPaths, "_users/bob/Chats/Work/projects/qa/db/") {
+		t.Fatal("another Crew's database must stay readable")
+	}
+	updateWorkSessionWorkflowGuard(session, nil, "_users/bob/Chats/Work/projects/qa")
+	if cfg := common.GetSessionShellConfig(session); stringSliceContains(cfg.BlockedWritePaths, "_users/bob/Chats/Work/projects/qa/db/") || !stringSliceContains(cfg.BlockedWritePaths, "_users/alice/Chats/Work/projects/sde/db/db.sqlite") {
+		t.Fatalf("write blocks after detach = %v", cfg.BlockedWritePaths)
+	}
+}

@@ -23,7 +23,7 @@ import (
 // hostedSkillDescription is the SKILL.md frontmatter description: what the
 // skill does and when to use it. Keep it under 1024 chars with no XML
 // brackets (frontmatter constraints shared by the upload scanners).
-const hostedSkillDescription = "Read and run AgentWorks workflows over MCP (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules). Use when the task touches an AgentWorks workflow or when agentworks tools are available."
+const hostedSkillDescription = "Read and run AgentWorks workflows and Crews over MCP (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Use when the task touches an AgentWorks workflow or when agentworks tools are available."
 
 // buildHostedSkillMarkdown renders the hosted SKILL.md. It must stay
 // self-contained: ChatGPT delivers tools only (no MCP prompts, resources, or
@@ -56,6 +56,10 @@ To run: call a run-mode tool such as `+"`execute_step`"+` — the reply carries 
 ## Chat
 
 `+"`chat`"+` asks the workflow assistant anything — analysis, explanations, follow-ups — in a pinned Run-mode session. Pass `+"`session_id`"+` to continue the conversation; sessions are shared with the run tools, so one conversation can ask, run, and ask about the run. Read replies with `+"`run_status`"+`, and answer waiting human-input steps with `+"`run_reply_input`"+`.
+
+## Crews
+
+Crews are persistent AgentWorks agents. Discover them with `+"`list_crews`"+` (IDs, never paths); `+"`get_crew`"+` shows identity, model, and functions. Read project files with `+"`list_crew_files`"+` / `+"`read_crew_file`"+`. Call a Crew's typed functions with `+"`call_crew_function`"+` (arguments must match `+"`list_crew_functions`"+`), or ask anything with `+"`ask_crew`"+`. Both run as a turn in the Crew's own chat: the result returns within `+"`wait_seconds`"+` (max 25), otherwise poll `+"`get_crew_function_call`"+` with the returned `+"`call_id`"+`.
 
 ## Answer from reading
 

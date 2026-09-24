@@ -33,6 +33,10 @@ const (
 
 	triggerCallerWorkflow = "workflow"
 	triggerCallerCrew     = "crew"
+	// triggerCallerUser is a signed-in user's external connection (MCP or the
+	// agentworks CLI). Only the server stamps it, from the authenticated
+	// request; agent tool schemas never offer it.
+	triggerCallerUser = "user"
 )
 
 // triggerCaller stamps which resource may invoke an internal trigger.
@@ -81,6 +85,8 @@ func validateAnyTriggerCaller(caller *triggerCaller) error {
 		return validateTriggerCaller(caller, triggerCallerWorkflow)
 	case triggerCallerCrew:
 		return validateTriggerCaller(caller, triggerCallerCrew)
+	case triggerCallerUser:
+		return validateTriggerCaller(caller, triggerCallerUser)
 	default:
 		return fmt.Errorf("internal trigger caller type must be %q or %q", triggerCallerWorkflow, triggerCallerCrew)
 	}
@@ -204,7 +210,7 @@ func (c *triggerCaller) matchesPresented(wantType string, presented triggerCalle
 // binding's own type.
 func (c *triggerCaller) matchesAnyPresented(presented triggerCaller) bool {
 	wantType := strings.ToLower(strings.TrimSpace(presented.Type))
-	if wantType != triggerCallerWorkflow && wantType != triggerCallerCrew {
+	if wantType != triggerCallerWorkflow && wantType != triggerCallerCrew && wantType != triggerCallerUser {
 		return false
 	}
 	return c.matchesPresented(wantType, presented)

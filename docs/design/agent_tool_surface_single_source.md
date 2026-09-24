@@ -337,7 +337,8 @@ Steps 1 and 2 independently close a shipped bug class and can land separately.
    so the asymmetry this document is built on ("you can always take away, you
    can never add") is respected.
 2. Provider-native tools (`agent_tools: mode: hybrid`) never reach this
-   registrar — the CLI supplies its own file/shell tools. They stay governed by
+   registrar — the CLI supplies its own read/search/skill/todo/subagent tools
+   (never native writes since 2026-09-24; see [native_agent_tools.md](native_agent_tools.md)). They stay governed by
    `approvals`. Confirm no product expects the list to cover them.
 3. MCP bridge tools carry their own `MCPToolPolicy`
    (`productdeps/dependencies.go:89`). Verify whether that is a fourth

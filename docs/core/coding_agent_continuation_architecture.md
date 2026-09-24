@@ -15,6 +15,9 @@ live below the workflow layer.
 
 ## Implementation Status
 
+> Per-CLI intake/completion/answer signals (structured records P0, pane P1):
+> [coding_cli_turn_signals.md](coding_cli_turn_signals.md).
+
 The vertical slice described below is **largely shipped**. Status as of the
 latest sync:
 

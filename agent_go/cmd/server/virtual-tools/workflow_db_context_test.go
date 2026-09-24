@@ -51,3 +51,16 @@ func TestResolveWorkflowWorkspaceFolderKnowledgebaseOnlyAndRealConflicts(t *test
 		t.Fatalf("two workflows err = %v, want ambiguous", err)
 	}
 }
+
+// RTS SDE crew: attached Crews are writable, so WritePaths name several Crew
+// projects; the session's own working dir must still pick its database.
+func TestResolveWorkflowWorkspaceFolderWorkingDirWinsOverWritableAttachedCrews(t *testing.T) {
+	got, err := resolveWorkflowWorkspaceFolder("s", &common.SessionShellConfig{
+		WorkingDir: "/data/docs/_users/u/Chats/Work/projects/gptlive1-cef0edb2",
+		WritePaths: []string{"_users/u/Chats/Work/projects/gptlive1-cef0edb2/", "_users/u/Chats/Work/projects/rts-flow-tester-5090fe7e", "_users/u/Chats/Work/projects/new-project-2271585c"},
+		ReadPaths:  []string{"Workflow/rtsprreviweer"},
+	})
+	if err != nil || got != "Chats/Work/projects/gptlive1-cef0edb2" {
+		t.Fatalf("got %q, %v; want the session's own Crew project", got, err)
+	}
+}

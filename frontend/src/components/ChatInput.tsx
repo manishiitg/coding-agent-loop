@@ -42,7 +42,7 @@ import { captureChatDraft, updateOwnedChatDraft } from '../utils/chatDraftOwners
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import type { ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
-import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
+import { shouldHoldSendInBrowser, chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock, runtimeStatusLLMChoice } from '../utils/effectiveLLM'
 import { normalizeEventViewMode, type ChatTabConfig } from '../stores/useChatStore'
 import { getComposerTrigger, replaceComposerTrigger, formatFileReference, removeFileReferences, reconcileFileReferences, isPlainPickerKey, type ComposerTrigger } from '../utils/composerReferences'
@@ -126,6 +126,19 @@ import { shouldUsePastedTextAttachment } from '../utils/chatPasteBehavior'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
 import { loadProfileAtFiles } from '../utils/profileAtFiles'
 import { proxyCrewFileClient, sharedCrewFileClient } from '../products/work/sharedCrewFiles'
+
+// A dismissed picker stays closed while the user keeps typing the same token
+// (same trigger kind and start, query extended), e.g. "#1764" after the
+// reference picker found nothing for "#17".
+function isDismissedComposerTrigger(trigger: { kind: string; start: number; query: string }, dismissed: string | null): boolean {
+  if (!dismissed) return false
+  try {
+    const previous = JSON.parse(dismissed) as { kind?: string; start?: number; query?: string }
+    return previous.kind === trigger.kind && previous.start === trigger.start && typeof previous.query === 'string' && trigger.query.startsWith(previous.query)
+  } catch {
+    return false
+  }
+}
 
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
@@ -1912,7 +1925,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Setup panels. Their slash menu is likewise manifest-owned: a product
     // with no product.yaml commands must not fall through to legacy globals.
     if (isProductProfile && (trigger?.kind === '!' || trigger?.kind === '$' || (trigger?.kind === '/' && !productCommandsAvailable))) trigger = null
-    if (trigger && JSON.stringify(trigger) === dismissedTriggerRef.current) trigger = null
+    if (trigger && isDismissedComposerTrigger(trigger, dismissedTriggerRef.current)) trigger = null
     else dismissedTriggerRef.current = null
     composerTriggerRef.current = trigger
     setShowCommandDialog(trigger?.kind === '/')
@@ -2199,17 +2212,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    // A retained CLI is explicitly designed to receive input while busy, so it
-    // continues into the live-delivery branch below. Structured workflow-step
-    // turns never satisfy routeLiveInputToCLI and remain queued.
-    if (isStreaming && !routeLiveInputToCLI) {
+    // Once a chat has a session, every send goes to the server: its durable
+    // conversation-turn dispatcher (PLAT-178) decides whether to deliver into
+    // the running CLI, queue for the next turn, or start one. Holding a message
+    // in this browser because the tab *believes* a turn is streaming stranded
+    // sends whenever that belief went stale (e.g. the event stream dropped
+    // during a server restart). The local queue is only for a chat that has no
+    // session yet.
+    const sendToServer = routeLiveInputToCLI || Boolean(tabSessionId)
+    if (shouldHoldSendInBrowser({ isStreaming, routeLiveInputToCLI, hasSession: Boolean(tabSessionId) })) {
       clearInputState()
       queueStreamingMessage(query)
       addToast('Agent is busy — message queued for the next turn', 'info')
       return
     }
 
-    if (routeLiveInputToCLI) {
+    if (sendToServer) {
       if (hasSubmitTarget) {
         const submittedTabId = activeTabId || undefined
         const submittedDraft = {
@@ -2278,7 +2296,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, onSubmit, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
+  }, [routeLiveInputToCLI, tabSessionId, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, onSubmit, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
 
   // SparkQuill's voice auto-send: handleVoiceText already merged the
   // transcript into localInputText, but queryToSubmit (which also layers in

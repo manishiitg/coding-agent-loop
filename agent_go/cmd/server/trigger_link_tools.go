@@ -178,8 +178,11 @@ func (c triggerLinkCaller) isTarget(target triggerTarget) bool {
 // another Crew or workflow calls.
 func crewTargetMessage(caller triggerLinkCaller) string {
 	kind := "Crew"
-	if caller.Stamp.Type == triggerCallerWorkflow {
+	switch caller.Stamp.Type {
+	case triggerCallerWorkflow:
 		kind = "workflow"
+	case triggerCallerUser:
+		kind = "external connection"
 	}
 	return fmt.Sprintf("The connected %s %q sent you a task. The task is in the payload's `task` field; any extra input is under `payload`. Do the task, then end with a clear, self-contained final answer: it is returned to the caller.", kind, caller.Label)
 }

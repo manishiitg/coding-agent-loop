@@ -1,0 +1,79 @@
+# Native agent tools (coding-agent tool modes)
+
+Status: shipped 2026-09-24. All code is on main in mcpagent, multi-llm-provider-go
+and this repo. Transport history is in
+[PLAT-354](../bugs/pulse_platform/coding-agent-bridge/plat-354.html).
+
+## Two modes
+
+A coding CLI runs in one of two tool modes, set by the agent profile's
+`runtime.agent_tools.mode`:
+
+| Mode | UI name | What the CLI gets |
+|---|---|---|
+| `mcp_only` (default) | off | Native web search only. Everything else goes through the MCP bridge. |
+| `hybrid` | **Native agent tools** | The bridge, plus the CLI's own read, search, skill, todo and subagent tools. |
+
+**Native writes are never allowed, in either mode** (user decision, 2026-09-24).
+File writes, edits, deletes and shell commands that change things go through the
+bridge, where the platform's tool policy and approvals apply. The two modes are
+kept separate so each can be tested on its own. A new native tool goes into
+`hybrid`, never silently into `mcp_only`.
+
+Why hybrid exists: models did worse with their own tools off. A Muse log audit
+found 28 `read_file`, 16 `read_skill` and 12 `search` denials. The CLIs also
+handle long tasks better with their own todo lists and background subagents.
+
+## What hybrid enables, per CLI
+
+| CLI | Enabled in hybrid | Always off |
+|---|---|---|
+| Claude Code | `Read`, `Grep`, `Glob`, `Skill`, `Agent`, `TaskCreate/Get/Update/List`, `TodoWrite`, `WebFetch`, `WebSearch` | `Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` |
+| Muse | `read_skill`, `read_file`, `search`, `subagent_*` (delegation is on when `subagent_spawn` is allowed); `write_todos` works in both modes | shell, file writes |
+| Codex | shell and `multi_agent` only. Every other native feature is disabled (browser, computer use, image generation…). Todos via `update_plan`. | Writes: Codex's sandbox is `read-only` in **every** mode, so `apply_patch` and shell writes fail |
+| Cursor | `Read`, `List`, `ListDir`, `Glob`, `Grep`, `Search` | `Write`, `Edit`, `Delete`, shell, `task`/subagents, `ComputerUse`, `RecordScreen`, `generateImage` (hooks deny them) |
+| Pi | nothing; Pi stays bridge-only in both modes | everything native |
+
+Where the lists live:
+
+- Claude: `claudeHybridNativeTools` in mcpagent `agent/coding_agent_integrations.go`
+- Codex: `WithCodexReadOnlyHybridTools` (same file) and `CodexReadOnlyHybridDisabledFeatures` in multi-llm-provider-go `pkg/adapters/codexcli/options.go`
+- Muse: `museHybridNativeTools` in mcpagent `agent/coding_agent_options.go`
+- Cursor: `cursorReadOnlyHybridAllowedTools` in multi-llm-provider-go `pkg/adapters/cursorcli/cursorcli_interactive_adapter.go`
+
+`api_transport: native_shell` is still rejected by `validate.go`.
+
+## Turning it on for a crew
+
+Crew page → **Models** tab → **Native agent tools** toggle. This writes
+`capabilities.native_agent_tools: true` to the crew's `workflow.json`.
+`resolveAgentProfileForQuery` (`agent_go/cmd/server/agent_profile_runtime.go`)
+then sets `hybrid` on a copy of the resolved profile, and only when the owner
+runs the crew. Live-checked on and off through `/api/agent-profiles/work/query`.
+
+## Background subagents
+
+With subagents on, both Claude and Muse used to end a turn early with an interim
+"waiting for the subagent" reply. Completion now waits on structured records:
+
+- Claude: the transcript's `turn_duration` row must report
+  `pendingBackgroundAgentCount` 0.
+- Muse: the adapter follows `spawn_accepted` → `inbox_item_queued` → the run that
+  drains it → that run's terminal, and reads the answer from the last run. If the
+  log stops growing for 5 minutes, it stops waiting.
+
+## Tests
+
+Live tests (real CLIs):
+
+- Claude: `HybridNativeToolsP0`, `HybridBackgroundAgentP0`
+- Muse: `ReadOnlyToolsAllowed`, `ProjectedSkillReadNatively`, `SubagentContainment`, `BackgroundSubagentNoEarlyAnswer`
+- Codex: `TestCodexCLIRealReadOnlyHybridP0`, plus its subagent P0
+- Cursor: `TestCursorCLIRealReadOnlyHybridP0`, `BlocksDelete`
+
+Each test also checks that no native write ran.
+
+Stress tests are opt-in: `-coding-cli-stress`, with `CODING_CLI_STRESS_ITERATIONS`
+setting the count. Each iteration runs parallel subagents, todos, a slow MCP tool
+and a mid-turn steer. Results on 2026-09-24: Claude 3/3, Codex 3/3, Muse 3/3,
+Cursor 5/5.

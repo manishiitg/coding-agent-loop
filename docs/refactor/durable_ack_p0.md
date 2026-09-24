@@ -1,5 +1,8 @@
 # Durable submit acknowledgement: file-ack P0 + pane fast-confirm P1
 
+> Completion, final answer, steering and background subagents (all CLIs, current):
+> [../core/coding_cli_turn_signals.md](../core/coding_cli_turn_signals.md).
+
 **Status: all five providers implemented 2026-09-19/20.
 Decision updated 2026-09-20: establish explicit P0 and P1
 contracts. Durable correctness and pane-only safety blockers are

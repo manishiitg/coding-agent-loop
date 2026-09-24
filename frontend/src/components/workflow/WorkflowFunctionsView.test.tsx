@@ -1,0 +1,57 @@
+// @vitest-environment happy-dom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import WorkflowFunctionsView from './WorkflowFunctionsView'
+import { workflowWebhooksApi } from '../../api/workflowWebhooks'
+
+vi.mock('../../api/workflowWebhooks', () => ({ workflowWebhooksApi: { list: vi.fn(), save: vi.fn(), delete: vi.fn() } }))
+vi.mock('../../hooks/useCanWriteWorkflow', () => ({ useCanWriteWorkflow: vi.fn(() => true) }))
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+const webhook = { id: 'hook', name: 'GitHub PRs', enabled: true, auth_mode: 'github' as const, path: '/api/hooks/workflow/hook', route_selections: {}, group_names: [] }
+const fn = { id: 'fn-1', name: 'Review PR', enabled: true, auth_mode: '' as never, path: '', route_selections: { router: 'review' }, group_names: ['default'], kind: 'function' as const,
+  function: { name: 'review_pr', description: 'Review one pull request', inputs: [{ name: 'PR_NUMBER', type: 'integer' as const, required: true }, { name: 'REVIEW_DEPTH' }] } }
+const cleanups: (() => void)[] = []
+beforeEach(() => {
+  vi.mocked(workflowWebhooksApi.list).mockResolvedValue({ triggers: [webhook, fn], groups: ['default'], routes: [{ step_id: 'router', step_title: 'Review or skip', route_id: 'review', route_name: 'Review' }] })
+  vi.mocked(workflowWebhooksApi.save).mockResolvedValue(fn)
+})
+afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.clearAllMocks() })
+
+async function mount(onAsk?: (message: string) => void) {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(<WorkflowFunctionsView workspacePath="Workflow/gate" onAsk={onAsk} />))
+  await act(async () => { await Promise.resolve() })
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  return host
+}
+
+it('lists typed functions and the built-in ask, not webhooks', async () => {
+  const host = await mount()
+  const card = host.querySelector('[data-testid="workflow-function-review_pr"]')!
+  expect(card.textContent).toContain('PR_NUMBER: integer, REVIEW_DEPTH: string?')
+  expect(card.textContent).toContain('Review or skip → Review')
+  expect(host.querySelector('[data-testid="workflow-function-ask"]')?.textContent).toContain('Run mode')
+  expect(host.textContent).not.toContain('GitHub PRs')
+})
+
+it('pauses a function and routes edits to the Builder chat', async () => {
+  const onAsk = vi.fn()
+  const host = await mount(onAsk)
+  const buttons = [...host.querySelectorAll('button')]
+  await act(async () => { buttons.find(button => button.textContent === 'Pause')!.click() })
+  expect(workflowWebhooksApi.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'fn-1', enabled: false, kind: 'function', workspace_path: 'Workflow/gate' }), 'fn-1')
+  await act(async () => { buttons.find(button => button.textContent === 'Edit in chat')!.click() })
+  expect(onAsk).toHaveBeenCalledWith(expect.stringContaining('review_pr'))
+})
+
+it('offers to add a function when there is none', async () => {
+  vi.mocked(workflowWebhooksApi.list).mockResolvedValue({ triggers: [webhook], groups: [], routes: [] })
+  const onAsk = vi.fn()
+  const host = await mount(onAsk)
+  const add = [...host.querySelectorAll('button')].find(button => button.textContent === 'Add a function in chat')!
+  await act(async () => { add.click() })
+  expect(onAsk).toHaveBeenCalled()
+})

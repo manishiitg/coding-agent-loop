@@ -39,7 +39,9 @@ may also create the same binding explicitly with `manage_workflow_webhook`.
 ### Workflow functions (kind=function)
 
 Crews, other workflows and MCP/CLI tools call this workflow through its
-**functions**, never with free text. A function is a trigger with
+**functions**. Free text goes to `ask`, which reaches this workflow's
+assistant in Run mode (one continuing thread per caller), never straight into
+a run; the assistant picks the route and variables itself. A function is a trigger with
 `kind: "function"`: the same fixed `route_selections` and `group_names` as a
 webhook, plus `function: {name, description, inputs}`. It has no URL and no
 secret; the platform identifies the caller, who must be able to run this
@@ -68,7 +70,7 @@ Example: `{"action":"create","kind":"function","name":"Review PR","enabled":true
 
 Builder chat calls a Crew or another workflow through its functions:
 `list_functions`, then `call_function` (every Crew has `ask` for free-form
-tasks; a workflow offers only its function triggers). A quick call returns its result directly; a long one comes back to this
+tasks; a workflow's `ask` reaches its assistant). A quick call returns its result directly; a long one comes back to this
 chat as an [AUTO-NOTIFICATION]. A called Crew runs it in its own continuing
 conversation with this workflow, never in its main chat. A workflow may bind another workflow as an internal
 caller (`caller.type: workflow`), and a Crew trigger may name a Crew caller.

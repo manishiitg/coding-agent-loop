@@ -26,6 +26,10 @@ profile:
   # plus that text). /pulse stays a hardcoded builtin: it is an async
   # frontend API call no static prompt can express.
   commands:
+    # Pulse keeps two chat commands: /pulse (builtin) and /run-goal-work, which
+    # takes a focus. Plan Drift, Technical and Architecture are started from
+    # the Pulse tab (its buttons execute these hidden commands, one prompt per
+    # action) or automatically by fix runs.
     - name: design-plan
       description: Comprehensively review the plan, dependent artifacts, and better design options
       icon: git-branch
@@ -34,6 +38,7 @@ profile:
       description: Check the plan still fits its steps, reports and schedules; fix small breaks
       icon: refresh-cw
       aliases: [review-artifact-drift]
+      menu_hidden: true
       file: commands/run-plan-drift.md
     - name: design-dashboard
       description: 'Design the dashboard from scratch: one live-data HTML dashboard at db/reports/index.html'
@@ -45,11 +50,6 @@ profile:
       icon: target
       aliases: [define-success]
       file: commands/setup-goals.md
-    - name: merge-pulse-issues
-      description: Merge duplicate Pulse issues without changing the workflow
-      icon: layers
-      aliases: [pulse-merge]
-      file: commands/merge-pulse-issues.md
     - name: run-goal-work
       description: Find and do the work that would move your goals
       icon: target
@@ -59,15 +59,13 @@ profile:
       description: Find and fix what is broken in runs, validation, reports and stores
       icon: check-circle
       aliases: [pulse-review]
+      menu_hidden: true
       file: commands/run-technical-review.md
     - name: run-architecture-review
       description: Research better ways to structure the workflow; proposes, never edits
       icon: git-branch
+      menu_hidden: true
       file: commands/run-architecture-review.md
-    - name: pulse-fixer
-      description: Independently repair one coherent objective from reviewed Pulse issues
-      icon: refresh-cw
-      file: commands/pulse-fixer.md
     - name: review-code
       description: Review saved code and JSON parameters; propose code/ migration with focused tests
       icon: file-text

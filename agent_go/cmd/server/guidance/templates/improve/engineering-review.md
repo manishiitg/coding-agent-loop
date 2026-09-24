@@ -16,10 +16,9 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    Standalone Operations Review dispatch and read-only return wrapper: do not launch its
    standalone wrapper. Apply only its relevant checks inside this conversation,
    persist evidence-backed findings, and leave implementation changes to a
-   later Fix phase. The caller may supply that phase as the next
-   message in this retained conversation, or the operator may invoke
-   `/pulse-fixer` separately; neither possibility grants mutation authority in
-   this review turn.
+   later Fix phase: the caller supplies it as the next message in this
+   retained conversation. That later message does not grant mutation
+   authority in this review turn.
 2. Use `pulse_run_id="current"`, which resolves to this current Workflow Builder
    chat. This is a manual Technical Review, not a scheduled Pulse Gate pass:
    call `record_pulse_result(workspace_path=<this workflow>,
@@ -71,6 +70,4 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    dispositions; it must not invent a separate completion handshake.
 5. Finish with a concise summary of what was reviewed, promoted, linked,
    rejected, already verified, awaiting evidence, or blocked. State whether at
-   least one safe canonical issue is actionable for the later Fix phase; do not
-   assume whether the caller supplied that phase or the operator
-   will invoke `/pulse-fixer` separately.
+   least one safe canonical issue is actionable for the later Fix phase.

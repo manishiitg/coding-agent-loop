@@ -40,7 +40,6 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 		"setup-goals":          `kind="setup-goals"`,
 		"run-goal-work":        `kind="strategy-auditor"`,
 		"run-technical-review": `kind="engineering-review"`,
-		"pulse-fixer":          `kind="pulse-fixer"`,
 		"review-code":          `kind="design-plan"`,
 	} {
 		prompt, ok := byName[name]
@@ -51,7 +50,7 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 			t.Fatalf("command %q prompt does not name its guidance kind %s", name, wantKind)
 		}
 	}
-	for _, name := range []string{"merge-pulse-issues", "run-architecture-review", "backup", "publish", "notify"} {
+	for _, name := range []string{"run-architecture-review", "backup", "publish", "notify"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("command %q missing from product.yaml", name)
 		}
@@ -67,7 +66,6 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 		"run-goal-work":        {"strategy-auditor", "goal-advisor"},
 		"run-plan-drift":       {"review-artifact-drift"},
 		"run-technical-review": {"pulse-review"},
-		"merge-pulse-issues":   {"pulse-merge"},
 	} {
 		got := aliases[name]
 		if !slices.Equal(got, wantAliases) {
@@ -95,7 +93,22 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 			t.Fatalf("retained shortcut %q must share the run-technical-review prompt", name)
 		}
 	}
-	if len(byName) != 13+len(legacy) {
-		t.Fatalf("product.yaml carries %d commands, want %d", len(byName), 13+len(legacy))
+	// Pulse keeps two chat commands in the menu; upkeep reviews are started
+	// from the Pulse tab, and fix runs replace the standalone fixer and merge.
+	for _, name := range []string{"run-plan-drift", "run-technical-review", "run-architecture-review"} {
+		if !hidden[name] {
+			t.Fatalf("%s must be hidden from the slash menu: the Pulse tab starts it", name)
+		}
+	}
+	for _, retired := range []string{"pulse-fixer", "merge-pulse-issues"} {
+		if _, ok := byName[retired]; ok {
+			t.Fatalf("%s is retired: fix runs replace it", retired)
+		}
+	}
+	if hidden["run-goal-work"] {
+		t.Fatal("run-goal-work stays in the slash menu: it takes a focus from chat")
+	}
+	if len(byName) != 11+len(legacy) {
+		t.Fatalf("product.yaml carries %d commands, want %d", len(byName), 11+len(legacy))
 	}
 }

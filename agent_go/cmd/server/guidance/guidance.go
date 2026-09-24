@@ -330,7 +330,7 @@ type DefinitionToolRegistrar interface {
 func RegisterGuidanceTool(agent DefinitionToolRegistrar, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /design-plan or /run-technical-review — for most commands the slash name IS the kind, but a focused Pulse " +
+		"like /design-plan or /run-goal-work — for most commands the slash name IS the kind, but a focused Pulse " +
 		"review alias (e.g. /pulse-review-validation-contract, /pulse-review-execution-health) maps to a DIFFERENT " +
 		"kind and a specific focus; when the dispatch message explicitly states kind=... and focus=... (as these " +
 		"aliases do), use those exact literal values — never derive kind from the alias text itself. Pass the " +

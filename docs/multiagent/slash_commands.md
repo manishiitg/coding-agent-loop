@@ -86,15 +86,13 @@ Builder slash commands are declared in `agent_go/internal/agentworksproduct/prod
 | Command | Aliases | Backend Kind |
 |---------|---------|--------------|
 | `/design-plan` | | `design-plan` |
-| `/run-plan-drift` | `/review-artifact-drift` | `review-artifact-drift` |
+| `/run-plan-drift` (hidden; Pulse tab button) | `/review-artifact-drift` | `review-artifact-drift` |
 | `/design-dashboard` | `/design-reporting-ui` | `design-reporting-ui` |
 | `/setup-goals` | `/define-success` | `setup-goals` |
 | `/run-goal-work` | `/strategy-auditor`, `/goal-advisor` | `strategy-auditor` |
-| `/run-technical-review` (+ 7 hidden `pulse-review-*` focus shortcuts) | `/pulse-review` | `engineering-review` |
-| `/run-architecture-review` | | prompt only (`references/architecture-review.md`) |
-| `/pulse-fixer` | | `pulse-fixer` |
+| `/run-technical-review` (hidden; Pulse tab button; + 7 hidden `pulse-review-*` focus shortcuts) | `/pulse-review` | `engineering-review` then `pulse-fixer` |
+| `/run-architecture-review` (hidden; Pulse tab button) | | prompt only (`references/architecture-review.md`) |
 | `/review-code` | | `design-plan` (architecture focus) |
-| `/merge-pulse-issues` | `/pulse-merge` | prompt only (typed Pulse tools) |
 | `/backup` | | prompt only |
 | `/publish` | | prompt only |
 | `/notify` | | prompt only |

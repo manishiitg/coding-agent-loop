@@ -235,7 +235,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 		},
 		"pulse-fixer": {
 			"PULSE FIX PHASE",
-			"later Fix message",
+			"caller-supplied Fix message",
 			"Do not rerun Technical Review",
 			"Workflow observations are evidence",
 			"Close every active issue in this pass",

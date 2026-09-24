@@ -39,8 +39,25 @@ browser tab ──GET /api/live (SSE)──> agent server
    writers ── livefeed.Publish(kind, workflow) ──┘
 ```
 
-Chat sessions keep their own streams (`/api/sessions/{id}/events/stream`)
-for now. Folding them into this connection is Phase 4.
+### Scope: the header and the right pane
+
+The feed exists for two surfaces:
+
+- **Header (top bar):**
+  - the activity monitor (`GlobalActivityMonitor`, from `header-summary`)
+  - the global and workflow activity buttons (notifications and pending
+    "needs your input" counts)
+  - the scheduler-paused indicator
+  - runtime health (browser sessions)
+- **Right pane (workspace views in `WorkspaceViewHost`):** Plan canvas, Pulse,
+  Report, Backup, Publish, notifications and decisions. Each view refetches
+  only while it is the open view.
+
+**Chat conversations are out of scope.** They keep their own per-session
+streams (`/api/sessions/{id}/events/stream`) unchanged. This feed never
+carries chat events, token deltas or session transcripts. The `sessions` kind
+below only tells the header's activity monitor that the list of running
+sessions changed. It carries nothing from inside a conversation.
 
 ### Wire format
 
@@ -56,16 +73,16 @@ data: {}
 
 These are the kinds, and the refetch each one triggers:
 
-| kind | Scope | Client refetches |
-|---|---|---|
-| `sessions` | user | `header-summary` |
-| `schedules` | global | `header-summary` (schedule summary) |
-| `plan` | workflow | plan and changelog head (only while the canvas is visible) |
-| `pulse_state` | workflow | `pulse-module-state` (only while the Pulse view is open) |
-| `notifications` | workflow | org-dashboard notifications |
-| `human_inputs` | workflow | `report-human-inputs` and the aggregate |
-| `scheduler_config` | global | `scheduler/config` |
-| `browser_sessions` | global | `browser/sessions` |
+| kind | Scope | Surface | Client refetches |
+|---|---|---|---|
+| `sessions` | user | Header: activity monitor | `header-summary` |
+| `schedules` | global | Header: activity monitor | `header-summary` (schedule summary) |
+| `notifications` | workflow | Header: activity buttons; right pane: notifications | org-dashboard notifications |
+| `human_inputs` | workflow | Header: pending count; right pane: decisions | `report-human-inputs` and the aggregate |
+| `scheduler_config` | global | Header: scheduler-paused indicator | `scheduler/config` |
+| `browser_sessions` | global | Header: runtime health | `browser/sessions` |
+| `plan` | workflow | Right pane: Plan canvas (only while visible) | plan and changelog head |
+| `pulse_state` | workflow | Right pane: Pulse (only while open) | `pulse-module-state` |
 
 A notice never contains the changed data. The client always refetches through
 the existing endpoint, which applies its own access rules. This keeps the
@@ -166,8 +183,9 @@ This adds one long-lived connection per tab.
   this costs nothing.
 - **Plain HTTP/1.1 (local dev, some self-hosted setups):** the browser cap of
   6 connections per origin already squeezes the per-session chat streams
-  (`ChatArea.tsx:2397`). This adds one more. Phase 4 removes that pressure by
-  carrying session events on this same connection.
+  (`ChatArea.tsx:2397`). This adds one more. The feed opens after the active
+  chat's stream and stays a single connection per tab. If it cannot get a
+  slot, the client falls back to polling instead of queueing behind chat.
 
 ## Phases
 
@@ -179,9 +197,6 @@ This adds one long-lived connection per tab.
    timers, and add publish-on-session-completion.
 3. **The rest.** `scheduler_config` and `browser_sessions`. Gate
    `RuntimeHealthControl` on tab visibility.
-4. **Optional.** Carry per-session chat events on the same connection
-   (subscribe/unsubscribe per open chat over a small POST) and retire the
-   per-session EventSources.
 
 Each phase keeps the polling fallback. A phase is done only when the gateway
 log on Dominion shows that endpoint's idle rate near zero.

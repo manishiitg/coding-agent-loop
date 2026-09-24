@@ -184,7 +184,9 @@ it('does not show a retained test frame when the shared browser is selected', as
   const { host, selector } = await mountBrowser()
   await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/test' }) }) })
   await pollBrowsers([shared, crew])
-  await act(async () => { selector.value = 'shared-browser'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
+  // A live frame switches to the compact bar, which re-renders the picker.
+  const current = (host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement | null) ?? selector
+  await act(async () => { current.value = 'shared-browser'; current.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(host.querySelector('img')).toBeNull()
   expect(host.textContent).not.toContain('Completed')
 })
@@ -198,7 +200,8 @@ it('plays completed tests, offers download, and deletes the replay when the pane
   expect(host.querySelector('video')?.getAttribute('src')).toBe('blob:replay')
   expect(host.querySelector('video')?.controls).toBe(true)
   expect(host.querySelector('a[download]')?.getAttribute('href')).toBe('blob:replay')
-  expect(host.textContent).toContain('Closing this panel deletes')
+  expect(host.querySelector('[role="note"]')?.getAttribute('aria-label')).toContain('deleted when this panel closes')
+  expect(host.textContent).not.toContain('Closing this panel deletes')
   expect(FakeSocket.instances).toHaveLength(0)
   expect(api.post).not.toHaveBeenCalledWith(expect.anything(), { action: 'delete' }, expect.anything())
   await act(async () => { root.unmount(); await new Promise(resolve => setTimeout(resolve, 5)) })
@@ -260,16 +263,15 @@ it('allows tall page resizing only after control and maps clicks to the new view
   expect(size.disabled).toBe(true)
 })
 
-it('renders the standard header with the session picker below it', async () => {
+it('puts the session picker in the header instead of a separate row', async () => {
   api.get.mockResolvedValue({ data: { sessions: [shared, crew] } })
   const { host, selector } = await mountBrowser()
   expect(host.querySelector('header h2')?.textContent).toBe('Browser')
   expect(host.querySelector('header [role="status"]')?.textContent).toBeTruthy()
-  expect(host.textContent).toContain('See what your helper does in its browser.')
+  // With browsers to pick from, the picker replaces the explanatory subtitle.
+  expect(host.textContent).not.toContain('See what your helper does in its browser.')
   expect(host.textContent).not.toContain('streaming-capable')
-  const header = host.querySelector('header')!
-  expect(header.contains(selector)).toBe(false)
-  expect(header.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(host.querySelector('header')!.contains(selector)).toBe(true)
 })
 
 const frameMessage = (data = '/9j/') => ({ data: JSON.stringify({ type: 'frame', data, metadata: { deviceWidth: 1280, deviceHeight: 800 } }) })

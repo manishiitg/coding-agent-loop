@@ -52,7 +52,7 @@ type triggerTarget struct {
 	// CrewOwner is the user whose workspace holds a Crew target. Crews are
 	// shared server-wide, so it may differ from the requester.
 	CrewOwner string
-	Manifest    *WorkflowManifest
+	Manifest  *WorkflowManifest
 }
 
 // ownerOr returns the Crew target's owner, falling back to userID.

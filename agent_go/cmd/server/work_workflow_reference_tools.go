@@ -122,7 +122,6 @@ func listCrewProjectsForOwner(ctx context.Context, userID, ownerID, query string
 	return items, nil
 }
 
-
 func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...string) {
 	cfg := common.GetSessionShellConfig(sessionID)
 	if cfg == nil {

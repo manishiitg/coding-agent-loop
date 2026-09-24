@@ -1219,6 +1219,30 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 	return s.triggerSavedSchedule(workspacePath, scheduleID, originSessionID, nil)
 }
 
+// webhookDeliveryStartError re-checks a delivery's group and variables
+// against the trigger as saved now. A function trigger's variables are its
+// declared inputs; any other trigger's are its allowed_variables.
+func webhookDeliveryStartError(sched WorkflowSchedule, input *WorkflowWebhookDelivery) error {
+	if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
+		return errors.New("group is no longer allowed by this trigger")
+	}
+	if sched.Webhook == nil && !sched.IsFunctionTrigger() {
+		return nil
+	}
+	var allowed []string
+	if sched.IsFunctionTrigger() {
+		allowed = workflowFunctionInputNames(sched.Function)
+	} else {
+		allowed = sched.Webhook.AllowedVariables
+	}
+	for name := range input.Variables {
+		if !slices.Contains(allowed, name) {
+			return fmt.Errorf("variable %q is no longer allowed by this trigger", name)
+		}
+	}
+	return nil
+}
+
 func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, originSessionID string, input *WorkflowWebhookDelivery) (string, error) {
 	ctx := context.Background()
 
@@ -1251,17 +1275,8 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		sctx.TriggerSource = "webhook"
 		sctx.WebhookInput = input
-		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
-			return "", errors.New("group is no longer allowed by this trigger")
-		}
-		// Internal triggers carry no per-trigger variable allowlist; workflow-
-		// declared variables are still gated by validateWebhookVariableNames.
-		if sched.Webhook != nil {
-			for name := range input.Variables {
-				if !slices.Contains(sched.Webhook.AllowedVariables, name) {
-					return "", fmt.Errorf("variable %q is no longer allowed by this trigger", name)
-				}
-			}
+		if err := webhookDeliveryStartError(*sched, input); err != nil {
+			return "", err
 		}
 		if input.Group != "" {
 			sctx.Schedule.GroupNames = []string{input.Group}

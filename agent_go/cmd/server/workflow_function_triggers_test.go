@@ -251,3 +251,25 @@ func TestWorkflowAskUsesCallersAssistantThread(t *testing.T) {
 		t.Fatal("another caller must get its own thread")
 	}
 }
+
+// The run-start check must accept a function's own inputs (RTS 2026-09-24:
+// review_pr failed with "GITHUB_OWNER is no longer allowed" because function
+// triggers have no allowed_variables list).
+func TestFunctionTriggerVariablesPassRunStartCheck(t *testing.T) {
+	sched := reviewPRTrigger()
+	input := &WorkflowWebhookDelivery{Variables: map[string]string{"GITHUB_OWNER": "acme", "GITHUB_REPO": "app", "PR_NUMBER": "149"}, Group: "staging"}
+	if err := webhookDeliveryStartError(sched, input); err != nil {
+		t.Fatalf("function inputs rejected at run start: %v", err)
+	}
+	input.Variables["OTHER"] = "x"
+	if err := webhookDeliveryStartError(sched, input); err == nil || !strings.Contains(err.Error(), `"OTHER"`) {
+		t.Fatalf("undeclared variable: err = %v", err)
+	}
+	hook := WorkflowSchedule{ScheduleType: "webhook", Webhook: &WorkflowWebhookConfig{AllowedVariables: []string{"PR_NUMBER"}}}
+	if err := webhookDeliveryStartError(hook, &WorkflowWebhookDelivery{Variables: map[string]string{"PR_NUMBER": "1"}}); err != nil {
+		t.Fatalf("webhook allow-list: %v", err)
+	}
+	if err := webhookDeliveryStartError(hook, &WorkflowWebhookDelivery{Variables: map[string]string{"GITHUB_OWNER": "a"}}); err == nil {
+		t.Fatal("webhook must still reject variables outside allowed_variables")
+	}
+}

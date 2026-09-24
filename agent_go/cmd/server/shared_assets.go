@@ -151,8 +151,20 @@ func (api *StreamingAPI) servePublicAsset(w http.ResponseWriter, r *http.Request
 		return
 	}
 	full := string(decoded)
-	root, p, ok := authorizedSharedAsset(w, r, full)
-	if !ok {
+	crewRoot, crewPath, crewRootView, handled, crewOK := api.crewReaderSharedAsset(w, r, full)
+	if handled && !crewOK {
+		return
+	}
+	root, p := crewRoot, crewPath
+	if !handled {
+		var ok bool
+		if root, p, ok = authorizedSharedAsset(w, r, full); !ok {
+			return
+		}
+	}
+	if crewRootView && operation == "archive" {
+		// A crew-root archive would include the owner's private areas.
+		externalError(w, 403, "protected_path", "Download a folder inside this crew instead.")
 		return
 	}
 	if operation != "list" {
@@ -175,6 +187,16 @@ func (api *StreamingAPI) servePublicAsset(w http.ResponseWriter, r *http.Request
 	if json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(&listing) != nil {
 		externalError(w, 502, "invalid_response", "Invalid asset listing.")
 		return
+	}
+	if crewRootView {
+		visible := listing.Data[:0]
+		for _, entry := range listing.Data {
+			// Entries are relative to root; name them relative to the crew root.
+			if name, _ := entry["filepath"].(string); crewRootListingVisible(strings.TrimPrefix(strings.TrimPrefix(name, p), "/")) {
+				visible = append(visible, entry)
+			}
+		}
+		listing.Data = visible
 	}
 	// Preserve the existing SharedFolder response shape and full display paths.
 	displayRoot := strings.TrimSuffix(strings.TrimSuffix(full, p), "/")

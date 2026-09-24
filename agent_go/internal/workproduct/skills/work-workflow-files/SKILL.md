@@ -104,10 +104,17 @@ with the call's arguments.
 A Crew or workflow offers **functions**: a name, typed input and result
 schemas, and instructions, stored in its `functions.json`.
 
-- **`ask`** — every Crew and workflow has the built-in `ask(message)`
-  (generated as `<crew>__ask`). Its result is `{answer}`, the target's final
-  reply. Use it for free-form questions and one-off tasks. A declared `ask`
-  replaces it.
+- **`ask`** — every Crew has the built-in `ask(message)` (generated as
+  `<crew>__ask`). Its result is `{answer}`, the Crew's final reply. Use it for
+  free-form questions and one-off tasks. A declared `ask` replaces it.
+- **Workflow functions** — a workflow offers only the functions its Builder
+  exposed as function triggers: a fixed route plus typed inputs, each set as a
+  workflow variable for that run (e.g. `review_pr(GITHUB_OWNER, GITHUB_REPO,
+  PR_NUMBER)`). It has no `ask`, and a call with a missing, unknown or
+  mistyped input is refused before anything runs, so pass every required
+  input. The result is the run's outcome: status, error and each step's
+  output (a "skipped" step says why). If a workflow offers no fitting
+  function, tell the user its Builder must expose one.
 - **Discover** — `list_functions(target)` shows what a target offers. Generated
   tools named `<crew>__<function>` appear for tagged or attached targets.
 - **Call** — `call_function(target, function, args)` validates `args`, runs the
@@ -124,8 +131,9 @@ schemas, and instructions, stored in its `functions.json`.
   report.
 - **Offer** — `define_function(name, description, instructions, input_schema,
   result_schema)` declares a function on this Crew (omit `target`) or on
-  another Crew or editable workflow; `delete_function` removes it. If the
-  same ask keeps arriving, suggest turning it into a typed function.
+  another Crew; `delete_function` removes it. Workflow functions are made in
+  that workflow's Builder chat instead. If the same ask keeps arriving,
+  suggest turning it into a typed function.
 - **Serve** — when you receive a `[Function call <id>]` task, do the work,
   report milestones with `report_function_progress(call_id, message,
   percent)`, and finish with `return_function_result(call_id, result)` (or

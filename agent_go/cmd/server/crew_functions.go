@@ -50,6 +50,8 @@ type crewFunction struct {
 	CreatedBy    string                 `json:"created_by,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
+	// TriggerID is set on a workflow function: the function trigger it runs.
+	TriggerID string `json:"trigger_id,omitempty"`
 }
 
 type crewFunctionsDoc struct {
@@ -96,7 +98,7 @@ func writeCrewFunctions(ctx context.Context, target triggerTarget, functions []c
 	return writeFileToWorkspace(ctx, crewFunctionsPath(ctx, target), string(encoded)+"\n")
 }
 
-// crewFunctionAskName is the implicit function every Crew and workflow
+// crewFunctionAskName is the implicit function every Crew
 // offers: a free-text question answered by the target's final reply, over
 // the standard inbound trigger. A declared function of the same name wins.
 const crewFunctionAskName = "ask"
@@ -104,7 +106,7 @@ const crewFunctionAskName = "ask"
 func defaultAskCrewFunction() crewFunction {
 	return crewFunction{
 		Name:        crewFunctionAskName,
-		Description: "Ask this Crew or workflow anything in free text; the answer is its final reply. Available on every Crew and workflow without setup.",
+		Description: "Ask this Crew anything in free text; the answer is its final reply. Available on every Crew without setup.",
 		InputSchema: map[string]interface{}{"type": "object", "required": []interface{}{"message"}, "properties": map[string]interface{}{
 			"message": map[string]interface{}{"type": "string", "description": "Self-contained question or task; the target does not see this conversation."},
 		}},
@@ -114,6 +116,31 @@ func defaultAskCrewFunction() crewFunction {
 		Instructions: "Answer the caller's message. Your final reply is returned to the caller as the answer.",
 		CreatedBy:    "platform (default)",
 	}
+}
+
+// callableFunctions is what a target offers callers. A Crew offers its
+// declared functions plus the built-in ask. A workflow offers its function
+// triggers only: it is not a conversational agent, so free text has no
+// defined inputs to set and was silently run against saved values.
+func callableFunctions(ctx context.Context, target triggerTarget) ([]crewFunction, error) {
+	if target.Kind == triggerCallerWorkflow {
+		manifest, exists, err := ReadWorkflowManifest(ctx, target.Path)
+		if err != nil || !exists || manifest == nil {
+			return nil, fmt.Errorf("workflow %q is unavailable", target.Label)
+		}
+		return workflowFunctions(manifest), nil
+	}
+	functions, err := readCrewFunctions(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return withDefaultAskFunction(functions), nil
+}
+
+// errWorkflowFunctionsAreTriggers refuses define/delete_function on a
+// workflow: its functions are function triggers owned by its Builder.
+func errWorkflowFunctionsAreTriggers(target triggerTarget) error {
+	return fmt.Errorf("workflow %q defines its functions as function triggers in its Builder chat (manage_workflow_webhook kind=function: a route plus typed inputs bound to workflow variables); ask its Builder to add or change one", target.Label)
 }
 
 // withDefaultAskFunction returns the declared functions plus the implicit
@@ -459,8 +486,12 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	if args == nil {
 		args = map[string]interface{}{}
 	}
-	if problems := validateCrewFunctionValue(fn.InputSchema, args); len(problems) > 0 {
-		return nil, fmt.Errorf("arguments do not match %s's input schema: %s", fn.Name, strings.Join(problems, "; "))
+	// A workflow function checks its own inputs on dispatch, with messages
+	// that name the missing or unknown input.
+	if target.Kind != triggerCallerWorkflow {
+		if problems := validateCrewFunctionValue(fn.InputSchema, args); len(problems) > 0 {
+			return nil, fmt.Errorf("arguments do not match %s's input schema: %s", fn.Name, strings.Join(problems, "; "))
+		}
 	}
 	callerKey := crewFunctionKey(caller.Stamp.Type, caller.Stamp.ID)
 	targetKey := crewFunctionKey(target.Kind, target.stampID())
@@ -485,9 +516,15 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	if crewFunctionChainCalls(root) >= crewFunctionChainBudget {
 		return nil, fmt.Errorf("refused: this call chain already made %d function calls", crewFunctionChainBudget)
 	}
-	triggerID, _, err := api.connectTriggerTarget(ctx, userID, caller, target)
-	if err != nil {
-		return nil, err
+	// A Crew call rides this caller's binding on the Crew; a workflow
+	// function runs its own function trigger.
+	triggerID := fn.TriggerID
+	if target.Kind != triggerCallerWorkflow {
+		var err error
+		triggerID, _, err = api.connectTriggerTarget(ctx, userID, caller, target)
+		if err != nil {
+			return nil, err
+		}
 	}
 	now := time.Now().UTC()
 	call := &crewFunctionCall{
@@ -507,7 +544,21 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	crewFunctionCalls.Lock()
 	crewFunctionCalls.m[id] = call
 	crewFunctionCalls.Unlock()
-	delivery, err := api.dispatchTargetTrigger(ctx, userID, caller, target, triggerID, id, crewFunctionEvent, body)
+	var delivery internalTriggerDeliveryResult
+	var err error
+	if target.Kind == triggerCallerWorkflow {
+		// Inputs are checked here, before anything runs: a missing or unknown
+		// input comes straight back to the caller.
+		_, delivery, err = api.scheduler.dispatchWorkflowFunction(ctx, workflowFunctionCall{
+			WorkflowID: target.Manifest.ID, Function: fn.Name, Caller: caller.Stamp, DeliveryID: id, Args: args,
+			Payload: map[string]interface{}{"call_id": id, "from": body["from"]},
+		})
+		if err != nil {
+			err = crewWorkflowRunError(err)
+		}
+	} else {
+		delivery, err = api.dispatchTargetTrigger(ctx, userID, caller, target, triggerID, id, crewFunctionEvent, body)
+	}
 	if err != nil {
 		crewFunctionCalls.Lock()
 		delete(crewFunctionCalls.m, id)
@@ -794,13 +845,15 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 	}
 	targetSchema := map[string]interface{}{"type": "string", "description": "The Crew or workflow: its name, a #crew:<name> / #workflow:<name> tag, or its exact workspace_path."}
 	callFunction := func(ctx context.Context, caller triggerLinkCaller, target triggerTarget, function string, args map[string]interface{}, notify bool, timeout time.Duration) (string, error) {
-		functions, err := readCrewFunctions(ctx, target)
+		functions, err := callableFunctions(ctx, target)
 		if err != nil {
 			return "", err
 		}
-		functions = withDefaultAskFunction(functions)
 		fn, ok := findCrewFunction(functions, function)
 		if !ok {
+			if len(functions) == 0 {
+				return "", fmt.Errorf("%s %q offers no functions; ask its Builder to expose one (a function trigger with typed inputs)", target.Kind, target.Label)
+			}
 			return "", fmt.Errorf("%s %q has no function %q; it has: %s", target.Kind, target.Label, function, strings.Join(crewFunctionNames(functions), ", "))
 		}
 		call, err := api.startCrewFunctionCall(ctx, userID, caller, target, fn, args, timeout)
@@ -871,6 +924,9 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err := checkCrewFunctionSchema(resultSchema, "result_schema"); err != nil {
 			return "", err
 		}
+		if target.Kind == triggerCallerWorkflow {
+			return "", errWorkflowFunctionsAreTriggers(target)
+		}
 		functions, err := readCrewFunctions(ctx, target)
 		if err != nil {
 			return "", err
@@ -909,6 +965,9 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			return "", err
 		}
 		name, _ := args["name"].(string)
+		if target.Kind == triggerCallerWorkflow {
+			return "", errWorkflowFunctionsAreTriggers(target)
+		}
 		functions, err := readCrewFunctions(ctx, target)
 		if err != nil {
 			return "", err
@@ -945,11 +1004,10 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err != nil {
 			return "", err
 		}
-		functions, err := readCrewFunctions(ctx, target)
+		functions, err := callableFunctions(ctx, target)
 		if err != nil {
 			return "", err
 		}
-		functions = withDefaultAskFunction(functions)
 		listed := make([]map[string]interface{}, 0, len(functions))
 		for _, fn := range functions {
 			listed = append(listed, map[string]interface{}{"name": fn.Name, "description": fn.Description, "input_schema": fn.InputSchema, "result_schema": fn.ResultSchema, "created_by": fn.CreatedBy})
@@ -1200,11 +1258,11 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err != nil || caller.isTarget(target) {
 			continue
 		}
-		functions, err := readCrewFunctions(ctx, target)
+		functions, err := callableFunctions(ctx, target)
 		if err != nil {
 			continue
 		}
-		for _, fn := range withDefaultAskFunction(functions) {
+		for _, fn := range functions {
 			toolName := crewFunctionToolName(target.Label, fn.Name)
 			if seen[toolName] {
 				continue

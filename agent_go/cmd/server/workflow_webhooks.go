@@ -135,6 +135,7 @@ type workflowWebhookResponse struct {
 	Secret           string                          `json:"secret,omitempty"`
 	Kind             string                          `json:"kind,omitempty"`
 	Caller           *triggerCaller                  `json:"caller,omitempty"`
+	Function         *WorkflowFunctionSpec           `json:"function,omitempty"`
 }
 
 type workflowWebhookRequest struct {
@@ -151,11 +152,13 @@ type workflowWebhookRequest struct {
 	RotateSecret     bool                            `json:"rotate_secret"`
 	Kind             string                          `json:"kind,omitempty"`
 	Caller           *triggerCaller                  `json:"caller,omitempty"`
+	Function         *WorkflowFunctionSpec           `json:"function,omitempty"`
 }
 
-// IsInternalTrigger reports whether the schedule is invokable only through internal dispatch.
+// IsInternalTrigger reports whether the schedule is invokable only through
+// internal dispatch (no public URL): a caller binding or a function.
 func (s WorkflowSchedule) IsInternalTrigger() bool {
-	return s.ScheduleType == "webhook" && isInternalTriggerKind(s.Kind)
+	return s.ScheduleType == "webhook" && (isInternalTriggerKind(s.Kind) || isFunctionTriggerKind(s.Kind))
 }
 
 func validateWebhookSchedule(s WorkflowSchedule) error {
@@ -165,10 +168,22 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 		}
 		return nil
 	}
-	if kind := strings.TrimSpace(s.Kind); kind != "" && !isInternalTriggerKind(kind) {
-		return errors.New("webhook kind must be \"internal\"")
+	if kind := strings.TrimSpace(s.Kind); kind != "" && !isInternalTriggerKind(kind) && !isFunctionTriggerKind(kind) {
+		return errors.New("webhook kind must be \"internal\" or \"function\"")
 	}
-	if isInternalTriggerKind(s.Kind) {
+	if isFunctionTriggerKind(s.Kind) {
+		if err := validateWorkflowFunctionSpec(s.Function); err != nil {
+			return err
+		}
+		if s.Caller != nil {
+			return errors.New("a function trigger has no caller stamp; limit callers with function.allowed_callers")
+		}
+		if s.Webhook != nil && strings.TrimSpace(s.Webhook.EncryptedSecret) != "" {
+			return errors.New("function triggers issue no secret")
+		}
+	} else if s.Function != nil {
+		return errors.New("function settings require kind=function")
+	} else if isInternalTriggerKind(s.Kind) {
 		if err := validateAnyTriggerCaller(s.Caller); err != nil {
 			return err
 		}
@@ -214,7 +229,7 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 	if s.IsInternalTrigger() {
 		path = ""
 	}
-	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: path, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames, MaxConcurrency: maxWebhookConcurrency, Kind: normalizeTriggerKind(s.Kind), Caller: s.Caller}
+	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: path, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames, MaxConcurrency: maxWebhookConcurrency, Kind: normalizeTriggerKind(s.Kind), Caller: s.Caller, Function: s.Function}
 	if s.Webhook != nil {
 		out.StepID = s.Webhook.StepID
 		out.InputMode = s.Webhook.InputMode
@@ -479,7 +494,7 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		http.Error(w, "name is required", 400)
 		return
 	}
-	if !isInternalTriggerKind(req.Kind) && req.AuthMode != "bearer" && req.AuthMode != "github" {
+	if !isInternalTriggerKind(req.Kind) && !isFunctionTriggerKind(req.Kind) && req.AuthMode != "bearer" && req.AuthMode != "github" {
 		http.Error(w, "auth_mode must be bearer or github", 400)
 		return
 	}
@@ -526,7 +541,12 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 			caller = manifest.Schedules[index].Caller
 		}
 	}
-	internal := isInternalTriggerKind(effectiveKind)
+	function := isFunctionTriggerKind(effectiveKind)
+	spec := req.Function
+	if function && spec == nil && index >= 0 {
+		spec = manifest.Schedules[index].Function
+	}
+	internal := isInternalTriggerKind(effectiveKind) || function
 	if internal {
 		cfg.AuthMode = ""
 		cfg.EncryptedSecret = ""
@@ -586,7 +606,23 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if internal {
+	if function {
+		if err := validateWorkflowFunctionSpec(spec); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if err := validateWebhookVariableNames(r.Context(), req.WorkspacePath, workflowFunctionInputNames(spec)); err != nil {
+			http.Error(w, "function inputs must be declared, non-secret workflow variables: "+err.Error(), 400)
+			return
+		}
+		for _, other := range manifest.Schedules {
+			if other.ID != id && other.IsFunctionTrigger() && other.Function.Name == spec.Name {
+				http.Error(w, fmt.Sprintf("this workflow already has a function named %q", spec.Name), 400)
+				return
+			}
+		}
+		caller = nil
+	} else if internal {
 		if err := validateAnyTriggerCaller(caller); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
@@ -615,6 +651,9 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		caller = nil
 	}
 	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, Kind: normalizeTriggerKind(effectiveKind), Caller: caller, PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish."}
+	if function {
+		sched.Function = spec
+	}
 	if index >= 0 {
 		sched.Description = manifest.Schedules[index].Description
 		sched.ExecutionMode = manifest.Schedules[index].ExecutionMode

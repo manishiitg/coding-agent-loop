@@ -121,7 +121,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
         </section>
       )}
       <div className="space-y-3">
-        {options.triggers.map(trigger => {
+        {options.triggers.filter(trigger => !trigger.kind).map(trigger => {
           const routeSelections = trigger.route_selections || {}
           const groupNames = trigger.group_names || []
           const concurrency = trigger.max_concurrency || 4
@@ -163,8 +163,34 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
             </div>}
           </section>
         })}
-        {options.triggers.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the workflow builder chat to create one.</p>}
+        {options.triggers.filter(trigger => !trigger.kind).length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the workflow builder chat to create one.</p>}
       </div>
+      <section className="space-y-2" data-testid="workflow-functions">
+        <h3 className="text-sm font-semibold">Functions</h3>
+        <p className="text-xs text-muted-foreground">Typed entry points other Crews, workflows and MCP/CLI tools call. Each input sets a workflow variable for that run; a call missing a required input is refused before anything runs. No URL or secret: callers are identified by the platform.</p>
+        {options.triggers.filter(trigger => trigger.kind === 'function' && trigger.function).map(trigger => {
+          const fn = trigger.function!
+          const routeSelections = trigger.route_selections || {}
+          return <div key={trigger.id} data-testid={`workflow-function-${fn.name}`} className="min-w-0 space-y-1.5 rounded-xl border border-border bg-card px-4 py-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-sm font-medium">{fn.name}</span>
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${trigger.enabled ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>{trigger.enabled ? 'Active' : 'Paused'}</span>
+            </div>
+            {fn.description && <p className="text-muted-foreground">{fn.description}</p>}
+            <p><span className="font-medium">Inputs</span> <span className="text-muted-foreground">{(fn.inputs || []).length === 0 ? 'none' : (fn.inputs || []).map(input => `${input.name}: ${input.type || 'string'}${input.required ? '' : '?'}`).join(', ')}</span></p>
+            <p className="text-muted-foreground">Starts {Object.keys(routeSelections).length === 0 ? 'the full workflow' : Object.entries(routeSelections).map(([stepId, routeId]) => {
+              const route = (options.routes || []).find(option => option.step_id === stepId && option.route_id === routeId)
+              return route ? `${route.step_title} → ${route.route_name || routeId}` : `${stepId} → ${routeId}`
+            }).join(', ')}{(trigger.group_names || []).length ? ` · groups ${trigger.group_names.join(', ')}` : ''}{fn.allowed_callers?.length ? ` · only ${fn.allowed_callers.map(caller => caller.id).join(', ')}` : ''}</p>
+            {canWrite && <div className="flex flex-wrap gap-2 pt-1">
+              <button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Pause' : 'Enable'}</button>
+              <button type="button" disabled={busy} className="ml-auto rounded-md px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void remove(trigger.id)}>Remove</button>
+            </div>}
+          </div>
+        })}
+        {options.triggers.filter(trigger => trigger.kind === 'function').length === 0 && <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">No functions. Ask the workflow builder chat to expose a route as a function, e.g. "expose review_pr taking PR_NUMBER".</p>}
+        {options.triggers.some(trigger => trigger.kind === 'internal') && <p className="text-[11px] text-muted-foreground">Older caller links: {options.triggers.filter(trigger => trigger.kind === 'internal').map(trigger => trigger.name).join(', ')}</p>}
+      </section>
       {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}
       {options.route_error && <p className="text-xs text-muted-foreground">{options.route_error}</p>}
       <details className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground">

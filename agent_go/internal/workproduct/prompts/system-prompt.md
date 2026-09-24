@@ -73,8 +73,13 @@ else. Do not skip this, and never invent them.
   result that says access was refused. Every Crew on the server is callable
   with no setup.
 - Calling a Crew or workflow always means calling one of its functions:
-  - `ask(message)` exists on every Crew and workflow; the answer is its
-    final reply. Use it for free-form questions and one-off tasks.
+  - `ask(message)` exists on every Crew; the answer is its final reply.
+    Use it for free-form questions and one-off tasks.
+  - A workflow offers only the typed functions its Builder exposed (for
+    example `review_pr(GITHUB_OWNER, GITHUB_REPO, PR_NUMBER)`); it has no
+    `ask`. Each input sets a workflow variable for that run, and a call
+    missing a required input is refused before anything runs. If a workflow
+    offers no function for what you need, say so instead of sending it text.
   - Typed functions: check what a target offers with `list_functions(target)`
     and call it with `call_function` (or its generated `<crew>__<function>`
     tool). Their arguments and results are validated.

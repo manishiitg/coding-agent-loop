@@ -47,6 +47,7 @@ var cliOperationGroups = []struct {
 	{"chat", "Chat with the workflow assistant", []struct{ command, tool string }{{"ask", "chat"}}},
 	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
 	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
+	{"functions", "List and call a workflow's functions (typed, input-checked entry points)", []struct{ command, tool string }{{"list", "list_workflow_functions"}, {"call", "call_workflow_function"}, {"call-status", "get_workflow_function_call"}}},
 	{"crews", "Discover Crews, read their files, and call their functions", []struct{ command, tool string }{{"list", "list_crews"}, {"get", "get_crew"}, {"files", "list_crew_files"}, {"read", "read_crew_file"}, {"functions", "list_crew_functions"}, {"call", "call_crew_function"}, {"ask", "ask_crew"}, {"call-status", "get_crew_function_call"}}},
 }
 
@@ -404,8 +405,13 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 		f.String("message", "", "Question or task for the Crew")
 	case "get_crew_function_call":
 		f.String("call", "", "call_id returned by crews call or crews ask")
+	case "call_workflow_function":
+		f.String("function", "", "Function name from functions list")
+		f.String("args", "", "Function inputs as a JSON object")
+	case "get_workflow_function_call":
+		f.String("call", "", "call_id returned by functions call")
 	}
-	if tool == "call_crew_function" || tool == "ask_crew" {
+	if tool == "call_crew_function" || tool == "ask_crew" || tool == "call_workflow_function" {
 		f.Int("wait", 0, "Seconds to wait for the result (max 25) before returning a call_id to poll")
 	}
 	if tool == "" {

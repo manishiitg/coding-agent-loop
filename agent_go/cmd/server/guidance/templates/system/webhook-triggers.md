@@ -36,9 +36,39 @@ and `get_workflow_trigger_run`. The read-only attachment authorizes
 `run_workflow_trigger` to create only the secretless internal binding scoped to
 that exact Crew; it does not permit general trigger management. The Builder
 may also create the same binding explicitly with `manage_workflow_webhook`.
+### Workflow functions (kind=function)
+
+Crews, other workflows and MCP/CLI tools call this workflow through its
+**functions**, never with free text. A function is a trigger with
+`kind: "function"`: the same fixed `route_selections` and `group_names` as a
+webhook, plus `function: {name, description, inputs}`. It has no URL and no
+secret; the platform identifies the caller, who must be able to run this
+workflow. Optionally `function.allowed_callers` limits it to named Crews or
+workflows.
+
+- Each input names a declared, non-secret workflow variable (see
+  `list.declared_variables`) and is set as that variable for the run.
+- Mark every input the run cannot do without as `required`, with a `type`
+  (`string`, `integer`, `number`, `boolean`) and a `description`. A call
+  missing a required input, or with an unknown or mistyped one, is refused
+  before anything runs. Never rely on a saved variable value for per-run
+  data such as a PR number: a stale saved value silently ran the wrong PR.
+- Keep provider webhooks separate. A GitHub webhook on the same route keeps
+  its signature check, raw payload and key validation; the function checks
+  only its declared inputs. Both paths should feed the same variables, so
+  the steps read one set of values.
+- The caller gets the run's outcome: status, error and each step's output.
+  Make a step that skips say why in its output.
+
+Example: `{"action":"create","kind":"function","name":"Review PR","enabled":true,
+"route_selections":{"router":"review"},"group_names":["prod"],"function":{"name":
+"review_pr","description":"Review one pull request","inputs":[{"name":
+"GITHUB_OWNER","required":true},{"name":"GITHUB_REPO","required":true},{"name":
+"PR_NUMBER","type":"integer","required":true}]}}`
+
 Builder chat calls a Crew or another workflow through its functions:
-`list_functions`, then `call_function` (every target has `ask` for free-form
-tasks). A quick call returns its result directly; a long one comes back to this
+`list_functions`, then `call_function` (every Crew has `ask` for free-form
+tasks; a workflow offers only its function triggers). A quick call returns its result directly; a long one comes back to this
 chat as an [AUTO-NOTIFICATION]. A called Crew runs it in its own continuing
 conversation with this workflow, never in its main chat. A workflow may bind another workflow as an internal
 caller (`caller.type: workflow`), and a Crew trigger may name a Crew caller.

@@ -41,6 +41,43 @@ routed to their own conversation at dispatch. Old per-run isolated trigger
 chats stay in history. Deferred: an optional one-line summary of each
 finished call in the Crew's main chat.
 
+## 2026-09-24 — workflow functions are function triggers
+
+Incident: the SDE Crew asked the PR-review gate workflow to review #149 with a
+free-text `ask`. A free-text call could not set `GITHUB_OWNER` /
+`GITHUB_REPO` / `PR_NUMBER`, so the gate used the saved `PR_NUMBER=147`, found
+it already merged, skipped, and reported success.
+
+Fix:
+- **Workflows no longer have `ask`.** They offer only function triggers
+  (`kind: "function"`): a fixed route and groups plus
+  `function: {name, description, inputs, allowed_callers}`.
+- **Inputs are declared variables**, typed (`string`, `integer`, `number`,
+  `boolean`), required or optional, optionally with an enum. They are set as
+  that run's variables (`WorkflowWebhookDelivery.Variables` and `Group`).
+- **Checked before anything runs:** a missing required input, an unknown or
+  mistyped input, or a bad group is refused
+  (`workflowFunctionArgs`, `dispatchWorkflowFunction`).
+- **Auth:** no URL and no secret. The server stamps the caller. A Crew or
+  workflow chat needs a user with edit access to the workflow; MCP/CLI needs
+  `runs:execute` and the token's workflow bound. `allowed_callers` narrows
+  this further.
+- **Result:** the run's outcome (status, error, steps) returns through the
+  normal function call: directly, as an auto-notification, or by polling.
+- **Surfaces:**
+  - Builder: `manage_workflow_webhook kind=function`;
+  - Crews and workflows: `list_functions` / `call_function` (and generated
+    tools);
+  - MCP: `list_workflow_functions` / `call_workflow_function` /
+    `get_workflow_function_call`;
+  - CLI: `agentworks functions`;
+  - UI: a Functions section on the workflow's Webhooks tab.
+- `define_function` / `delete_function` on a workflow now refuse and point to
+  its Builder.
+
+Not live-verified yet: needs a real function trigger on a workflow and one
+real call.
+
 ## Problem
 
 Crews and workflows can already call each other through secretless internal

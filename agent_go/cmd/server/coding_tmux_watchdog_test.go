@@ -392,3 +392,34 @@ func TestCodingWatchdogLimitReasonNamesProviderAndRecovery(t *testing.T) {
 		t.Fatalf("limit reason = %q", reason)
 	}
 }
+
+// RTS SDE crew: Claude narrating a third-party throttle ("Notion
+// rate-limited that query") in classic-renderer scrollback made the watchdog
+// cancel a healthy session every 30s.
+func TestCodingWatchdogRateLimitEvidenceIgnoresAssistantNarration(t *testing.T) {
+	pane := strings.Join([]string{
+		"● Notion rate-limited that query — let me wait a moment and retry.",
+		"  Called api-bridge (ctrl+o to expand)",
+		"● The API returned a rate limit exceeded note from Notion earlier, handled",
+		"  by retrying; quota exceeded warnings were from the vendor, not me.",
+		"❯ in our dashboard can we show subtickets also clearly",
+		"● Valid and live.",
+		"✻ Cooked for 1m 11s · done 8:14 AM",
+		"❯ ",
+	}, "\n")
+	if evidence := codingWatchdogRateLimitEvidence(pane); evidence != "" {
+		t.Fatalf("assistant narration must not look like a provider limit: %q", evidence)
+	}
+	realError := strings.Join([]string{
+		"● Checking the ticket.",
+		"  ⎿  API Error: 429 Too Many Requests",
+		"❯ ",
+	}, "\n")
+	if codingWatchdogRateLimitEvidence(realError) == "" {
+		t.Fatal("a provider API error under ⎿ must still be detected")
+	}
+	cliLine := "Rate limit reached for requests\n❯ "
+	if codingWatchdogRateLimitEvidence(cliLine) == "" {
+		t.Fatal("a CLI status line must still be detected")
+	}
+}

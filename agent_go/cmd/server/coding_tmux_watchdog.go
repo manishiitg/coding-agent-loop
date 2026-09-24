@@ -205,12 +205,28 @@ func codingWatchdogRateLimitEvidence(content string) string {
 	}
 	normalized := make([]string, 0, len(lines))
 	hasRateLimit := false
-	for _, line := range lines {
-		line = strings.Join(strings.Fields(line), " ")
+	inNarration := false
+	for _, raw := range lines {
+		line := strings.Join(strings.Fields(raw), " ")
 		if line == "" {
 			continue
 		}
 		normalized = append(normalized, strings.ToLower(line))
+		// The assistant's own reply text ("● Notion rate-limited that query —
+		// retrying") is narration about the work, not the provider's limit
+		// wall. Claude prefixes reply blocks with "● " and indents their
+		// wrapped lines by two spaces; tool results ("⎿", where API errors
+		// appear) and CLI status lines are still checked.
+		trimmedLeft := strings.TrimLeft(raw, " ")
+		switch {
+		case strings.HasPrefix(trimmedLeft, "● "):
+			inNarration = true
+			continue
+		case inNarration && strings.HasPrefix(raw, "  ") && !strings.HasPrefix(trimmedLeft, "⎿"):
+			continue
+		default:
+			inNarration = false
+		}
 		hasRateLimit = hasRateLimit || terminals.DetectRateLimit(line)
 	}
 	// Claude replaces its original "You've hit your session limit" line with

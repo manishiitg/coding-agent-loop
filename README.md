@@ -1,277 +1,89 @@
-# 🚀 AgentWorks
+# AgentWorks
 
-**AgentWorks** is an AI operations platform for running many autonomous workflows like an organization. Define goals, build workflow agents, run them on schedules, and let Pulse, Auto-improve, Chief of Staff, and the dashboard help you manage by exception instead of watching logs.
+**Give an AI agent a goal and a metric. It keeps working until it hits the target.**
+
+AgentWorks is an open-source platform for goal-driven AI agents. You describe an outcome, pick the number that proves it, and set a target. Agents plan the work, run it on a schedule, measure every run, and change their own plan until the metric moves. It runs on the coding-agent CLIs you already use: Claude Code, Codex, Cursor, and Pi.
 
 [![Latest Release](https://img.shields.io/github/v/release/manishiitg/coding-agent-loop?label=release)](https://github.com/manishiitg/coding-agent-loop/releases/latest)
 ![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple)
-![Installer](https://img.shields.io/badge/install-curl%20%7C%20bash-2ea44f)
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](#license--architecture-foundations)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## The Goal
+[Website](https://agentworkshq.com) · [Docs](docs/README.md) · [First workflow](docs/getting-started/first-workflow.md) · [Releases](https://github.com/manishiitg/coding-agent-loop/releases/latest) · [Book a call](https://calendly.com/manishiitg/15min)
 
-AgentWorks is built for teams that want to scale from a few manually checked automations to **100+ goal-driven workflow agents**. The product is an operating system for an AI-run organization:
+![An agent is asked to book 5 sales demos a week. Week by week it changes its approach, drops what doesn't work, and goes from 1 to 6 demos a week.](docs/assets/github/goal-loop.gif)
 
-- **Workflows do the work**: reusable agents execute research, coding, reporting, browser tasks, back-office operations, and channel conversations.
-- **Pulse keeps each workflow reliable**: after runs, it checks whether the workflow actually worked, records Bug/Goal verdicts, hardens operational issues, reports cost/time, backs up, publishes, and notifies only on meaningful transitions.
-- **Auto-improve moves workflows toward goals**: on a schedule, it reads cross-run evidence, refreshes stale reports/learnings/KB/db contracts, adjusts cadence, and applies bigger changes only when evidence is strong and backed up.
-- **Chief of Staff / Org Pulse manages the whole org**: it reads workflow evidence against `pulse/goals.html`, audits model/cost posture, harvests durable memory, and writes proposal-only recommendations for the user or builder.
-- **The dashboard is the operating view**: it rolls workflow health, goal progress, costs, recommendations, and exceptions into one place so a human manages decisions, not every run.
+<sub>Illustrative example.</sub>
 
-The high-level loop is documented in [Workflow self-improvement & reporting](docs/workflow/self_improvement_and_reporting.md).
+## How it works
 
-## Product Screenshots
+| | |
+|---|---|
+| **Goals** | Every workflow has a goal: the outcome in plain words, a primary metric with a target, supporting metrics, and rules that must stay true. Progress is shown as dated measurements. Missing or stale numbers are flagged, never guessed. [Goal measurement](docs/pulse-goal-measurement.md) |
+| **Auto-improve** | After runs, AgentWorks reviews the evidence against the goal. It repairs broken steps, drops approaches that didn't move the metric, does the work nobody was doing, and checks later whether it helped. [Improvement system](docs/pulse-workflow-improvement-system.md) · [Auto-improvement framework](docs/workflow/auto_improvement_framework.md) |
+| **Autonomy** | You choose how far it goes, per workflow: *Ask first*, *Run steps*, *Edit workflow*, or *Full*. Anything outward-facing can always require your approval. |
+| **Crew** | Always-on teammates, each with its own files, tools, memory, browser, and schedule. Talk to them in the app, Slack, or WhatsApp. [Bot connectors](docs/core/bot_connector_system.md) |
+| **Playbooks** | Ready-made agent setups you install into a workflow: 23 today for browser QA, reliability, security, performance, FinOps, and growth analytics. Plain Markdown skill packages, so you can write your own. [Playbooks](playbooks/README.md) |
 
-**Workflow automation: plan, run, report, and supervise**
-
-![AgentWorks workflow automation walkthrough](docs/assets/github/workflow-automation-demo.gif)
-
-**Operating loop: Pulse, Auto Improve, Chief of Staff, and org goals**
-
-![AgentWorks operating loop walkthrough](docs/assets/github/operating-loop-demo.gif)
-
-**Multi-CLI coding agents: Claude Code, Codex CLI, Cursor CLI, and Pi.dev**
-
-![AgentWorks multi-CLI coding agent management](docs/assets/github/multi-cli-management-demo.gif)
-
-**Workflow automation workspace**
-
-![AgentWorks automation workspace](docs/assets/github/01-automation-workspace.png)
-
-**Chief of Staff and Org Pulse**
-
-![AgentWorks Chief of Staff](docs/assets/github/02-chief-of-staff.png)
-
-**Goal-driven operations**
-
-![AgentWorks org goals](docs/assets/github/03-org-goals.png)
-
-**Daily operating pulse**
-
-![AgentWorks org pulse](docs/assets/github/04-org-pulse.png)
-
-## 💻 Desktop App (macOS)
-
-A standalone macOS app is available — no Docker, no manual server setup. Each release is published at [Releases](https://github.com/manishiitg/coding-agent-loop/releases/latest).
-
-Rename note: the public product and macOS bundle are **AgentWorks** and the GitHub repository is `coding-agent-loop`. New desktop releases use `AgentWorks-*` filenames. The historical local data directory is retained so existing local workflows remain available. The former `mcp-agent-builder-go` repository URL redirects to this repository but should not be used in new documentation.
-
-### Install (one-liner — recommended)
+## Install (macOS, Apple Silicon)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/install.sh | bash
 ```
 
-Downloads the latest dmg, installs the Mac app to `/Applications`, ensures the MCP bridge used by Claude Code/Codex tool access is installed to `~/go/bin`, strips the macOS quarantine flag (no "damaged" warning), and launches the app. If Go is missing, the installer installs Go through Homebrew when available; otherwise it asks you to install Go and rerun the same curl command. Pin a specific version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash`.
+This downloads the latest release, installs `AgentWorks.app` to `/Applications`, installs the MCP bridge that Claude Code and Codex use for tool access (to `~/go/bin`, installing Go through Homebrew if needed), clears the macOS quarantine flag, and launches the app. Pin a version with `RUNLOOP_VERSION=v1.25.6 curl -fsSL … | bash` (the variable keeps its legacy name).
 
-### Install manually
+On first launch, pick a workspace folder and set an `AUTH_SECRET` (used to encrypt provider keys; reuse the same value on every machine that opens this workspace). Then connect a coding-agent CLI or an API provider in **LLM Configuration**.
 
-1. Download the `AgentWorks-<version>-arm64.dmg` file from the latest release.
-2. Open the dmg, drag the app to Applications.
+<details>
+<summary>Manual install, and the "AgentWorks is damaged and can't be opened" message</summary>
 
-### First-launch error: *"AgentWorks is damaged and can't be opened"*
+Download `AgentWorks-<version>-arm64.dmg` from the [latest release](https://github.com/manishiitg/coding-agent-loop/releases/latest) and drag the app to Applications.
 
-The current build is **unsigned and not notarized**, so macOS Gatekeeper flags it on download. The app itself is fine — you just need to clear the quarantine flag macOS automatically attaches to downloaded files.
+The build is not yet signed or notarized, so macOS Gatekeeper flags it after download. The app is fine; clear the quarantine flag:
 
-**Recommended — Terminal (works on all macOS versions):**
 ```bash
 xattr -cr /Applications/AgentWorks.app
 ```
-For an older release that is still installed under the legacy name, use:
-```bash
-xattr -cr /Applications/Runloop.app
-```
-Then double-click the app. If macOS still complains, also strip the dmg you downloaded:
-```bash
-xattr -cr ~/Downloads/AgentWorks-*.dmg
-```
-`sudo` is **not** needed — you own the app since you dragged it into Applications.
 
-**System Settings (sometimes works, depends on macOS version):**
-For "damaged" verdicts on Sequoia/Tahoe, macOS often hides the "Open Anyway" button entirely, so this path frequently doesn't appear. If it does:
-1. Open **System Settings → Privacy & Security**.
-2. Scroll to the Security section. If you see *"AgentWorks was blocked from use…"* with an **Open Anyway** button, click it.
-3. Confirm in the dialog. macOS remembers the decision.
+If macOS still complains, also run `xattr -cr ~/Downloads/AgentWorks-*.dmg`. No `sudo` is needed. Releases installed under the old name use `/Applications/Runloop.app`. Signing and notarization are on the roadmap.
+</details>
 
-If the button isn't there, fall back to the `xattr` command above.
+## Works with
 
-### First-launch UX
+- **Coding-agent CLIs:** Claude Code, OpenAI Codex CLI, Cursor CLI, and Pi CLI (Gemini, OpenRouter, and other Pi providers). Use the subscription you already pay for.
+- **API providers:** OpenAI, Anthropic, Google Gemini and Vertex AI, AWS Bedrock, Azure AI Foundry, MiniMax, and OpenRouter. Keys are encrypted at rest.
+- **Channels:** Slack and WhatsApp for two-way conversations; Gmail for outbound updates.
+- **Tools:** any MCP server, workspace files, and a persistent, isolated browser per workflow ([browser docs](docs/core/browser.md)).
 
-On first run the app prompts for two things:
-1. **Workspace folder** — pick where your `workspace-docs/` lives (skills, configs, schedules, WhatsApp DB, encrypted provider keys). Defaults to `~/Library/Application Support/runloop-desktop/workspace-docs/`.
-2. **AUTH_SECRET** — the secret used to encrypt `provider-api-keys.json`. If you're moving from a previous setup, enter the same secret you used there. Otherwise pick a strong value and remember it (you'll need it on every machine that opens this workspace).
+Route each part of a workflow to the model that fits it: your strongest model for judgment, a cheaper one for routine steps.
 
-After that, add provider API keys (OpenAI, Gemini, Anthropic, etc.) through the in-app provider auth flow. They are encrypted at rest in `<workspace-docs>/config/provider-api-keys.json`.
+## Control and security
 
-### Why no signing?
+- **Approvals:** agents prepare changes and wait for approve, reject, or defer ([human feedback](docs/workflow/human_feedback_system.md)).
+- **Secrets vault:** credentials are encrypted and injected only at run time, never shown in chat or logs ([secrets](docs/core/secrets.md)).
+- **Sandboxing:** OS-enforced per agent, Landlock on Linux and sandbox-exec on macOS, limited to the folders and tools each workflow is granted ([FolderGuard](docs/core/folder_guard_system.md)).
+- **Run logs and cost:** every step, tool call, and model cost is recorded per run and per workflow ([cost and logs](docs/workflow/cost_and_log_measurement.md)).
+- **Accounts:** admin, member, contributor, and read-only roles, with owner or reader access per workflow ([multi-user](docs/core/multi_user_authentication.md)).
 
-Code signing + Apple notarization requires an Apple Developer ID ($99/yr) and is on the roadmap. Until then, the manual quarantine step is unavoidable on first install.
+## Run from source
 
----
+Prerequisites: Go 1.26+, Node.js 20+, and whichever coding-agent CLIs you want to use.
 
-Run **Claude Code, Codex, Pi, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, route agent conversations through **Slack, WhatsApp, and the web**, and roll their progress up against org goals.
-
-AgentWorks is built for teams that want more than a chat box:
-- Build visual agent workflows and long-running orchestrators
-- Mix and match the best coding and reasoning models for each step
-- Schedule automations, recurring jobs, and background runs
-- Track workflow progress against real goals, not just task completion
-- Manage failures, cost, and improvement opportunities by exception
-- Keep humans in the loop with approvals, feedback, and escalation paths
-- Connect agents to Slack, WhatsApp, browsers, and MCP tools
-
-## Why AgentWorks
-
-- **Goal-driven operations**: Tie workflows to measurable goals, then let Pulse, Auto-improve, and Org Pulse keep the evidence and recommendations current.
-- **Multi-model by default**: Use Claude Code, Codex, Pi, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
-- **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
-- **Manage by exception**: The dashboard surfaces broken, off-goal, expensive, or decision-worthy work so operators do not need to inspect every run.
-- **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
-- **Protocol-agnostic in practice**: MCP is supported, but AgentWorks is broader than any single protocol, provider, or model vendor.
-
-## What You Can Build
-
-- **Coding workflows** that delegate across Claude Code, Codex, Pi, and open-source coding models
-- **Scheduled automations** for research, support, reporting, or back-office operations
-- **Human-in-the-loop agents** that pause for approvals, 2FA codes, or operator feedback
-- **Slack and WhatsApp agents** that continue conversations outside the dashboard
-- **Browser-powered workflows** that log in, click through apps, collect data, and complete tasks
-
-## Flagship Examples
-
-- **[Deep Research Agent](examples/README.md#1-deep-research-agent)**: source collection, evidence review, pricing/benchmark analysis, and report generation.
-- **[AI Software Engineer Workflow](examples/README.md#2-ai-software-engineer-workflow)**: planner, coder, reviewer, and tester agents producing a patch plus validation notes.
-- **[E-commerce Operations Agent](examples/README.md#3-e-commerce-operations-agent)**: catalog/support review with policy checks, recommended actions, and human approval.
-
-See [examples](examples/README.md) for workflow blueprints, output artifacts, and a README demo GIF storyboard.
-
-See the [public roadmap](ROADMAP.md) for upcoming work on onboarding, memory-aware multi-agent chat, workflow notifications, Agent SDK support, Pi CLI, and goal/dashboard refinements.
-
-## Works With
-
-### Coding and LLM Models
-
-- **Claude Code** via the `@anthropic-ai/claude-code` CLI experimental mode
-- **Codex-style agentic models** through OpenAI and Azure AI Foundry
-- **Pi CLI** for Gemini and open-model coding workflows
-- **Pi CLI** via `@earendil-works/pi-coding-agent` with Pi provider/model IDs
-- **Open-source and frontier models** through OpenRouter, Bedrock, Vertex AI, and direct provider integrations
-
-### Channels, Tools, and Connectors
-
-- **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
-- **Browser automation** through Vercel Agent-Browser with headless and local CDP modes
-- **MCP servers**, local tools, workspace files, and custom connectors
-
-## Why Teams Choose It
-
-- Replace brittle prompt chains with durable workflows
-- Use the right model for the right step instead of standardizing on one vendor
-- Bring coding agents, operational automations, and human approvals into one system
-- Ship agent workflows that can be monitored, evaluated, improved, and rolled up against org goals over time
-
-## ⚡ Platform Overview
-
-At the core of AgentWorks is the **[workflow system](docs/workflow/README.md)**, a directed step-based workflow runtime managed through the visual workflow builder and supervised by the self-improvement/reporting layer.
-
-Design complex workflows visually, refine them through the interactive builder, run them with step-level configuration, tiered LLM selection, deterministic pre-validation, evaluation runs, scheduling, cost tracking, and persistent run data, then let Pulse, Auto-improve, Org Pulse, and the dashboard keep the system aligned with goals.
-
-### 🧠 Learning, Validation, and Observability
-Move beyond static prompts with built-in optimization, validation, and run visibility.
-
-- **[Learning Architecture](docs/workflow/learning_architecture.md):** Workflow learning now centers on a shared global skill plus step-level metadata and saved scripts for scripted steps.
-- **[Deterministic Pre-Validation](docs/workflow/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
-- **[Evaluation & Benchmarking](docs/workflow/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
-- **[Pulse Log & Observability](docs/workflow/workflow_monitoring.md):** Every workflow keeps one agent-curated HTML log — the **Pulse** — with two live verdicts (**Bug**: did it run correctly; **Goal**: is it hitting its success criteria), a one-line status headline, signal tiles, and a newest-first timeline of findings, decisions, cost/time reports, backups, publishes, and notifications.
-- **[Self-Improving Workflows](docs/workflow/auto_improvement_framework.md):** Auto-improve reads the same Pulse evidence across runs, keeps reports/learnings/KB/db contracts fresh, tunes its own cadence, and applies structural replans only when cross-run evidence is strong and backed up, or records proposals when oversight is more cautious.
-- **[Chief of Staff, Org Pulse, and Dashboard](docs/workflow/self_improvement_and_reporting.md):** Org Pulse reads workflow evidence against org goals, audits model/cost posture, writes proposal-only recommendations, and feeds a dashboard that lets operators manage by exception across many workflows.
-- **[Cost and Log Measurement](docs/workflow/cost_and_log_measurement.md):** Token usage, model cost, and execution logs are tracked across workflow phases, runs, steps, and models.
-- **[Persistent Stores](docs/workflow/persistent_stores_design.md):** Workflows can persist structured run data for reports, knowledgebase updates, and follow-up analysis.
-- **[Swarm Delegation](docs/multiagent/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
-- **[Task Orchestration](docs/workflow/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
-
-### 🛡️ Security and Guardrails
-Deploy with deterministic controls designed for strict environments.
-- **[FolderGuard](docs/core/folder_guard_system.md):** Runtime read/write validation wraps workspace tools so agents only touch the folders each mode or step is allowed to access.
-- **[Multi-User Authentication & Workspace Isolation](docs/core/multi_user_authentication.md):** Per-user workspace isolation, user-scoped paths, and sandboxed shell execution protect users from cross-tenant contamination.
-- **[Secrets](docs/core/secrets.md):** Securely inject credentials into agent queries, workflow steps, and delegated agents without exposing them in chat history or logs.
-- **[Restricted Configuration Mode](docs/core/env-api-key-defaults.md):** Optionally lock provider/model configuration so the server uses environment-injected API keys (`LLM_CONFIG_LOCKED`) and secrets never reach the browser.
-- **[Secure MCP OAuth](docs/core/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
-
-### 👁️ Automation, Connectors, and Browser Control
-Connect agents to real systems and communication channels.
-- **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
-- **[Browser System](docs/core/browser.md):** Covers browser session management, runtime limits, and browser integration patterns across providers.
-- **[Bot Connectors](docs/core/bot_connector_system.md):** Expose specialized agent sessions through Slack, WhatsApp, the web simulator, and custom connector surfaces.
-- **[Workflow Scheduling](docs/workflow/workflow_scheduling.md):** Run workflows on recurring schedules with history, routing, and run-state tracking.
-- **[Native Workspace Mode](docs/core/native_workspace_mode.md):** Run workspace operations directly against local folders when native execution is preferred over containerized workspace mode.
-
-### 🤝 Human-in-the-Loop Operations
-Keep operators involved when workflows need approval, intervention, or additional input.
-
-- **[Human Feedback System](docs/workflow/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via real-time browser notifications or the visual dashboard.
-- **[Slack Human Connector](docs/workflow/human_feedback_system.md#slack-configuration):** 
-    - **Smart Delayed Notifications**: If a user doesn't respond in the UI within 2 minutes, the orchestrator automatically pings a configured Slack channel.
-    - **Threaded Conversations**: Users can reply directly in the Slack thread to provide the required information, which is then fed back to the agent's context in real-time.
-    - **Multi-User Collaboration**: Entire teams can monitor agent progress and intervene via Slack without ever opening the dashboard.
-
----
-
-### 🧩 LLM Configuration and Providers
-
-AgentWorks is provider-agnostic. Users configure published LLMs in the UI, then assign them to chat sessions, workflow phases, and workflow tiers.
-
-- **[LLM Configuration & Resilience](docs/core/llm_configuration_and_resilience.md):** Published LLMs carry provider, model, and model-specific options; provider authentication is stored separately.
-- **[Tiered LLM Allocation](docs/workflow/tiered_llm_allocation.md):** Workflow steps can use tiered model selection, with separate phase LLM configuration for planning, builder, evaluation, and debugging-style phase work.
-- **[Azure AI Foundry](docs/core/azure_foundry_integration.md):** Azure OpenAI and Responses API routing are supported for newer agentic model deployments.
-- **[Environment-Based Defaults](docs/core/env-api-key-defaults.md):** Optional defaults and locked server-side configuration are available for managed deployments.
-- Providers include OpenAI-compatible endpoints, Anthropic, Google Gemini/Vertex, AWS Bedrock, Azure AI Foundry, MiniMax, OpenRouter, and local/CLI-backed agent integrations.
-
-#### 🛠️ Local CLI Agents
-Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/core/mcp_bridge_layer.md)**:
-*   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI through experimental interactive sessions.
-*   **Pi CLI**: Multi-provider coding-agent integration, including Gemini models.
-*   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.
-
----
-
-## 🚀 Quick Start (Local Development)
-
-### 1. Prerequisites
-
-- Go 1.24+
-- Node.js 20+ and npm
-- Optional local tools depending on what you enable: Claude Code, Pi, Codex-compatible CLIs, browser tooling, AWS/GCP CLIs, etc.
-
-### 2. Clone and Configure
+The backend builds against two engine libraries, [mcpagent](https://github.com/manishiitg/mcpagent) and [multi-llm-provider-go](https://github.com/manishiitg/llm-provider-mcp), which `agent_go/go.mod` expects to find next to this repo. Clone all three side by side:
 
 ```bash
+mkdir agentworks && cd agentworks
 git clone https://github.com/manishiitg/coding-agent-loop.git
+git clone https://github.com/manishiitg/mcpagent.git
+git clone https://github.com/manishiitg/llm-provider-mcp.git multi-llm-provider-go
+
 cd coding-agent-loop
-```
-
-No `.env` setup is required for a local first run. The launcher creates `agent_go/.env` with a secure, persistent `AUTH_SECRET` automatically. After startup, connect an LLM provider in the app's **LLM Configuration** screen. Do not copy `agent_go/env.example` or put placeholder API keys into `.env`; that file is for managed/deployment configuration.
-
-Install dependencies:
-
-```bash
-cd frontend
-npm ci
-
-cd ../agent_go
-go mod download
-```
-
-### 3. Run Everything Locally
-
-Start the backend, workspace API, frontend, and Electron with one command from the repo root — no flags needed:
-
-```bash
+(cd frontend && npm ci)
+(cd agent_go && go mod download)
 ./run_agentworks
 ```
 
-This is the default: agent + workspace + frontend + Electron. It forwards to `agent_go/run_server_with_logging.sh`, so all of its flags work too — e.g. `./run_agentworks --with-workspace` (no frontend) or `--only-frontend` (no backend). See `./run_agentworks --help` for all options.
-
-Default local ports:
+`./run_agentworks` starts the agent API, workspace API, frontend, and Electron shell. No `.env` is needed for a local run; the launcher creates `agent_go/.env` with a persistent `AUTH_SECRET`. Don't copy `agent_go/env.example` for local use, since it is for managed deployments.
 
 | Service | Default URL |
 | --- | --- |
@@ -279,157 +91,28 @@ Default local ports:
 | Workspace API | `http://localhost:18744` |
 | Frontend | `http://127.0.0.1:51733` |
 
-The runner prefers these ports. If a port is already occupied, it picks the next available port and prints the final URL. Logs are written to `agent_go/logs/`.
+If a port is busy, the runner picks the next free one and prints it. Logs go to `agent_go/logs/`. Run `./run_agentworks --help` for options such as `--only-frontend` and `--build`.
 
-### 4. Frontend-Only Development
-
-Use this when the backend and workspace API are already running:
+Checks before a pull request:
 
 ```bash
-cd agent_go
-./run_server_with_logging.sh --only-frontend
+(cd agent_go && go test ./cmd/server -run '^$')   # backend compiles
+(cd frontend && ./node_modules/.bin/tsc -b)       # frontend type-checks
+./scripts/scan-secrets.sh                         # no secrets committed
 ```
 
-This starts Vite plus Electron. It reads `AGENT_PORT` and `WORKSPACE_PORT` from `frontend/public/runtime-config.js` when that file already exists.
+Install the git hooks once with `./scripts/install-git-hooks.sh`.
 
-### 5. Frontend Build Mode
+## Self-hosting
 
-Use this to run the frontend like a production static build, without Vite hot reload:
+Run AgentWorks on your Mac, or on your own Linux server with the rootless deployer. See the [deployment overview](deploy/README.md). For a managed or private-cloud deployment with SSO, audit logs, and support, [talk to us](https://calendly.com/manishiitg/15min).
 
-```bash
-cd agent_go
-./run_server_with_logging.sh --only-frontend --build
-```
+## Contributing
 
-This builds `frontend/`, serves the static output on the frontend port, and launches Electron against that static server.
+Issues and pull requests are welcome. Start with the [docs index](docs/README.md) and the [workflow system overview](docs/workflow/README.md). Keep changes focused and run the checks above.
 
-You can override ports explicitly:
+## License
 
-```bash
-AGENT_PORT=18743 WORKSPACE_PORT=18744 FRONTEND_PORT=51733 ./run_server_with_logging.sh --only-frontend --build
-```
+[MIT](LICENSE).
 
-### 6. Stop and Restart Cleanly
-
-When the runner is in the foreground, press `Ctrl+C`. The script stops child processes and prints which ports were released.
-
-If startup says a port is still busy, inspect it:
-
-```bash
-lsof -nP -iTCP:51733 -sTCP:LISTEN
-lsof -nP -iTCP:18743 -sTCP:LISTEN
-lsof -nP -iTCP:18744 -sTCP:LISTEN
-```
-
-### 7. Debug Local API Traffic
-
-Backend request logs are written under `agent_go/logs/`. The server logs API start/end lines, including status code and duration, which is useful when the frontend appears stuck or too many requests are firing at once.
-
-Useful checks:
-
-```bash
-curl -fsS http://localhost:18743/api/health
-curl -fsS http://localhost:18744/api/health
-```
-
-### 8. Validation Commands
-
-```bash
-# Backend compile check
-cd agent_go
-go test ./cmd/server -run '^$'
-
-# Frontend type check
-cd frontend
-./node_modules/.bin/tsc -b
-```
-
----
-
-## ☁️ Production Deployment Topologies
-
-Deploy your agentic infrastructure where it makes sense for your security posture.
-
-Every deployment goes through one entry point, `./deploy.sh <server>`:
-```bash
-./deploy.sh rts          # video.realtrainingsys.com (AWS EC2, rootless systemd)
-./deploy.sh confida      # Confida (rootless Linux product)
-./deploy.sh sparkquill   # SparkQuill (rootless Linux product)
-./deploy.sh dominion     # trader.tectonicmarkets.com (Hetzner)
-```
-> **[Read the deployment overview](deploy/README.md)**
-
----
-
-## 🤝 Join the Revolution
-
-We are building the future of deterministic AI orchestration. Contributions are highly encouraged!
-
-```bash
-# Setup development guardrails
-./scripts/install-git-hooks.sh
-
-# Run the Go orchestration test suite
-cd agent_go && go test ./...
-
-# Audit for secrets
-./scripts/scan-secrets.sh
-```
-
-## Chrome CDP macOS Helper
-
-If you use Local Chrome (CDP) on macOS, install the dedicated launcher from the public GitHub script:
-
-```bash
-curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash
-```
-
-The installer downloads `Chrome CDP.app`, installs it into `/Applications`, clears quarantine attributes, applies a local ad-hoc signature when possible, opens the app, and checks that CDP is reachable on port `9222`.
-
-To install another independent CDP browser on a different port, pass the port
-to the same installer. It creates a separate app and Chrome profile instead of
-overwriting the default launcher:
-
-```bash
-curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash -s -- --port 9333
-```
-
-This installs `Chrome CDP 9333.app`, launches Chrome on port `9333`, and uses
-`~/.chrome-cdp-profile-9333`. Repeat with another unused port when a specialized
-workflow needs another login identity.
-
-macOS may still ask for approval on first launch. If it blocks the app, open **System Settings → Privacy & Security**, allow `Chrome CDP`, then run:
-
-```bash
-open -a 'Chrome CDP'
-```
-
-For the specialized case where one workflow must test the same site with a
-second login identity, use the installer command above or launch another Chrome
-process manually on a different port **and a different profile directory**:
-
-```bash
-SECOND_CDP_PORT=9333
-open -na 'Google Chrome' --args \
-  --remote-debugging-port="$SECOND_CDP_PORT" \
-  --user-data-dir="$HOME/.chrome-cdp-profile-$SECOND_CDP_PORT" \
-  --no-first-run \
-  --no-default-browser-check
-curl "http://127.0.0.1:$SECOND_CDP_PORT/json/version"
-```
-
-Configure that workflow through the builder with
-`update_workflow_config(browser_mode="cdp", cdp_ports=[9222, 9333])`. Every `agent_browser` call must explicitly select
-one authorized `--cdp` endpoint. The two profiles can stay logged in as
-different accounts. Do not reuse the same `--user-data-dir` for two ports, and
-do not add ports merely to run normal workflows concurrently—the shared
-single-port tab isolation already handles that.
-
-## 📄 License & Architecture Foundations
-
-Licensed under the MIT License.
-
-**Built Upon:**
-- **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/):** The universal standard for AI tool integration.
-- **[LangChain Go](https://github.com/tmc/langchaingo):** High-performance LLM routing.
-- **[React Flow](https://reactflow.dev/):** The industry standard for node-based visual editing.
+Built on the [Model Context Protocol](https://modelcontextprotocol.io/), our open-source engine libraries [mcpagent](https://github.com/manishiitg/mcpagent) and [multi-llm-provider-go](https://github.com/manishiitg/llm-provider-mcp), and [React Flow](https://reactflow.dev/) for the workflow canvas.

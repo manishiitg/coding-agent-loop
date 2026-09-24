@@ -160,6 +160,23 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 	return workspacePath
 }
 
+// productConversationRuntimeWorkspace is the physical workspace holding a
+// product chat's persisted conversation (and its native-resume runtime). A
+// logical "Chats/..." project path maps into the caller's own tree; an
+// explicit "_users/<owner>/..." path (Crew Run-mode readers) is kept. The
+// logical form alone resolves outside any user tree and finds nothing — which
+// made restored Crews start a fresh native session (RTS 2026-09-24).
+func productConversationRuntimeWorkspace(userID, selectedFolder string) string {
+	clean := strings.Trim(filepath.ToSlash(strings.TrimSpace(selectedFolder)), "/")
+	if clean == "" {
+		return ""
+	}
+	if strings.HasPrefix(clean, "_users/") {
+		return clean
+	}
+	return agentProfileRuntimeWorkspace(userID, normalizeConversationWorkspace(clean))
+}
+
 // isActiveWorkProjectWorkspace distinguishes an actual Work project from the
 // Work landing/root workspace. Project-scoped tools must be absent on the
 // landing chat: registering them there either fails immediately (share links,

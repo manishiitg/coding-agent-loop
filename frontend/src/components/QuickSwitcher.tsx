@@ -11,7 +11,8 @@ import { openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPl
 import { runtimeHasBackgroundAgents, runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
 import { hasIdleAliveCodingAgent, isVisibleActivitySession, nonWorkflowActivityTitle } from '../utils/activitySessions'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
-import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
+import { isWorkProductSession, openGlobalActivitySession, openGlobalTab, workProjectIdForTab } from '../utils/globalProductNavigation'
+import type { WorkSession } from '../products/work/workSessions'
 import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
@@ -64,7 +65,10 @@ interface CrewChatItem {
   subtitle: string
   isActive: boolean
   lastAccessedAt: number
-  tabId: string
+  /** Open chat tab for this Crew; absent for a Crew listed from the directory. */
+  tabId?: string
+  /** Crew project to open when there is no tab yet. */
+  projectId?: string
   activeSession?: ActiveSessionInfo
   hasLocalActivity: boolean
   icon?: string
@@ -195,6 +199,24 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const recentPresetOrder = useGlobalPresetStore(state => (isOpen ? state.recentPresetOrder : EMPTY_RECENT_PRESET_ORDER))
   const recentPresetAccessedAt = useGlobalPresetStore(state => (isOpen ? state.recentPresetAccessedAt : EMPTY_RECENT_PRESET_ACCESSED_AT))
 
+  // Every Crew the user can use (owned and shared), so the switcher lists them
+  // all, not only Crews with an open tab or running work. Loaded per opening.
+  const [crewDirectory, setCrewDirectory] = useState<WorkSession[]>([])
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    // Loaded lazily: a static import of the Crew product module from the
+    // app shell forms an import cycle.
+    void import('../products/work/workSessions')
+      .then(module => module.loadWorkSessionsIncludingShared())
+      .then(crews => { if (!cancelled) setCrewDirectory(crews) })
+      .catch(() => { if (!cancelled) setCrewDirectory([]) })
+    // All accessible workflows, even if the workflow view was never opened.
+    const presets = useGlobalPresetStore.getState()
+    if (!presets.workflowPresetsLoaded) void presets.refreshPresets()
+    return () => { cancelled = true }
+  }, [isOpen])
+
   // Reset state on open.
   useEffect(() => {
     if (isOpen) {
@@ -275,6 +297,25 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         }
       })
 
+    const openCrewProjects = new Set(Object.values(crewTabs).map(tab => workProjectIdForTab(tab)).filter(Boolean))
+    const directoryCrewItems: CrewChatItem[] = crewDirectory
+      .filter(crew => !openCrewProjects.has(crew.id))
+      .map(crew => {
+        const name = crew.identity?.name?.trim() || crew.title
+        const owner = crew.shared ? `shared by ${crew.shared.ownerUsername || crew.shared.ownerId}` : 'yours'
+        return {
+          type: 'crew' as const,
+          id: `crew-project:${crew.id}`,
+          label: name,
+          subtitle: `Crew · ${owner}${name !== crew.title ? ` · ${crew.title}` : ''}`,
+          isActive: productSurface === 'work' && useProductSurfaceStore.getState().selectedWorkProjectId === crew.id,
+          lastAccessedAt: 0,
+          projectId: crew.id,
+          hasLocalActivity: false,
+          icon: crew.identity?.icon,
+        }
+      })
+
     const workflowItems: WorkflowItem[] = workflowPresets
       .filter(preset => preset.selectedFolder?.filepath)
       .map(preset => {
@@ -340,13 +381,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return a.label.localeCompare(b.label)
     })
 
-    return [...activeItems, ...crewItems, ...chatItems, ...workflowItems].sort((a, b) => {
+    return [...activeItems, ...crewItems, ...chatItems, ...workflowItems, ...directoryCrewItems].sort((a, b) => {
       if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
       if (a.lastAccessedAt !== b.lastAccessedAt) return b.lastAccessedAt - a.lastAccessedAt
       if (a.type !== b.type) return itemTypeRank(a) - itemTypeRank(b)
       return a.label.localeCompare(b.label)
     })
-  }, [isOpen, isWorkflowMode, isChatMode, productSurface, activePresetId, chatTabs, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
+  }, [isOpen, isWorkflowMode, isChatMode, productSurface, activePresetId, chatTabs, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt, crewDirectory])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
@@ -430,10 +471,23 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return
     }
 
-    if (item.type === 'chat' || item.type === 'crew') {
+    if (item.type === 'crew' && !item.tabId && item.projectId) {
+      const surfaces = useProductSurfaceStore.getState()
+      surfaces.setSelectedWorkProjectId(item.projectId)
+      surfaces.setProductSurface('work')
+      onClose()
+      return
+    }
+
+    if ((item.type === 'chat' || item.type === 'crew') && item.tabId) {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
       openGlobalTab(item.tabId)
       requestChatScrollToBottom()
+      onClose()
+      return
+    }
+
+    if (item.type !== 'workflow') {
       onClose()
       return
     }

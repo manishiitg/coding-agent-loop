@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveWorkspaceLayout, type WorkspaceLayoutInput } from './workspaceLayoutResolver'
+import { MOBILE_PREVIEW_PANE_COLUMN, resolveWorkspaceLayout, type WorkspaceLayoutInput } from './workspaceLayoutResolver'
 
 const base: WorkspaceLayoutInput = {
   showChatArea: true,
@@ -59,6 +59,13 @@ describe('resolveWorkspaceLayout', () => {
     const tablet = resolveWorkspaceLayout({ ...base, reportPreviewPreference: 'tablet' })
     expect(tablet.chatPaneClassName).toContain('flex-1 basis-1/2')
   })
+  it('pins the workspace pane to phone width in Mobile preview, whatever the saved split', () => {
+    const mobile = resolveWorkspaceLayout({ ...base, reportPreviewPreference: 'mobile', workspaceSplitRatio: 0.3 })
+    expect(mobile.splitLayoutStyle).toEqual({ '--workflow-split-columns': `minmax(240px, 1fr) ${MOBILE_PREVIEW_PANE_COLUMN}` })
+    const tablet = resolveWorkspaceLayout({ ...base, reportPreviewPreference: 'tablet', workspaceSplitRatio: 0.3 })
+    expect(tablet.splitLayoutStyle).toEqual({ '--workflow-split-columns': 'minmax(240px, 0.3fr) minmax(240px, 0.7fr)' })
+  })
+
 
   it('borders the canvas only for workspace views', () => {
     expect(resolveWorkspaceLayout(base).canvasPaneClassName).toContain('md:border-l md:border-border')

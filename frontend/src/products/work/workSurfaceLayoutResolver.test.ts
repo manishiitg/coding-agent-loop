@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { MOBILE_PREVIEW_PANE_COLUMN } from '../../components/workflow/workspaceLayoutResolver'
 import { resolveWorkSurfaceLayout } from './workSurfaceLayoutResolver'
 
 describe('resolveWorkSurfaceLayout', () => {
@@ -28,5 +29,10 @@ describe('resolveWorkSurfaceLayout', () => {
     expect(layout.showDivider).toBe(false)
     expect(layout.panelClassName).toContain('col-start-1')
     expect(layout.panelClassName).not.toContain('md:col-start-2')
+  })
+
+  it('pins the panel to phone width in Mobile preview', () => {
+    const layout = resolveWorkSurfaceLayout({ chatOpen: true, panelOpen: true, splitRatio: 0.3, mobilePreview: true })
+    expect(layout.gridStyle).toEqual({ '--work-split-columns': `minmax(240px, 1fr) ${MOBILE_PREVIEW_PANE_COLUMN}` })
   })
 })

@@ -682,10 +682,10 @@ export function WorkSurface() {
   const splitLayoutRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
   const splitRatioRef = useRef(splitRatio)
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(selected?.workspacePath))
   // All split classes derive from the shared layout resolver: one decision
   // point for every flag combination (see workSurfaceLayoutResolver.ts).
-  const layout = resolveWorkSurfaceLayout({ chatOpen, panelOpen, splitRatio })
-  const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(selected?.workspacePath))
+  const layout = resolveWorkSurfaceLayout({ chatOpen, panelOpen, splitRatio, mobilePreview: reportPreviewPreference === 'mobile' })
   const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
   const [createError, setCreateError] = useState<string | null>(null)
   const showProviders = useLLMStore((state) => state.showLLMModal)
@@ -848,14 +848,15 @@ export function WorkSurface() {
   }, [selected?.id])
 
   const handleSplitPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (window.innerWidth < 768) return
+    // Mobile preview pins the panel to phone width; nothing to drag.
+    if (window.innerWidth < 768 || reportPreviewPreference === 'mobile') return
     const rect = splitLayoutRef.current?.getBoundingClientRect()
     if (!rect?.width) return
     startSplitDrag(event, {
       onMove: clientX => setSplitRatio((clientX - rect.left) / rect.width),
       onEnd: () => writeWorkSplitRatio(selected?.id, splitRatioRef.current),
     })
-  }, [selected?.id, setSplitRatio, startSplitDrag])
+  }, [reportPreviewPreference, selected?.id, setSplitRatio, startSplitDrag])
 
   const createProject = useCallback(async (title: string, description: string, icon?: string) => {
     if (creating) return
@@ -1064,7 +1065,7 @@ export function WorkSurface() {
                   <WorkspaceSplitRail
                     ratio={splitRatio}
                     onPointerDown={handleSplitPointerDown}
-                    onStep={delta => setSplitRatio(splitRatioRef.current + delta, true)}
+                    onStep={delta => { if (reportPreviewPreference !== 'mobile') setSplitRatio(splitRatioRef.current + delta, true) }}
                     className="md:row-start-2"
                     previewDevice={reportPreviewPreference}
                     onPreviewDeviceChange={device => writeReportPreviewPreference(selected.workspacePath, device)}

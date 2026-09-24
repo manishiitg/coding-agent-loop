@@ -969,7 +969,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
   useEffect(() => stopSplitDrag, [stopSplitDrag, workspacePath, reportPreviewPreference, showChatArea, showWorkspacePane])
   const handleSplitPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (window.innerWidth < 768) return
+    // Mobile preview pins the workspace pane to phone width; nothing to drag.
+    if (window.innerWidth < 768 || reportPreviewPreference === 'mobile') return
     const container = splitLayoutRef.current
     if (!container) return
     const rect = container.getBoundingClientRect()
@@ -2389,7 +2390,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           <WorkspaceSplitRail
             ratio={workspaceSplitRatio}
             onPointerDown={handleSplitPointerDown}
-            onStep={delta => setSplitRatio(workspaceSplitRatioRef.current + delta, true)}
+            onStep={delta => { if (reportPreviewPreference !== 'mobile') setSplitRatio(workspaceSplitRatioRef.current + delta, true) }}
             className="md:row-start-2"
             previewDevice={reportPreviewPreference}
             onPreviewDeviceChange={device => writeReportPreviewPreference(workspacePath, device)}

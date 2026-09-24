@@ -34,6 +34,9 @@ export interface WorkspaceLayout {
  * override flex (responsive variants win over base utilities), collapse
  * flex-1 scroll regions to content height, and freeze pane scrolling.
  */
+/** Grid track for the workspace pane in Mobile preview. */
+export const MOBILE_PREVIEW_PANE_COLUMN = 'min(494px, calc(100% - 240px))'
+
 export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLayout {
   const {
     showChatArea,
@@ -72,8 +75,13 @@ export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLa
   const splitLayoutClassName = !showChatArea
     ? 'flex-1 min-h-0 flex flex-col'
     : 'flex-1 min-h-0 grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)] md:[grid-template-columns:var(--workflow-split-columns)] md:transition-[grid-template-columns] md:duration-150 md:ease-out'
+  // Mobile gives the workspace pane a phone-width column: the 480px report
+  // frame plus its padding and border. A saved drag ratio must not widen it,
+  // or the phone frame floats in empty space inside a wide pane.
   const splitLayoutStyle = showChatArea && workspacePaneVisible
-    ? ({ '--workflow-split-columns': `minmax(240px, ${workspaceSplitRatio}fr) minmax(240px, ${1 - workspaceSplitRatio}fr)` } as CSSProperties)
+    ? ({ '--workflow-split-columns': shouldUseMobileReportPane
+      ? `minmax(240px, 1fr) ${MOBILE_PREVIEW_PANE_COLUMN}`
+      : `minmax(240px, ${workspaceSplitRatio}fr) minmax(240px, ${1 - workspaceSplitRatio}fr)` } as CSSProperties)
     : undefined
   const canvasPaneClassName = !showChatArea
     ? 'flex-1 min-h-0 min-w-0'

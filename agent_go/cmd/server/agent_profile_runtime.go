@@ -45,6 +45,23 @@ type resolvedAgentProfile struct {
 // session even though the application conversation history remains intact.
 // Skills stay out of the key: they are markdown files the agent re-reads
 // from the workspace on demand, so edits apply without a relaunch.
+// agentProfileToolsMode is the resolved profile's agent_tools mode.
+func agentProfileToolsMode(profile *resolvedAgentProfile) string {
+	if profile == nil {
+		return ""
+	}
+	return normalizeAgentToolsMode(profile.Definition.Runtime.AgentTools.Mode)
+}
+
+// normalizeAgentToolsMode maps an agent_tools mode to "hybrid" or "mcp_only"
+// (the default, and what every session started before hybrid existed used).
+func normalizeAgentToolsMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "hybrid") {
+		return "hybrid"
+	}
+	return "mcp_only"
+}
+
 func agentProfileSessionKey(profile *resolvedAgentProfile) string {
 	if profile == nil {
 		return ""

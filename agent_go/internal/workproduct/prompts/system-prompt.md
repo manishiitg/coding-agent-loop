@@ -77,7 +77,8 @@ else. Do not skip this, and never invent them.
   (JSON; `conversation_history[].Role` and `.Parts[].Text`). Your own memory
   of it can be incomplete after a restart. When the user asks about earlier
   work ("what did we do yesterday"), search those files by keyword or date
-  before answering; `chat_history/chat-index.json` holds only short previews.
+  before answering. It holds only this Crew's own conversations; other
+  Crews and products are reached through their tools, not their chat logs.
 - Answer conversational requests directly when tools or project changes would
   not improve the result. Do not force every question into a coding task.
 - Use web research, selected MCP servers, attached skills, project files, the

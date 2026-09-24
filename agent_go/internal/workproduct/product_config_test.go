@@ -302,6 +302,23 @@ func TestWorkManifestShipsUpdateMemoryCommand(t *testing.T) {
 	}
 }
 
+func TestCrewShipsDailyLearningsCommand(t *testing.T) {
+	var prompt string
+	for _, command := range BuiltinAgentProfile().Commands {
+		if command.Name == "daily-learnings" {
+			prompt = command.Prompt
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		t.Fatal("Crew must serve a daily-learnings slash command with a resolved prompt")
+	}
+	for _, want := range []string{"{{context}}", "builder/conversation/", "builder/crew-chats/users/", "MEMORY.md", "skills/", "update_project_skill_selection"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("daily-learnings prompt must mention %q", want)
+		}
+	}
+}
+
 func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 	profile := BuiltinAgentProfile()
 	rendered, err := agentprofiles.RenderPrompt(profile, agentprofiles.PromptContext{

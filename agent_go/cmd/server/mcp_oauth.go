@@ -21,7 +21,7 @@ const mcpOAuthRegisterPath = "/api/oauth/mcp/register"
 const mcpOAuthConsentPath = "/api/oauth/mcp/consent"
 const mcpOAuthConnectionsPath = "/api/oauth/mcp/connections"
 
-var mcpOAuthScopes = []string{"workflows:read", "files:read", "runs:execute"}
+var mcpOAuthScopes = []string{"workflows:read", "files:read", "runs:execute", "crews:read", "crews:run"}
 
 // The resource identifier is fixed by server configuration, never Host or
 // X-Forwarded-Host from an unauthenticated request.
@@ -386,5 +386,8 @@ func mcpOAuthTokenForGrant(grant mcpOAuthGrant) accesstokens.Token {
 	if grant.ClientID == cliOAuthClientID {
 		name = "AgentWorks CLI"
 	}
-	return accesstokens.Token{ID: "oauth-" + grant.FamilyID, Name: name, UserID: grant.UserID, Username: grant.Username, Email: grant.Email, Provider: grant.Provider, Scopes: grant.Scopes, AllWorkflows: true, ExpiresAt: grant.Expires}
+	// An OAuth grant reaches everything the user can: all their workflows and,
+	// when a Crew permission was approved, all Crews they can use.
+	allCrews := slices.Contains(grant.Scopes, "crews:read") || slices.Contains(grant.Scopes, "crews:run")
+	return accesstokens.Token{ID: "oauth-" + grant.FamilyID, Name: name, UserID: grant.UserID, Username: grant.Username, Email: grant.Email, Provider: grant.Provider, Scopes: grant.Scopes, AllWorkflows: true, AllCrews: allCrews, ExpiresAt: grant.Expires}
 }

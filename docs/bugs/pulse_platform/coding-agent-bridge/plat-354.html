@@ -563,15 +563,63 @@ unit tests are supplementary.</p>
   receipt, then durable proof from the CLI's own record that promotes the chat
   tick; a pane misread defers to that record. No further migration needed.</li>
 </ul>
-<p><strong>Open:</strong></p>
+<h2 id="migration-progress-2026-09-24">Migration progress (2026-09-24)</h2>
+<p><strong>Direction (user):</strong> tmux stays, but for as little as
+possible: launching the CLI, typing input (live steering), live stderr, and the
+CLI's own harness. Fixes read the CLI's structured files (JSONL, SQLite); no new
+pane-string parsing. One pane-parsing fix for Claude steering was reverted for
+this reason. The real cause was found in the transcript (see below).</p>
 <ul>
-<li>Certification: Claude Code and Codex passed. A Cursor/Muse/Pi gate run was
-  stopped at 66 pass / 0 fail to save tokens; all changes since are covered by
-  targeted live tests. <code>p0-certified-cli-versions.json</code> is not
-  updated for those three until a full gate is run on request.</li>
-<li>Seen once in a Pi gate run, not reproduced in 8 later runs: a retry after
-  cancel returned empty content. Likely the early-<code>agent_end</code>
-  completion fixed in <code>a11889d</code>; unconfirmed.</li>
+<li><strong>Claude Code: steers lost under load.</strong> When the server ran
+  inside another Claude session, the child CLI inherited
+  <code>CLAUDECODE</code>, <code>CLAUDE_CODE_CHILD_SESSION</code>,
+  <code>CLAUDE_CODE_SESSION_ID</code>, the messaging socket/token and
+  <code>CLAUDE_CODE_SESSION_ATTENDED</code>. These turn transcript saving off, so
+  there was no record to prove delivery. They are now blanked for the tmux launch
+  (<code>-e NAME=</code>) and removed from the structured command's environment.
+  Long prompts are pasted line by line, so Claude no longer treats a
+  <code>pasted_content</code> block as untrusted.</li>
+<li><strong>Background subagents no longer end a turn early.</strong> Claude:
+  the turn is done only when the <code>turn_duration</code> row reports
+  <code>pendingBackgroundAgentCount</code> 0. Muse: the adapter follows
+  <code>spawn_accepted</code> → <code>inbox_item_queued</code> (keyed by
+  <code>source_run_record_id</code>) → the drained run → that run's terminal,
+  and reads the answer from the final run.</li>
+<li><strong>Cursor: steered turn.</strong> Cursor records a mid-turn steer as a
+  later user row in the same <code>store.db</code> turn. The reader used to
+  restart the trail there and returned only the steer's reply. It now keeps it in
+  the same trail (multi-llm-provider-go <code>28964a4</code>).</li>
+<li><strong>Muse send latency:</strong> the fixed 1&nbsp;s pane wait before
+  Enter became a short settle (about 120&nbsp;ms, capped at 1&nbsp;s). Each send
+  logs its per-stage timings under <code>[LATENCY_DEBUG] muse submit</code>.</li>
+<li><strong>Stress tests</strong> (opt-in, <code>-coding-cli-stress</code>,
+  <code>CODING_CLI_STRESS_ITERATIONS</code>). Each iteration runs parallel
+  subagents, a slow MCP tool and a mid-turn steer, with native read tools on:
+  Codex 3/3, Claude 3/3, Muse 3/3, Cursor 5/5 (every answer came from
+  <code>store.db</code>).</li>
+<li><strong>Certification:</strong> Pi certified at 0.87.1. The gate script now
+  requires <code>WORKSPACE_API_TOKEN</code>; without it, Pi workflow tests got
+  401s. The Muse gate had one failure: <code>ExecRuntimeContext</code>. The
+  skill was projected and seen, but Muse refused to reveal a "canary word",
+  treating it as a leak probe. The test now asks for a neutral "project
+  codename" (<code>70b838c</code>) and passes 3/3; Muse stays certified at
+  1.3.0.</li>
+<li><strong>Native agent tools</strong> (separate from this ticket's
+  transport work). A crew toggle for Claude, Codex, Cursor and Muse enables
+  read, search, skills, todos and subagents. Native writes stay off in every
+  mode, and Codex keeps its read-only sandbox. Pi stays bridge-only.</li>
+</ul>
+<p><strong>Accepted as known issues (2026-09-24, user).</strong> The transport
+work in this ticket is complete. These three stay as they are; reopen only if
+they recur or get worse:</p>
+<ul>
+<li><code>TestClaudeCode…StructuredCompletionP0</code> fails about one run in
+  three on unchanged main (pre-existing flake).</li>
+<li>Muse IC-11: an occasional "timed out waiting for retained
+  execute_shell_command to start" (not seen in the 2026-09-24 gate).</li>
+<li>Seen once in a Pi gate run, not reproduced since: a retry after cancel
+  returned empty content. Probably fixed by <code>a11889d</code>
+  (<code>agent_end</code> completion); unconfirmed.</li>
 </ul>
 <h2 id="p0-tmux-contract-replacement">P0 tmux contract replacement</h2>
 <p class="contract-note"><strong>Keep the P0 correctness contracts and live tests.</strong>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
-import { CheckCircle2, Circle, Copy, FolderOpen, Globe, Loader2, Maximize2, Minimize2, Monitor, MoreHorizontal, RefreshCw, Square, X } from 'lucide-react'
+import { CheckCircle2, Circle, Copy, FolderOpen, Globe, Info, Loader2, Maximize2, Minimize2, Monitor, MoreHorizontal, RefreshCw, Square, X } from 'lucide-react'
 import api, { getApiBaseUrl, getAuthToken } from '../../services/api'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -413,6 +413,19 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
   const canResize = connected && canControl && !minimal
   const menuItems = (session && canControl) || canResize
 
+  const browserPicker = showPicker ? (
+    <select className="h-7 min-w-0 max-w-96 flex-1 rounded-md border border-border bg-background px-2 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+            {!selection && !session && <option value="" disabled>No managed browser</option>}
+            <option value={AUTO_BROWSER}>{followingActivity ? followLabel : 'Follow browser activity'}</option>
+            {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
+          </select>
+  ) : null
+  const hasPlaywrightRecording = sessions.some(item => item.kind === 'playwright' && item.recording_state)
+  const recordingNote = !minimal && hasPlaywrightRecording ? (
+    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground" role="note" aria-label="Playwright recordings are deleted when this panel closes and expire after 1 hour. Download any videos you want to keep." title="Playwright recordings are deleted when this panel closes and expire after 1 hour. Download any videos you want to keep.">
+      <Info className="h-4 w-4" aria-hidden="true" />
+    </span>
+  ) : null
   const browserTabs = (tabs.length > 1 && <div className="live-browser-tabs flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-0.5" aria-label="Browser tabs">
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-2.5 py-1 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>)
@@ -521,6 +534,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           {recordingIndicator}
           {controlToggle}
           {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
+          {recordingNote}
           {expandToggle}
           {overflowMenu}
           {toolbar}
@@ -529,26 +543,23 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         <WorkspaceViewHeader
           icon={Monitor}
           title="Browser"
-          subtitle="See what your helper does in its browser. Take control anytime."
+          subtitle={browserPicker ?? (sessions.length ? undefined : 'See what your helper does in its browser. Take control anytime.')}
           context={<span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}{singleBrowserLabel && <span className="text-muted-foreground/80">· {singleBrowserLabel}</span>}{lastAction && <span className="text-muted-foreground/80">·</span>}{lastAction}</span>}
           actions={<>
             {recordingIndicator}
             {controlToggle}
             {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
+            {recordingNote}
             {expandToggle}
             {overflowMenu}
             {toolbar}
           </>}
         />
       )}
-      {showPicker && (
+      {showPicker && slim && (
         <div key="picker" className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-1">
           <span className="shrink-0 text-xs text-muted-foreground">Browser</span>
-          <select className="h-7 min-w-0 max-w-96 flex-1 rounded-md border border-border bg-background px-2 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
-            {!selection && !session && <option value="" disabled>No managed browser</option>}
-            <option value={AUTO_BROWSER}>{followingActivity ? followLabel : 'Follow browser activity'}</option>
-            {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
-          </select>
+          {browserPicker}
         </div>
       )}
       {!minimal && !recording.recording && recording.directory && recording.directory !== dismissedRecording && (
@@ -570,7 +581,6 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           </div>
         </div>
       )}
-      {!minimal && sessions.some(item => item.kind === 'playwright' && item.recording_state) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
       {currentBrowser?.recording_error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
       {error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{error}</p>}
       {!minimal && browserTabs}

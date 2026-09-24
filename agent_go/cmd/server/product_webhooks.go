@@ -335,7 +335,17 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 		if err := validateAnyTriggerCaller(trigger.Caller); err != nil {
 			return productWebhookResponse{}, false, err
 		}
-		if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
+		if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerUser) {
+			// An external connection may bind only to the signed-in user
+			// making the request: nobody can create a trigger another user's
+			// MCP/CLI connection could call.
+			claims := GetUserFromContext(ctx)
+			if claims == nil || strings.TrimSpace(claims.UserID) == "" || strings.TrimSpace(trigger.Caller.ID) != strings.TrimSpace(claims.UserID) {
+				return productWebhookResponse{}, false, fmt.Errorf("an external-connection caller must be the signed-in user")
+			}
+			caller := triggerCaller{Type: triggerCallerUser, ID: strings.TrimSpace(claims.UserID)}
+			trigger.Caller = &caller
+		} else if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
 			// A Crew caller may be any Crew on the server (Crews are shared
 			// server-wide); it must exist and must not be the target itself.
 			caller := *trigger.Caller
@@ -666,6 +676,11 @@ func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Cont
 		matchUserID = ownerID
 	}
 	match := &productWebhookMatch{UserID: matchUserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
+	if strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerUser) {
+		label := firstNonEmptyTrimmed(call.CallerLabel, "an external connection")
+		sourceNote := "This turn was started by " + label + " through an external connection (MCP or the agentworks CLI); your result is returned to that connection."
+		return s.deliverProductTrigger(ctx, match, deliveryID, strings.TrimSpace(call.Event), call.Payload, sourceNote, nil)
+	}
 	if strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerCrew) {
 		label := firstNonEmptyTrimmed(call.CallerLabel, call.Caller.ID)
 		sourceNote := "This turn was started by Crew \"" + label + "\" through an internal trigger; your final answer is returned to that Crew."

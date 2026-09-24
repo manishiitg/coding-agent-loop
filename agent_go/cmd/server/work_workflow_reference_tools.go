@@ -161,6 +161,30 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 	}
 	blocked = appendUniqueStrings(blocked, foreignCrewChatBlockedPaths("", add)...)
 	common.SetSessionFolderGuardBlockedPaths(sessionID, blocked)
+	// Other Crews' databases are read-only.
+	removedDBs := map[string]bool{}
+	for _, db := range foreignCrewDBWriteBlockedPaths("", remove) {
+		removedDBs[db] = true
+	}
+	writeBlocked := make([]string, 0, len(cfg.BlockedWritePaths)+len(add))
+	for _, path := range cfg.BlockedWritePaths {
+		if !removedDBs[path] {
+			writeBlocked = append(writeBlocked, path)
+		}
+	}
+	writeBlocked = appendUniqueStrings(writeBlocked, foreignCrewDBWriteBlockedPaths("", add)...)
+	common.SetSessionFolderGuardBlockedWritePaths(sessionID, writeBlocked)
+}
+
+// foreignCrewDBWriteBlockedPaths returns, for every Crew root in folders other
+// than ownRoot, its db/ folder: a Crew may read another Crew's database but
+// writes only its own.
+func foreignCrewDBWriteBlockedPaths(ownRoot string, folders []string) []string {
+	var blocked []string
+	for _, builder := range foreignCrewChatBlockedPaths(ownRoot, folders) {
+		blocked = append(blocked, strings.TrimSuffix(builder, "builder/")+"db/")
+	}
+	return blocked
 }
 
 // foreignCrewChatBlockedPaths returns, for every Crew root in folders other

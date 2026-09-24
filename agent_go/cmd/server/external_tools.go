@@ -132,6 +132,24 @@ func externalTools() ([]externalTool, error) {
 		// proxy: halting the wrong execution (or none) is not acceptable.
 		addRun("stop_step", "Stop one running step or background execution by its execution ID from execute_step, query_step, or list_executions. The execution's session must belong to this connection.", true, map[string]any{"execution_id": externalString("Execution ID returned by a run tool or query_step."), "session_id": map[string]any{"type": "string", "description": "Optional run session ID; the execution must belong to it."}}, "execution_id")
 		addRun("stop_all_executions", "Stop all running executions owned by this connection in the workflow, or one session when session_id is given. Executes directly.", true, map[string]any{"session_id": map[string]any{"type": "string", "description": "Optional run session ID to stop instead of every owned session."}})
+		// Crews: bounded by the token's Crew list; crews:read.
+		crewID := func(props map[string]any) map[string]any {
+			if props == nil {
+				props = map[string]any{}
+			}
+			props["crew_id"] = externalString("Crew ID returned by list_crews.")
+			return props
+		}
+		add("list_crews", "List the Crews this connection may use: ID, name, identity, owner. Requires crews:read.", false, false, map[string]any{"query": externalString("Filter by Crew name, identity, or ID.")})
+		add("get_crew", "Describe one Crew: identity, description, model, and its functions (typed entry points other Crews and connections can call). Requires crews:read.", false, false, crewID(nil), "crew_id")
+		add("list_crew_files", "List a Crew's project files (crew-relative paths). Private areas — chat transcripts under builder/, db/, and the Crew's manifests — are never listed. Requires crews:read.", false, false, crewID(nil), "crew_id")
+		add("read_crew_file", "Read one text file from a Crew's project (crew-relative path, up to 256 KiB). Private areas are refused. Requires crews:read.", false, false, crewID(map[string]any{"path": externalString("Crew-relative file path from list_crew_files.")}), "crew_id", "path")
+		add("list_crew_functions", "List a Crew's functions: name, description, input and result schemas, including the built-in ask. Requires crews:read.", false, false, crewID(nil), "crew_id")
+		// crews:run — the call runs as a turn in the Crew's own chat.
+		wait := map[string]any{"type": "integer", "minimum": 0, "maximum": externalCrewMaxWaitSeconds, "description": "Seconds to wait for the result before returning a call_id to poll (default and max 25; proxies cut requests near 30s)."}
+		add("call_crew_function", "Call one of a Crew's functions (see list_crew_functions) with arguments matching its input schema. The Crew does the work in its own chat; the result is validated against the function's result schema. Returns the result if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"function": externalString("Function name from list_crew_functions."), "args": map[string]any{"type": "object", "description": "Arguments matching the function's input schema."}, "wait_seconds": wait}), "crew_id", "function")
+		add("ask_crew", "Ask a Crew anything in free text (its built-in ask function); the answer is its final reply. Returns the answer if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"message": externalString("The question or task for the Crew."), "wait_seconds": wait}), "crew_id", "message")
+		add("get_crew_function_call", "Poll a call started with call_crew_function or ask_crew: status (queued, running, completed, failed), progress reports, and the result or error. Requires crews:read or crews:run.", false, false, map[string]any{"call_id": externalString("call_id returned by call_crew_function or ask_crew.")}, "call_id")
 		// Membership comes from product.yaml's run mode: external_tools
 		// first, in yaml order, then every run.tools name (the single
 		// source of truth for the run surface) that has no native
@@ -275,6 +293,10 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	}
 	if err = tool.validator.Validate(call.Arguments); err != nil {
 		externalError(w, 400, "invalid_arguments", err.Error())
+		return
+	}
+	if isExternalCrewTool(tool.Name) {
+		api.externalCrewCall(w, r, tool.Name, call.Arguments)
 		return
 	}
 	discovered, err := DiscoverWorkflowManifests(r.Context())

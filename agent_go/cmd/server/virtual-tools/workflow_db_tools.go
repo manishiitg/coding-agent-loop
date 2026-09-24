@@ -647,12 +647,16 @@ func resolveWorkflowWorkspaceFolder(sessionID string, cfg *common.SessionShellCo
 	// yet counting them made every DB query in such a session "ambiguous". So
 	// the session's own writable roots and working dir decide first, read grants
 	// only when those name nothing, and knowledgebase grants last.
+	// The working dir is the session's own project, so it decides first: since
+	// attached Crews are writable (server-wide Crew sharing), WritePaths alone
+	// can name several Crew projects.
+	own := []string{cfg.WorkingDir}
 	home := append(append([]string{}, cfg.WritePaths...), cfg.WorkingDir)
 	all := append(append([]string{}, cfg.ReadPaths...), home...)
 	for _, tier := range []struct {
 		candidates []string
 		kb         bool
-	}{{home, false}, {all, false}, {all, true}} {
+	}{{own, false}, {home, false}, {all, false}, {all, true}} {
 		seen := map[string]bool{}
 		var matches []string
 		for _, candidate := range tier.candidates {

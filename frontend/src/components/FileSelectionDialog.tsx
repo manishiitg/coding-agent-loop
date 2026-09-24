@@ -16,6 +16,8 @@ interface FileSelectionDialogProps extends ComposerPickerProps {
   position: { top: number; left: number }
   /** Extra top-level files/folders to show alongside workspace files (e.g., Chats/) */
   extraFiles?: PlannerFile[]
+  /** Replaces the workspace tree entirely (product-profile chats list their own project). */
+  files?: PlannerFile[]
 }
 
 export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
@@ -25,7 +27,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   onNavigateIntoFolder,
   searchQuery,
   position,
-  extraFiles, inputRef, listId, onActiveOptionChange
+  extraFiles, files: filesOverride, inputRef, listId, onActiveOptionChange
 }) => {
   const generatedId = useId()
   const optionListId = listId ?? generatedId
@@ -33,11 +35,12 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
 
   // Merge workspace files with extra files (deduplicated by filepath)
   const files = useMemo(() => {
+    if (filesOverride) return filesOverride
     if (!extraFiles || extraFiles.length === 0) return workspaceFiles
     const existingPaths = new Set(workspaceFiles.map(f => f.filepath))
     const newFiles = extraFiles.filter(f => !existingPaths.has(f.filepath))
     return [...workspaceFiles, ...newFiles]
-  }, [workspaceFiles, extraFiles])
+  }, [workspaceFiles, extraFiles, filesOverride])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filteredFiles, setFilteredFiles] = useState<PlannerFile[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())

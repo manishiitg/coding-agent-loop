@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -149,6 +150,8 @@ func (api *StreamingAPI) handleAccessTokens(w http.ResponseWriter, r *http.Reque
 			Scopes        []string `json:"scopes"`
 			WorkflowIDs   []string `json:"workflow_ids"`
 			AllWorkflows  bool     `json:"all_workflows"`
+			CrewIDs       []string `json:"crew_ids"`
+			AllCrews      bool     `json:"all_crews"`
 			ExpiresInDays int      `json:"expires_in_days"`
 		}
 		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
@@ -169,12 +172,29 @@ func (api *StreamingAPI) handleAccessTokens(w http.ResponseWriter, r *http.Reque
 			req.Name = "Access token"
 		}
 		now := time.Now()
-		t := accesstokens.Token{Name: req.Name, UserID: c.UserID, Username: c.Username, Email: c.Email, Provider: c.Provider, Scopes: req.Scopes, WorkflowIDs: req.WorkflowIDs, AllWorkflows: req.AllWorkflows, ExpiresAt: now.Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)}
+		t := accesstokens.Token{Name: req.Name, UserID: c.UserID, Username: c.Username, Email: c.Email, Provider: c.Provider, Scopes: req.Scopes, WorkflowIDs: req.WorkflowIDs, AllWorkflows: req.AllWorkflows, CrewIDs: req.CrewIDs, AllCrews: req.AllCrews, ExpiresAt: now.Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)}
 		if err := accesstokens.Validate(t, now); err != nil {
 			externalError(w, 400, "invalid_arguments", err.Error())
 			return
 		}
-		if !t.AllWorkflows {
+		if !t.AllCrews && len(t.CrewIDs) > 0 {
+			crews, err := listAccessibleCrewProjects(r.Context(), c.UserID, "")
+			if err != nil {
+				externalError(w, 502, "workspace_unavailable", "Cannot check Crew access.")
+				return
+			}
+			allowed := map[string]bool{}
+			for _, crew := range crews {
+				allowed[fmt.Sprint(crew["id"])] = true
+			}
+			for _, id := range t.CrewIDs {
+				if !allowed[id] {
+					externalError(w, 403, "forbidden", "One or more selected Crews are not accessible.")
+					return
+				}
+			}
+		}
+		if !t.AllWorkflows && len(t.WorkflowIDs) > 0 {
 			workflows, err := DiscoverWorkflowManifests(r.Context())
 			if err != nil {
 				externalError(w, 502, "workspace_unavailable", "Cannot check workflow access.")
@@ -245,6 +265,15 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return true
 	}
 	t := c.AccessToken
+	if isExternalCrewTool(tool.Name) {
+		switch tool.Name {
+		case "call_crew_function", "ask_crew":
+			return t.Allows("crews:run")
+		case "get_crew_function_call":
+			return t.Allows("crews:read") || t.Allows("crews:run")
+		}
+		return t.Allows("crews:read")
+	}
 	if strings.HasPrefix(tool.Name, "builder_") {
 		return t.FullBuilderAccess()
 	}

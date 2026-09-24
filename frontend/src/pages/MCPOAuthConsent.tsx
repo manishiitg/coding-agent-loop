@@ -8,6 +8,8 @@ const scopeDescriptions: Record<string, string> = {
   'workflows:read': 'See workflows you can access and their setup',
   'files:read': 'Read workflow files, including test code',
   'runs:execute': 'Start, watch, and cancel workflow runs',
+  'crews:read': 'See Crews you can use, their functions, and project files (never their private chats)',
+  'crews:run': 'Ask Crews questions and call their functions; the work runs in each Crew\'s own chat',
 }
 
 export function MCPOAuthConsent() {
@@ -44,7 +46,7 @@ export function MCPOAuthConsent() {
     <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-sm space-y-5">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Connect to AgentWorks</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{consent ? `${consent.client_name} wants access to your workflows.` : 'Loading connection request…'}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{consent ? (consent.scopes.some(scope => scope.startsWith('crews:')) ? `${consent.client_name} wants access to your workflows and Crews.` : `${consent.client_name} wants access to your workflows.`) : 'Loading connection request…'}</p>
       </div>
       {consent && <>
         <ul className="space-y-2 text-sm text-foreground">{consent.scopes.map(scope => <li key={scope} className="rounded-md bg-muted p-3">{scopeDescriptions[scope] || scope}</li>)}</ul>

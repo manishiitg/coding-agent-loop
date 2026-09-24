@@ -161,7 +161,14 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen])
 
-  if (!isOpen) return null
+  // Nothing matches the typed reference (e.g. a ticket number like #1764):
+  // close instead of holding the composer's Enter behind an empty picker.
+  const nothingMatches = isOpen && !loadError && !!referenceResult && !!localQuery.trim() && filteredWorkflows.length === 0
+  useEffect(() => {
+    if (nothingMatches) onCloseRef.current()
+  }, [nothingMatches])
+
+  if (!isOpen || nothingMatches) return null
 
   const handleEnter = () => {
     const items = filteredWorkflowsRef.current

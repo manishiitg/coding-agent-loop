@@ -102,6 +102,7 @@ import type {
   RunningWorkflowInfo,
   UpdateRunningWorkflowRequest,
   CostSummary,
+  CostOverview,
   NotificationPreference,
   WorkflowBuilderSessionResponse,
   ListTerminalsResponse,
@@ -2140,6 +2141,15 @@ export const agentApi = {
     if (from) params.from = from
     if (to) params.to = to
     const response = await api.get('/api/cost/summary', { params, signal })
+    return response.data
+  },
+
+  // Spend across every workflow and Crew the caller can open.
+  getCostOverview: async (from?: string, to?: string, signal?: AbortSignal): Promise<CostOverview> => {
+    const params: Record<string, string> = {}
+    if (from) params.from = from
+    if (to) params.to = to
+    const response = await api.get('/api/cost/overview', { params, signal })
     return response.data
   },
 

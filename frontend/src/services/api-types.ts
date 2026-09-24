@@ -1777,6 +1777,36 @@ export interface CostSummary {
   by_source_platform?: Record<string, CostAggregate>
 }
 
+// Consolidated cost view across workflows and Crews — mirror of
+// cmd/server cost_overview.go. Only rows the caller may open are included,
+// and totals cover exactly those rows.
+export interface CostOverviewAggregate extends CostAggregate {
+  provider_actual_cost_usd?: number
+  subscription_shadow_cost_usd?: number
+  token_estimate_cost_usd?: number
+  unpriced_call_count?: number
+}
+
+export interface CostOverviewItem extends CostOverviewAggregate {
+  // Workflow/<name>, a Crew root, or "other" (chats and unattributed spend).
+  id: string
+  kind: 'workflow' | 'crew' | 'other'
+  name: string
+  owner_id?: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+}
+
+export interface CostOverview {
+  from?: string
+  to?: string
+  total: CostOverviewAggregate
+  by_provider: Record<string, CostAggregate>
+  by_model: Record<string, CostAggregate>
+  items: CostOverviewItem[]
+  includes_other: boolean
+}
+
 export interface WorkflowActivityTimingAggregate {
   duration_ms: number
   llm_duration_ms: number

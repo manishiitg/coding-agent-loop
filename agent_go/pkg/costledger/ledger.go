@@ -197,7 +197,31 @@ type Summary struct {
 	ByModel          map[string]*Aggregate      `json:"by_model"` // model_id
 	ByScope          map[string]*ScopeAggregate `json:"by_scope,omitempty"`
 	BySourcePlatform map[string]*Aggregate      `json:"by_source_platform,omitempty"`
-	Coverage         Coverage                   `json:"coverage"`
+	// ByWorkflow keys spend by the raw workflow_id it was attributed to
+	// (a Workflow/<name> folder, a crew root, a chat folder). Events with no
+	// workflow_id land under "". Callers that present it fold subpaths and
+	// filter by the viewer's access.
+	ByWorkflow map[string]*WorkflowAggregate `json:"by_workflow,omitempty"`
+	Coverage   Coverage                      `json:"coverage"`
+}
+
+// WorkflowAggregate is one workflow_id's spend with the scope
+// (run/pulse/builder/chat) and model splits the consolidated cost view needs.
+type WorkflowAggregate struct {
+	Aggregate
+	ByScope map[string]*Aggregate `json:"by_scope,omitempty"`
+	ByModel map[string]*Aggregate `json:"by_model,omitempty"`
+}
+
+// Merge folds source into a. The provider identity survives only while
+// every merged aggregate agrees on it, matching add.
+func (a *Aggregate) Merge(source Aggregate) {
+	if a.AccountingEventCount == 0 {
+		a.Provider = source.Provider
+	} else if a.Provider != source.Provider {
+		a.Provider = ""
+	}
+	mergeAggregate(a, source)
 }
 
 // Coverage reports whether the aggregate omitted or could not price evidence.
@@ -620,6 +644,7 @@ func addEntryToSummary(summary *Summary, date string, e Entry) {
 		summary.ByScope[scope] = scopeBucket
 	}
 	scopeBucket.Aggregate.add(e)
+	addEntryToWorkflowBucket(summary, scope, e)
 	executionID := strings.TrimSpace(e.ExecutionID)
 	if executionID == "" && strings.TrimSpace(e.SessionID) != "" {
 		executionID = "session:" + strings.TrimSpace(e.SessionID)
@@ -689,12 +714,46 @@ func addEntryToSummary(summary *Summary, date string, e Entry) {
 	mb.add(e)
 }
 
+func addEntryToWorkflowBucket(summary *Summary, scope string, e Entry) {
+	if summary.ByWorkflow == nil {
+		summary.ByWorkflow = make(map[string]*WorkflowAggregate)
+	}
+	workflowID := strings.TrimSpace(e.WorkflowID)
+	bucket, ok := summary.ByWorkflow[workflowID]
+	if !ok {
+		bucket = &WorkflowAggregate{ByScope: make(map[string]*Aggregate), ByModel: make(map[string]*Aggregate)}
+		summary.ByWorkflow[workflowID] = bucket
+	}
+	bucket.Aggregate.add(e)
+	scopeBucket, ok := bucket.ByScope[scope]
+	if !ok {
+		scopeBucket = &Aggregate{}
+		bucket.ByScope[scope] = scopeBucket
+	}
+	scopeBucket.add(e)
+	modelID := e.EffectiveModelID
+	if modelID == "" {
+		modelID = e.ModelID
+	}
+	if modelID == "" {
+		return
+	}
+	modelBucket, ok := bucket.ByModel[modelID]
+	if !ok {
+		modelBucket = &Aggregate{}
+		bucket.ByModel[modelID] = modelBucket
+	}
+	modelBucket.add(e)
+}
+
 func compactWorkflowOverview(recent, allTime *Summary) {
 	if recent == nil || allTime == nil {
 		return
 	}
 	recent.Total = allTime.Total
 	recent.Coverage = allTime.Coverage
+	// A single-workflow overview has nothing to split by workflow.
+	recent.ByWorkflow = nil
 	recent.ByScope = make(map[string]*ScopeAggregate, len(allTime.ByScope))
 	for scope, aggregate := range allTime.ByScope {
 		if aggregate == nil {

@@ -1,4 +1,5 @@
 import ProviderAccounts from './ProviderAccounts'
+import CostsOverview from './CostsOverview'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
@@ -8,6 +9,7 @@ import {
   CircleAlert,
   Clipboard,
   Code2,
+  DollarSign,
   Gauge,
   Loader2,
   RefreshCw,
@@ -189,6 +191,7 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
   const [providers, setProviders] = useState<ProviderManifestEntry[]>([])
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [view, setView] = useState<'provider' | 'costs'>('provider')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [guidedSession, setGuidedSession] = useState<ProviderSetupSession | null>(null)
@@ -354,9 +357,9 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                     <button
                       type="button"
                       key={provider.id}
-                      onClick={() => setSelectedId(provider.id)}
+                      onClick={() => { setSelectedId(provider.id); setView('provider') }}
                       className={`min-w-[12rem] rounded-lg border px-2.5 py-2 text-left transition-colors md:min-w-0 ${
-                        selectedProvider?.id === provider.id
+                        view === 'provider' && selectedProvider?.id === provider.id
                           ? 'border-violet-300 bg-white shadow-sm dark:border-violet-500/50 dark:bg-gray-800'
                           : 'border-transparent hover:border-gray-200 hover:bg-white dark:hover:border-gray-700 dark:hover:bg-gray-800/70'
                       }`}
@@ -367,20 +370,39 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                         ) : <Terminal aria-hidden="true" className="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />}
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">{PROVIDER_SIDEBAR_NAMES[provider.id] || provider.display_name}</span>
                         <ProviderListStatus provider={provider} />
-                        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 ${selectedProvider?.id === provider.id ? 'text-violet-500' : ''}`} />
+                        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 ${view === 'provider' && selectedProvider?.id === provider.id ? 'text-violet-500' : ''}`} />
                       </div>
                     </button>
                   ))}
                 </div>
               )}
+              <div className="mb-1 mt-4 hidden px-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 md:block">Usage</div>
+              <button
+                type="button"
+                onClick={() => setView('costs')}
+                aria-pressed={view === 'costs'}
+                className={`mt-1.5 w-full rounded-lg border px-2.5 py-2 text-left transition-colors md:mt-0 ${
+                  view === 'costs'
+                    ? 'border-violet-300 bg-white shadow-sm dark:border-violet-500/50 dark:bg-gray-800'
+                    : 'border-transparent hover:border-gray-200 hover:bg-white dark:hover:border-gray-700 dark:hover:bg-gray-800/70'
+                }`}
+              >
+                <div className="flex min-h-6 items-center gap-2">
+                  <DollarSign aria-hidden="true" className="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">Costs</span>
+                  <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 ${view === 'costs' ? 'text-violet-500' : ''}`} />
+                </div>
+              </button>
             </aside>
 
             <main className="min-h-0 overflow-y-auto px-4 py-5 sm:px-7 sm:py-6">
-              {!loading && orderedProviders.length === 0 && !error && (
+              {view === 'costs' && <CostsOverview />}
+
+              {view === 'provider' && !loading && orderedProviders.length === 0 && !error && (
                 <div className="flex h-full items-center justify-center text-sm text-gray-500">No coding providers are available.</div>
               )}
 
-              {selectedProvider && guide && (
+              {view === 'provider' && selectedProvider && guide && (
                 <div className="mx-auto max-w-3xl">
                   <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
                     <div>

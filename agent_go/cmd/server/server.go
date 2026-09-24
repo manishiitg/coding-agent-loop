@@ -2554,6 +2554,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Global cost ledger summary.
 	apiRouter.HandleFunc("/cost/summary", api.handleCostSummary).Methods("GET")
+	apiRouter.HandleFunc("/cost/overview", api.handleCostOverview).Methods("GET")
 
 	// Inspector debug panel — opt-in per-session timeline of
 	// structured InspectorEvents emitted by the LLM adapters. See

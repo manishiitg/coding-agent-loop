@@ -9213,11 +9213,12 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 
 // updateSessionStatus updates the status of an active session in memory.
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
-	changed, workspacePath := false, ""
+	changed, workspacePath, scheduled := false, "", false
 	api.activeSessionsMux.Lock()
 	if session, exists := api.activeSessions[sessionID]; exists {
 		changed = session.Status != status
 		workspacePath = session.WorkspacePath
+		scheduled = liveFeedScheduledSession(sessionID, session.TriggeredBy)
 		session.Status = status
 		session.LastActivity = time.Now()
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
@@ -9226,7 +9227,9 @@ func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	api.observeRuntimeSnapshot(sessionID)
 	if changed {
 		publishSessionsChanged()
-		if liveFeedTerminalStatus(status) {
+		// Only a finished scheduled run refreshes the right pane. A chat turn
+		// (sending a message) must change nothing outside the chat.
+		if scheduled && liveFeedTerminalStatus(status) {
 			publishWorkflowSettled(workspacePath)
 		}
 	}

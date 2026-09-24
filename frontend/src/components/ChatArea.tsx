@@ -2056,12 +2056,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // writes share no reliable common file event. Mark the view stale after a
     // completed run and let the user choose when to refresh it.
     const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
-    // Reviewer/fixer turns can create typed Pulse findings, decisions, review
-    // receipts, and changelog entries without touching a workspace file. Those
-    // panels intentionally do not poll while empty. A saved decision receipt
-    // refreshes them immediately; completion remains a fallback. Limit the
-    // event to the active workflow preset; background work for another preset
-    // must not perturb the workflow currently on screen.
+    // A saved decision receipt refreshes the workflow panels immediately.
+    // A plain chat turn finishing does not: sending a message changes only
+    // the chat, never the right pane (finished runs refresh it via the live
+    // feed). Limit the event to the active workflow preset; background work
+    // for another preset must not perturb the workflow currently on screen.
     const presetState = useGlobalPresetStore.getState()
     const visibleWorkspace = presetState.workflowPresets.find(
       preset => preset.id === presetState.activePresetIds.workflow,
@@ -2070,7 +2069,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (newEvents.some(projectSecretsNeedRefresh)) {
       window.dispatchEvent(new CustomEvent(PROJECT_SECRETS_REFRESH_EVENT))
     }
-    if ((isCompletionLike || hasDecisionMutation) && selectedModeCategory === 'workflow' && isActivePresetTab) {
+    if (hasDecisionMutation && selectedModeCategory === 'workflow' && isActivePresetTab) {
       window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
     }
     // A foreground terminal event is the per-turn completion contract. Settle

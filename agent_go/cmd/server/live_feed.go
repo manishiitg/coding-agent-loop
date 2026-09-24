@@ -128,8 +128,8 @@ func (a *liveFeedAccess) visible(ctx context.Context, workflow string) bool {
 	return ok
 }
 
-// publishWorkflowSettled tells open streams that a run or session in a
-// workflow reached a terminal state: its dashboard data, pending inputs and
+// publishWorkflowSettled tells open streams that a workflow RUN (a workflow
+// execution or a scheduled session) reached a terminal state: its dashboard data, pending inputs and
 // notifications may have changed (agents often write db.sqlite directly,
 // where the server cannot see individual writes).
 func publishWorkflowSettled(workspacePath string) {
@@ -208,4 +208,23 @@ func (api *StreamingAPI) watchScheduleSummaryForLiveFeed() {
 		}
 		last, published = summary, true
 	}
+}
+
+// liveFeedScheduledSession mirrors the frontend's isScheduledSession: only
+// these sessions are runs. Interactive chat turns never refresh the right pane.
+func liveFeedScheduledSession(sessionID, triggeredBy string) bool {
+	trigger := strings.ToLower(strings.TrimSpace(triggeredBy))
+	id := strings.ToLower(sessionID)
+	return strings.Contains(trigger, "schedule") || trigger == "cron" || trigger == "webhook" ||
+		strings.HasPrefix(id, "schedule-") || strings.Contains(id, "-schedule-")
+}
+
+// liveFeedSettledRunPath returns the workflow to refresh when a tracked
+// execution settles: only workflow runs, not Builder chat background work.
+// Caller holds trackedWorkflowExecutionsMux.
+func liveFeedSettledRunPath(exec *TrackedWorkflowExecution) string {
+	if exec == nil || exec.Source != trackedExecutionSourceWorkflowRun {
+		return ""
+	}
+	return exec.WorkspacePath
 }

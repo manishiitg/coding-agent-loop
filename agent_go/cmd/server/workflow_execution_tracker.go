@@ -373,12 +373,12 @@ func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMess
 		}
 		exec.Kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, exec.Metadata)
 	}
-	workspacePath := exec.WorkspacePath
+	settledRun := liveFeedSettledRunPath(exec)
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
 	api.observeRuntimeSnapshot(sessionID)
 	publishSessionsChanged()
-	publishWorkflowSettled(workspacePath)
+	publishWorkflowSettled(settledRun)
 }
 
 func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
@@ -398,7 +398,7 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 		exec.Status = trackedExecutionStatusCanceled
 		exec.CompletedAt = &now
 		marked++
-		settled = append(settled, exec.WorkspacePath)
+		settled = append(settled, liveFeedSettledRunPath(exec))
 		// Marking a tracked execution canceled tells watchers to stop watching.
 		// It does not stop the worker — that is cancelBackgroundAgents' job — so
 		// log both and compare the counts when diagnosing a Stop that did not
@@ -438,10 +438,10 @@ func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, 
 	if strings.TrimSpace(errorMessage) != "" {
 		exec.LastError = errorMessage
 	}
-	workspacePath := exec.WorkspacePath
+	settledRun := liveFeedSettledRunPath(exec)
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
-	defer publishWorkflowSettled(workspacePath)
+	defer publishWorkflowSettled(settledRun)
 	defer publishSessionsChanged()
 	api.observeRuntimeSnapshot(sessionID)
 }

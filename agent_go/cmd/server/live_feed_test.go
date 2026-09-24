@@ -79,3 +79,20 @@ func TestLiveFeedWorkflowRootAndTerminalStatus(t *testing.T) {
 		t.Error("liveFeedTerminalStatus misclassified a status")
 	}
 }
+
+// Sending a chat message must change only the chat: an interactive session
+// or a Builder background execution settling never refreshes the right pane;
+// scheduled sessions and workflow runs do.
+func TestLiveFeedOnlyRunsRefreshTheRightPane(t *testing.T) {
+	if liveFeedScheduledSession("13ce7a15-e4fd-4b9f-8c61-3d27259f3444", "user") {
+		t.Error("interactive chat session treated as a run")
+	}
+	if !liveFeedScheduledSession("schedule-cron--9db4dc39_1790265335110834922", "") || !liveFeedScheduledSession("abc", "cron") {
+		t.Error("scheduled session not treated as a run")
+	}
+	run := &TrackedWorkflowExecution{Source: trackedExecutionSourceWorkflowRun, WorkspacePath: "Workflow/t"}
+	builder := &TrackedWorkflowExecution{Source: trackedExecutionSourceWorkshopBackground, WorkspacePath: "Workflow/t"}
+	if liveFeedSettledRunPath(run) != "Workflow/t" || liveFeedSettledRunPath(builder) != "" {
+		t.Error("only workflow runs should settle the right pane")
+	}
+}

@@ -61,6 +61,13 @@ carries chat events, token deltas or session transcripts. The `sessions` kind
 below only tells the header's activity monitor that the list of running
 sessions changed. It carries nothing from inside a conversation.
 
+**Sending a message changes only the chat.** An interactive chat turn
+finishing never refreshes the right pane. Only these do: a finished
+**workflow run** (tracked execution with source `workflow_run`), a finished
+**scheduled session**, or a real data write (a decision recorded, a report
+file written). The chat's own "turn finished" no longer fires
+`WORKFLOW_LOG_REFRESH_EVENT`; only a decision mutation does.
+
 **Plan edits are out of scope too.** The Plan canvas does not watch for
 outside edits: they are infrequent, and the canvas has a manual refresh.
 The changelog poll was removed on 2026-09-24.

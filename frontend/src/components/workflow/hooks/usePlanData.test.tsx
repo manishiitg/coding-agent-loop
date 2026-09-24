@@ -58,3 +58,17 @@ it('reloads the plan when the changelog head moves (Builder-side mutation)',asyn
   expect(results.p.changes?.added).toEqual(['crew-two'])
  }finally{act(()=>root.unmount())}
 })
+
+it('does not poll the changelog when the plan canvas is not on screen', async () => {
+ vi.mocked(agentApi.getPlannerFileContent).mockResolvedValue({success:true,data:{content:JSON.stringify({steps:[]})}} as never)
+ vi.mocked(agentApi.getPlanChangelog).mockClear()
+ function Probe() {usePlanData('Workflow/hidden-canvas', false);return null}
+ const root=createRoot(document.createElement('div'))
+ try{
+  await act(async()=>{root.render(<Probe/>)})
+  for(let i=0;i<10;i++)await act(async()=>{})
+  await act(async()=>{window.dispatchEvent(new Event('focus'))})
+  for(let i=0;i<10;i++)await act(async()=>{})
+  expect(agentApi.getPlanChangelog).not.toHaveBeenCalled()
+ }finally{act(()=>root.unmount())}
+})

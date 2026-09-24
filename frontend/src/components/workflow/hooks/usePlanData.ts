@@ -235,8 +235,11 @@ function resolveOrphanStepRefs(plan: PlanningResponse): PlanningResponse {
 /**
  * Hook to read and write plan.json from the workspace
  * @param workspacePath - The workspace path (e.g., "Workflow/HRMS PR Review")
+ * @param watchExternalChanges - poll for plan edits made elsewhere (Builder
+ *   chat, runs, other tabs). Only a visible plan canvas needs this; other
+ *   consumers rely on load + manual refresh.
  */
-export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
+export function usePlanData(workspacePath: string | null, watchExternalChanges = true): UsePlanDataReturn {
   const [plan, setPlan] = useState<PlanningResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -774,7 +777,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   // Watch for Builder-side plan mutations while the canvas sits open: poll
   // the changelog head and re-check on focus for the chat-then-canvas flow.
   useEffect(() => {
-    if (!workspacePath) return
+    if (!workspacePath || !watchExternalChanges) return
     let disposed = false
     void whenWorkflowChatSettled().then(() => { if (!disposed) void checkForExternalPlanChanges() })
     const timer = setInterval(() => { void checkForExternalPlanChanges() }, 30000)
@@ -787,7 +790,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [workspacePath, checkForExternalPlanChanges])
+  }, [workspacePath, watchExternalChanges, checkForExternalPlanChanges])
 
   return {
     plan,

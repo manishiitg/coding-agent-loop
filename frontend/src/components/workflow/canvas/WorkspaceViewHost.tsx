@@ -303,7 +303,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const kind: WorkspaceViewKind = embeddedPlanOnly ? 'canvas' : getWorkspaceView(effectiveView).kind
 
   // --- Toolbar data, loaded once for every view ---------------------------
-  const planData = usePlanData(workspacePath)
+  // Watch for outside plan edits only while the plan canvas is on screen.
+  const planData = usePlanData(workspacePath, kind === 'canvas' && (embeddedPlanOnly || effectiveView === 'flow'))
   const { status } = useWorkflowExecution()
   const workspace = useWorkspaceState(workspacePath, selectedRunFolder)
   const plan = planData.plan

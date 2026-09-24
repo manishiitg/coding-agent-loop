@@ -2737,7 +2737,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     )
   })
   const terminalWorkflowPathFilter = isWorkflowTerminalContext ? activeWorkflowPath : null
-  const { plan: terminalWorkflowPlan } = usePlanData(terminalWorkflowPathFilter)
+  const { plan: terminalWorkflowPlan } = usePlanData(terminalWorkflowPathFilter, false)
 
   const sessionEvents = useChatStore(state => (
     currentSessionId ? state.tabEvents[currentSessionId] : undefined

@@ -83,6 +83,24 @@ func (api *StreamingAPI) chatPolicySessionKey(p workflowChatPolicy) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// chatPolicyRoleRequiresReconnect decides whether a coding-agent session must
+// be replaced because the chat's role changed. Saved runtimes from before the
+// role key existed carry no role information; their mode is still compared by
+// the caller, so they resume rather than lose the conversation.
+func chatPolicyRoleRequiresReconnect(codingProvider bool, previous, current string, known bool, saved *ChatHistoryAgentRuntime) bool {
+	if !codingProvider {
+		return false
+	}
+	if known {
+		return previous != current
+	}
+	if saved == nil || strings.TrimSpace(saved.ChatPolicyRoleKey) == "" {
+		return false
+	}
+	hasResume := saved.ExternalSessionID != "" || saved.AgentSessionHandle != nil && !saved.AgentSessionHandle.Empty()
+	return hasResume && saved.ChatPolicyRoleKey != current
+}
+
 func chatPolicyRequiresReconnect(codingProvider bool, previous, current string, known bool, saved *ChatHistoryAgentRuntime) bool {
 	if !codingProvider {
 		return false

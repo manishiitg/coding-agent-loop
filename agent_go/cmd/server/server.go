@@ -611,6 +611,7 @@ type StreamingAPI struct {
 	// synthetic recap so the new agent sees just enough context to continue.
 	lastWorkshopModeBySession        map[string]string
 	lastChatPolicyBySession          map[string]string
+	lastChatPolicyRoleBySession      map[string]string
 	lastAgentProfileKeyBySession     map[string]string
 	launchedAgentProfileKeyBySession map[string]string
 	agentProfileAdmissions           sync.Map // *mcpagent.Agent -> immutable launched profile key
@@ -2118,6 +2119,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted:               make(map[string]bool),
 		lastWorkshopModeBySession:           make(map[string]string),
 		lastChatPolicyBySession:             make(map[string]string),
+		lastChatPolicyRoleBySession:         make(map[string]string),
 		lastAgentProfileKeyBySession:        make(map[string]string),
 		stoppedSessions:                     make(map[string]bool),
 		interruptedTurns:                    make(map[string]bool),
@@ -6928,7 +6930,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var preModeChangeSnapshot []llmtypes.MessageContent
 		if newWorkshopMode != "" {
 			activeForPolicy, _ := api.getActiveSession(sessionID)
-			policyKey := api.chatPolicySessionKey(resolveWorkflowChatPolicy(sessionID, req, activeForPolicy, currentUserIsReadOnly))
+			currentPolicy := resolveWorkflowChatPolicy(sessionID, req, activeForPolicy, currentUserIsReadOnly)
+			policyKey := api.chatPolicySessionKey(currentPolicy)
+			policyRoleKey := currentPolicy.sessionKey()
 			codingProvider := common.IsCLIProvider(finalProvider)
 			api.conversationMux.RLock()
 			_, knownInMemory := api.lastChatPolicyBySession[sessionID]
@@ -6945,15 +6949,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if api.lastChatPolicyBySession == nil {
 				api.lastChatPolicyBySession = make(map[string]string)
 			}
-			previousPolicy, knownPolicy := api.lastChatPolicyBySession[sessionID]
 			api.lastChatPolicyBySession[sessionID] = policyKey
+			if api.lastChatPolicyRoleBySession == nil {
+				api.lastChatPolicyRoleBySession = make(map[string]string)
+			}
+			previousRole, knownRole := api.lastChatPolicyRoleBySession[sessionID]
+			api.lastChatPolicyRoleBySession[sessionID] = policyRoleKey
 			prevMode, hadPrev := api.lastWorkshopModeBySession[sessionID]
 			if prevMode == "" && savedRuntime != nil {
 				prevMode = savedRuntime.WorkshopMode
 			}
 			// Keep native continuation when its persisted admission still matches.
 			// Fresh chats and API providers must not lose normal history replay.
-			if chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime) || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
+			// Only a role change (mode, origin, capabilities) replaces the native
+			// session. Definition/config drift (chat prompt, MCP or user config)
+			// keeps the same conversation: the retained-policy check refuses the
+			// stale process, and the relaunch resumes it with the current setup.
+			if chatPolicyRoleRequiresReconnect(codingProvider, previousRole, policyRoleKey, knownRole, savedRuntime) || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
 				modeChangePrevMode = prevMode
 				log.Printf("[CHAT_POLICY] Policy refresh for session %s (mode %q -> %q); starting a fresh native coding-agent session with recent conversation context", sessionID, prevMode, newWorkshopMode)
@@ -8043,6 +8055,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 	api.conversationMux.RLock()
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
+	runtime.ChatPolicyRoleKey = api.lastChatPolicyRoleBySession[sessionID]
 	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
 	if admitted, ok := api.agentProfileAdmissions.Load(underlyingAgent); ok {

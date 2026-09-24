@@ -83,6 +83,17 @@ func (api *StreamingAPI) chatPolicySessionKey(p workflowChatPolicy) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// codingProviderReloadsInstructionsOnResume reports whether a coding CLI picks
+// up a changed system prompt when AgentWorks relaunches it on the same native
+// session. Verified 2026-09-24 with a rule changed between turns: claude-code
+// (CLAUDE.md re-read per launch), codex-cli (AGENTS.md re-read on resume) and
+// cursor-cli (the adapter resends a changed prompt inline, which it follows)
+// do; muse-cli keeps the project rules the session started with and also
+// ignores an inline override. pi-cli passes the prompt as a flag every launch.
+func codingProviderReloadsInstructionsOnResume(provider string) bool {
+	return !strings.EqualFold(strings.TrimSpace(provider), "muse-cli")
+}
+
 // chatPolicyRoleRequiresReconnect decides whether a coding-agent session must
 // be replaced because the chat's role changed. Saved runtimes from before the
 // role key existed carry no role information; their mode is still compared by

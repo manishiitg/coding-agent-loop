@@ -32,3 +32,14 @@ func TestChatPolicyRoleRequiresReconnect(t *testing.T) {
 		t.Fatal("non-coding providers never reconnect")
 	}
 }
+
+func TestCodingProviderReloadsInstructionsOnResume(t *testing.T) {
+	for _, provider := range []string{"claude-code", "codex-cli", "cursor-cli", "pi-cli"} {
+		if !codingProviderReloadsInstructionsOnResume(provider) {
+			t.Fatalf("%s should keep its session across prompt changes", provider)
+		}
+	}
+	if codingProviderReloadsInstructionsOnResume("muse-cli") || codingProviderReloadsInstructionsOnResume(" Muse-CLI ") {
+		t.Fatal("muse-cli cannot take new instructions into a resumed session")
+	}
+}

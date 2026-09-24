@@ -6949,6 +6949,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if api.lastChatPolicyBySession == nil {
 				api.lastChatPolicyBySession = make(map[string]string)
 			}
+			previousPolicy, knownPolicy := api.lastChatPolicyBySession[sessionID]
 			api.lastChatPolicyBySession[sessionID] = policyKey
 			if api.lastChatPolicyRoleBySession == nil {
 				api.lastChatPolicyRoleBySession = make(map[string]string)
@@ -6965,7 +6966,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// session. Definition/config drift (chat prompt, MCP or user config)
 			// keeps the same conversation: the retained-policy check refuses the
 			// stale process, and the relaunch resumes it with the current setup.
-			if chatPolicyRoleRequiresReconnect(codingProvider, previousRole, policyRoleKey, knownRole, savedRuntime) || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
+			// Exception: a CLI that cannot take new instructions into a resumed
+			// session (Muse) gets a fresh session on any drift, carrying the
+			// recent dialogue, rather than keep running on the old prompt.
+			roleChanged := chatPolicyRoleRequiresReconnect(codingProvider, previousRole, policyRoleKey, knownRole, savedRuntime)
+			definitionChanged := !codingProviderReloadsInstructionsOnResume(finalProvider) && chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime)
+			if roleChanged || definitionChanged || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
 				modeChangePrevMode = prevMode
 				log.Printf("[CHAT_POLICY] Policy refresh for session %s (mode %q -> %q); starting a fresh native coding-agent session with recent conversation context", sessionID, prevMode, newWorkshopMode)
@@ -9101,6 +9107,10 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	// session. Retained live input is still refused for a stale process (see
 	// agentProfileAllowsRetainedLiveInput), which is what forces that relaunch.
 	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		if !codingProviderReloadsInstructionsOnResume(provider) {
+			log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; %s cannot load new instructions into a resumed session, starting a fresh one with the recent dialogue", sessionID, provider)
+			return false
+		}
 		log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; resuming the same native coding-agent session with the current definition", sessionID)
 	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)

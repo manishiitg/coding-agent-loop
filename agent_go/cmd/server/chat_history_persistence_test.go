@@ -2773,6 +2773,15 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationResumesLegacyRuntimeForPr
 	}
 }
 
+func TestSeedCodingAgentRuntimeFromRestoredConversationMuseStartsFreshOnChangedProfile(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
+	runtime := &ChatHistoryAgentRuntime{Kind: "coding_agent", Provider: "muse-cli", ExternalSessionID: "old-muse", ResumeSupported: true, AgentProfileKey: "profile-sha256:old"}
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "muse-cli", "", runtime, &mcpagent.Agent{}) {
+		t.Fatal("muse-cli must start a fresh session when its instructions changed")
+	}
+}
+
 func TestSeedCodingAgentRuntimeFromRestoredConversationAcceptsMatchingAgentProfile(t *testing.T) {
 	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
 	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}

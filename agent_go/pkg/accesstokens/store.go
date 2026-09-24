@@ -23,7 +23,11 @@ import (
 const Prefix = "aw_pat_"
 
 var ErrInvalid = errors.New("access token is invalid, expired, or revoked")
-var Scopes = []string{"workflows:read", "files:read", "runs:execute", "files:write", "plan:write", "builder:chat"}
+var Scopes = []string{"workflows:read", "files:read", "runs:execute", "files:write", "plan:write", "builder:chat", "crews:read", "crews:run"}
+
+// workflowScopes is the complete workflow permission set; FullBuilderAccess
+// means all of these, independent of any Crew permissions.
+var workflowScopes = []string{"workflows:read", "files:read", "runs:execute", "files:write", "plan:write", "builder:chat"}
 
 type Token struct {
 	ID           string     `json:"id"`
@@ -35,6 +39,10 @@ type Token struct {
 	Scopes       []string   `json:"scopes"`
 	WorkflowIDs  []string   `json:"workflow_ids"`
 	AllWorkflows bool       `json:"all_workflows"`
+	// CrewIDs / AllCrews bound crews:read and crews:run the same way
+	// WorkflowIDs / AllWorkflows bound the workflow permissions.
+	CrewIDs  []string `json:"crew_ids"`
+	AllCrews bool     `json:"all_crews"`
 	CreatedAt    time.Time  `json:"created_at"`
 	ExpiresAt    time.Time  `json:"expires_at"`
 	LastUsedAt   *time.Time `json:"last_used_at"`
@@ -45,11 +53,14 @@ func (t Token) Allows(scope string) bool { return slices.Contains(t.Scopes, scop
 func (t Token) AllowsWorkflow(id string) bool {
 	return t.AllWorkflows || slices.Contains(t.WorkflowIDs, id)
 }
+func (t Token) AllowsCrew(id string) bool {
+	return t.AllCrews || slices.Contains(t.CrewIDs, id)
+}
 func (t Token) FullBuilderAccess() bool {
 	if !t.AllWorkflows {
 		return false
 	}
-	for _, s := range Scopes {
+	for _, s := range workflowScopes {
 		if !t.Allows(s) {
 			return false
 		}
@@ -80,8 +91,27 @@ func Validate(t Token, now time.Time) error {
 		}
 		seen[s] = true
 	}
-	if t.AllWorkflows && len(t.WorkflowIDs) > 0 || !t.AllWorkflows && len(t.WorkflowIDs) == 0 || len(t.WorkflowIDs) > 200 {
+	hasWorkflowScope, hasCrewScope := false, false
+	for _, s := range t.Scopes {
+		if strings.HasPrefix(s, "crews:") {
+			hasCrewScope = true
+		} else {
+			hasWorkflowScope = true
+		}
+	}
+	// A bound is required exactly for the kind of permission granted; a
+	// Crew-only token names no workflows and vice versa.
+	if hasWorkflowScope && (t.AllWorkflows && len(t.WorkflowIDs) > 0 || !t.AllWorkflows && len(t.WorkflowIDs) == 0) || len(t.WorkflowIDs) > 200 {
 		return errors.New("choose all accessible workflows or specific workflow IDs")
+	}
+	if !hasWorkflowScope && (t.AllWorkflows || len(t.WorkflowIDs) > 0) {
+		return errors.New("workflow bounds need a workflow permission")
+	}
+	if hasCrewScope && (t.AllCrews && len(t.CrewIDs) > 0 || !t.AllCrews && len(t.CrewIDs) == 0) || len(t.CrewIDs) > 200 {
+		return errors.New("choose all accessible Crews or specific Crew IDs")
+	}
+	if !hasCrewScope && (t.AllCrews || len(t.CrewIDs) > 0) {
+		return errors.New("Crew bounds need a Crew permission (crews:read or crews:run)")
 	}
 	if t.Allows("builder:chat") && !t.FullBuilderAccess() {
 		return errors.New("Builder chat requires all permissions and all accessible workflows because its runtime can execute tools and shell commands")
@@ -136,6 +166,13 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Crew bounds arrived after the table; add them to existing databases.
+	for _, column := range []string{`crew_ids TEXT NOT NULL DEFAULT '[]'`, `all_crews INTEGER NOT NULL DEFAULT 0`} {
+		if _, alterErr := db.Exec(`ALTER TABLE access_tokens ADD COLUMN ` + column); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
+			db.Close()
+			return nil, alterErr
+		}
+	}
 	return &Store{db}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
@@ -160,9 +197,13 @@ func (s *Store) Issue(ctx context.Context, t Token, now time.Time) (Token, strin
 	}
 	scopes, _ := json.Marshal(t.Scopes)
 	ids, _ := json.Marshal(t.WorkflowIDs)
+	if t.CrewIDs == nil {
+		t.CrewIDs = []string{}
+	}
+	crewIDs, _ := json.Marshal(t.CrewIDs)
 	// Cap issuance in the same statement, including concurrent requests.
-	result, err := s.db.ExecContext(ctx, `INSERT INTO access_tokens (id,hash,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,created_at,expires_at)
- SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM access_tokens WHERE user_id=? AND revoked_at IS NULL AND expires_at>?)<100`, t.ID, hash(raw), t.UserID, t.Username, t.Email, t.Provider, t.Name, string(scopes), string(ids), t.AllWorkflows, now.Unix(), t.ExpiresAt.Unix(), t.UserID, now.Unix())
+	result, err := s.db.ExecContext(ctx, `INSERT INTO access_tokens (id,hash,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,crew_ids,all_crews,created_at,expires_at)
+ SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM access_tokens WHERE user_id=? AND revoked_at IS NULL AND expires_at>?)<100`, t.ID, hash(raw), t.UserID, t.Username, t.Email, t.Provider, t.Name, string(scopes), string(ids), t.AllWorkflows, string(crewIDs), t.AllCrews, now.Unix(), t.ExpiresAt.Unix(), t.UserID, now.Unix())
 	if err != nil {
 		return Token{}, "", err
 	}
@@ -173,14 +214,14 @@ func (s *Store) Issue(ctx context.Context, t Token, now time.Time) (Token, strin
 	return t, raw, nil
 }
 
-const columns = `id,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,created_at,expires_at,last_used_at,revoked_at`
+const columns = `id,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,crew_ids,all_crews,created_at,expires_at,last_used_at,revoked_at`
 
 func scan(row interface{ Scan(...any) error }) (Token, error) {
 	var t Token
-	var scopes, ids string
+	var scopes, ids, crewIDs string
 	var created, expires int64
 	var used, revoked sql.NullInt64
-	err := row.Scan(&t.ID, &t.UserID, &t.Username, &t.Email, &t.Provider, &t.Name, &scopes, &ids, &t.AllWorkflows, &created, &expires, &used, &revoked)
+	err := row.Scan(&t.ID, &t.UserID, &t.Username, &t.Email, &t.Provider, &t.Name, &scopes, &ids, &t.AllWorkflows, &crewIDs, &t.AllCrews, &created, &expires, &used, &revoked)
 	if err != nil {
 		return t, err
 	}
@@ -188,6 +229,9 @@ func scan(row interface{ Scan(...any) error }) (Token, error) {
 		return t, err
 	}
 	if err = json.Unmarshal([]byte(ids), &t.WorkflowIDs); err != nil {
+		return t, err
+	}
+	if err = json.Unmarshal([]byte(crewIDs), &t.CrewIDs); err != nil {
 		return t, err
 	}
 	t.CreatedAt = time.Unix(created, 0).UTC()

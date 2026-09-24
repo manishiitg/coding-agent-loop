@@ -3216,7 +3216,7 @@ export interface ListScheduledJobsResponse {
 export interface ScheduledJobRun {
   id: string
   job_id: string
-  webhook?: { trigger_name: string; delivery_id: string; event?: string; received_at: string }
+  webhook?: { trigger_name: string; delivery_id: string; event?: string; received_at: string; commit_sha?: string; component?: string; env?: string; deployed_at?: string }
   trigger_source?: 'manual' | 'cron' | 'calendar' | string
   scheduled_for?: string
   run_folder?: string

@@ -575,6 +575,12 @@ to the union. Changing the surface means editing the yaml and the golden test
 together, deliberately; adding a tool to run mode exposes it externally unless
 it appears in `external_denylist`.
 
+For webhook runs, `get_schedule_runs` returns the accepted delivery's
+`commit_sha`, `component`, `env`, and `deployed_at` under `webhook` when those
+fields were present in the delivery body. `get_run` returns the same `webhook`
+metadata for that run folder. These fields identify the deploy ping that
+started the run; overlapping pings skipped by the trigger do not create runs.
+
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
 `POST/GET/DELETE /api/external/v1/mcp` (get_api_spec + call_tool over the same catalog). The CLI

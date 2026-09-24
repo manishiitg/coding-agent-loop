@@ -1,10 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 )
@@ -105,6 +107,66 @@ func TestExternalListSchedulesEmptyAndUnknownRuns(t *testing.T) {
 	if body["error"].(map[string]any)["code"] != "schedule_not_found" {
 		t.Fatalf("wrong error: %v", body)
 	}
+}
+
+func TestExternalWebhookRunExposesAcceptedDeployMetadata(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","label":"Invoice processing","created_by":"owner","access":{"owners":["owner"]},"schedules":[{"id":"deploy-hook","name":"Rerun Basic Smoke Suite","schedule_type":"webhook","enabled":true}]}`)
+	const sha = "0b8b40e69a1234567890abcdef1234567890abcd"
+	sctx := &ScheduleContext{
+		Schedule: WorkflowSchedule{Name: "Rerun Basic Smoke Suite"},
+		WebhookInput: &WorkflowWebhookDelivery{
+			DeliveryID: "delivery-1", ReceivedAt: time.Date(2026, 9, 23, 10, 33, 0, 0, time.UTC),
+			Payload: json.RawMessage(`{"component":"chat","env":"staging","commit_sha":"` + sha + `","deployed_at":"2026-09-23T10:32:19Z","secret":"never-return"}`),
+		},
+	}
+	runs, err := json.Marshal([]ScheduleRunEntry{{
+		ID: "run-1", ScheduleID: "deploy-hook", TriggerSource: "webhook", RunFolder: "iteration-6-hook",
+		Status: "success", StartedAt: time.Now().UTC(), Webhook: webhookRunMetadata(sctx),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, "Workflow/invoices/schedule-runs.json", string(runs))
+	f.write(t, "Workflow/invoices/runs/iteration-6-hook/default/result.txt", "passed")
+	for _, call := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"get_schedule_runs", map[string]any{"workflow_id": "invoices", "schedule_id": "deploy-hook"}},
+		{"get_run", map[string]any{"workflow_id": "invoices", "run_folder": "iteration-6-hook/default"}},
+	} {
+		body := externalTestBody(t, f.call(t, "owner", call.name, call.args), 200)
+		var webhook map[string]any
+		if call.name == "get_schedule_runs" {
+			listed := body["runs"].([]any)
+			webhook = listed[0].(map[string]any)["webhook"].(map[string]any)
+		} else {
+			var ok bool
+			webhook, ok = body["webhook"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s missing webhook metadata: %v", call.name, body)
+			}
+			if body["schedule_run_id"] != "run-1" {
+				t.Fatalf("%s missing run identity: %v", call.name, body)
+			}
+		}
+		if webhook["commit_sha"] != sha || webhook["component"] != "chat" || webhook["env"] != "staging" || webhook["deployed_at"] != "2026-09-23T10:32:19Z" {
+			t.Fatalf("%s missing deploy metadata: %v", call.name, webhook)
+		}
+		if strings.Contains(bodyString(t, body), "never-return") {
+			t.Fatalf("%s exposed unrelated webhook payload", call.name)
+		}
+	}
+}
+
+func bodyString(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestExternalTriggerScheduleWithoutScheduler(t *testing.T) {

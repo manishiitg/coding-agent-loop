@@ -2175,6 +2175,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			Error:                    cause.Error(), DurationMs: &durationMs, GroupNames: sctx.Schedule.GroupNames,
 			StartedAt: startTime, CompletedAt: &completedAt,
 		}
+		if sctx.WebhookInput != nil {
+			entry.Webhook = webhookRunMetadata(sctx)
+		}
 		if err := AppendScheduleRun(persistenceCtx, sctx.WorkspacePath, entry); err != nil {
 			s.logf(sctx, "[SCHEDULER] failed to record schedule startup failure: %v", err)
 		}

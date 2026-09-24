@@ -64,7 +64,7 @@ func newExternalToolsFixture(t *testing.T) *externalToolsFixture {
 	})
 	router.GET("/api/documents/*file", func(c *gin.Context) {
 		rel := strings.TrimPrefix(c.Param("file"), "/")
-		if rel != "Workflow/invoices/workflow.json" && rel != "Workflow/secret/workflow.json" {
+		if rel != "Workflow/invoices/workflow.json" && rel != "Workflow/secret/workflow.json" && rel != "Workflow/invoices/schedule-runs.json" {
 			c.Status(404)
 			return
 		}

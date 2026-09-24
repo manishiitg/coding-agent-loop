@@ -80,8 +80,20 @@ The builder conversation panel has a **Webhooks** filter beside Recent, Schedule
 and Bots. Webhook executions appear here; the Schedules filter shows time jobs.
 The feed refreshes every 10 seconds while either run filter is visible. Each
 webhook run links to its execution transcript and shows its status and run folder.
-New run records also retain the trigger name, event type, delivery ID, and received
-time, without copying the payload or authentication secret into history responses.
+New run records retain the trigger name, event type, delivery ID, and received
+time. When a delivery contains deploy fields, run history also retains
+`commit_sha`, `component`, `env`, and `deployed_at`. The full payload and
+authentication secret are excluded from history responses. The original
+delivery body is stored with the run artifacts and can be opened in the UI.
+External `get_schedule_runs` includes the deploy fields under each run's
+`webhook` object; `get_run` includes the same object for a webhook run folder.
+
+These fields describe the delivery that **started that run**. A rollout may
+send one ping per component. If several pings share a SHA and collision policy
+skips overlapping deliveries, the recorded run is associated with the accepted
+delivery. If two rollouts overlap, its SHA is the deploy that started the run,
+not necessarily the last deploy that finished while it was running. Skipped or
+busy deliveries do not create run history entries.
 
 The activity monitor and current-workflow header distinguish Webhook, Scheduled,
 and Manual origins. Older sessions with a `schedule-webhook--` identity are still

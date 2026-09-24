@@ -308,7 +308,7 @@ func TestWebhookPolicyRejectsOverridesAndManualInvocation(t *testing.T) {
 }
 
 func TestWebhookSessionOriginAndHistoryMetadata(t *testing.T) {
-	sctx := &ScheduleContext{WorkflowID: "wf_test", WorkspacePath: "Workflow/test", Schedule: WorkflowSchedule{ID: "hook", Name: "PR reviews", ScheduleType: "webhook"}, WebhookInput: &WorkflowWebhookDelivery{DeliveryID: "delivery-1", Event: "pull_request", ReceivedAt: time.Now().UTC(), Payload: json.RawMessage(`{"private":"not-for-history"}`)}}
+	sctx := &ScheduleContext{WorkflowID: "wf_test", WorkspacePath: "Workflow/test", Schedule: WorkflowSchedule{ID: "hook", Name: "PR reviews", ScheduleType: "webhook"}, WebhookInput: &WorkflowWebhookDelivery{DeliveryID: "delivery-1", Event: "pull_request", ReceivedAt: time.Now().UTC(), Payload: json.RawMessage(`{"commit_sha":"0b8b40e69a1234567890abcdef1234567890abcd","component":"chat","env":"staging","deployed_at":"2026-09-23T10:32:19Z","private":"not-for-history"}`)}}
 	svc := &SchedulerService{}
 	req := svc.buildWorkshopRequest(context.Background(), sctx)
 	if req["triggered_by"] != "webhook" {
@@ -327,6 +327,9 @@ func TestWebhookSessionOriginAndHistoryMetadata(t *testing.T) {
 	}
 	if restored.Webhook == nil || restored.Webhook.DeliveryID != "delivery-1" || restored.Webhook.Event != "pull_request" || restored.Webhook.TriggerName != "PR reviews" {
 		t.Fatalf("missing delivery metadata: %s", data)
+	}
+	if restored.Webhook.CommitSHA != "0b8b40e69a1234567890abcdef1234567890abcd" || restored.Webhook.Component != "chat" || restored.Webhook.Env != "staging" || restored.Webhook.DeployedAt != "2026-09-23T10:32:19Z" {
+		t.Fatalf("missing deploy metadata: %s", data)
 	}
 	if strings.Contains(string(data), "not-for-history") || strings.Contains(string(data), "payload") {
 		t.Fatalf("history leaks payload: %s", data)

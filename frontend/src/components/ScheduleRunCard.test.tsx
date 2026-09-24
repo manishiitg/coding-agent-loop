@@ -21,7 +21,7 @@ const webhookJob = { id: 'job-w', name: 'PR hook', schedule_type: 'webhook', mes
 const webhookRun = {
   id: 'run-w', job_id: 'job-w', session_id: 'webhook-session', status: 'success', trigger_source: 'webhook',
   started_at: '2026-09-19T08:00:00Z', final_response: 'Reviewed PR 87.',
-  webhook: { trigger_name: 'PR opened', delivery_id: 'delivery-87', event: 'pull_request', received_at: '2026-09-19T08:00:00Z' },
+  webhook: { trigger_name: 'PR opened', delivery_id: 'delivery-87', event: 'pull_request', received_at: '2026-09-19T08:00:00Z', commit_sha: '0b8b40e69a1234567890abcdef1234567890abcd', component: 'chat', env: 'staging', deployed_at: '2026-09-23T10:32:19Z' },
 } as ScheduledJobRun
 
 const cleanups: (() => void)[] = []
@@ -86,8 +86,12 @@ it('names webhook runs and skips Started with', async () => {
   const { host } = await mount({ job: webhookJob, run: webhookRun, showScheduleName: true })
   expect(host.textContent).toContain('PR opened')
   expect(host.textContent).toContain('Reviewed PR 87.')
+  expect(host.textContent).toContain('0b8b40e69a12')
   await expand(host)
   expect(host.textContent).toContain('Final response')
   expect(host.textContent).toContain('Delivery details')
+  expect(host.textContent).toContain('0b8b40e69a1234567890abcdef1234567890abcd')
+  expect(host.textContent).toContain('Componentchat')
+  expect(host.textContent).toContain('Environmentstaging')
   expect(host.textContent).not.toContain('Started with')
 })

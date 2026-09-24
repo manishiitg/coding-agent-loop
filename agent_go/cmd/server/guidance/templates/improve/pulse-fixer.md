@@ -1,9 +1,7 @@
 # PULSE FIX PHASE
 
-Run only after Technical Review has classified current workflow evidence. This
-may be an explicit standalone `/pulse-fixer` command or the caller-supplied
-later Fix message in one retained Review+Fix sequence. For that sequence,
-confirm the completed `technical_review` receipt for this conversation first;
+Run only after Technical Review has classified current workflow evidence, as
+the caller-supplied Fix message in one retained Review+Fix sequence. Confirm the completed `technical_review` receipt for this conversation first;
 if it is missing or incomplete, report the limitation and do not apply repairs.
 Do not rerun Technical Review, Strategic Review, or broad
 discovery. Do not treat raw workflow observations as repair issues.{{if .Focus}}

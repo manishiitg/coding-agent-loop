@@ -9,8 +9,9 @@ requirement to execute the full workflow or exercise every consumer.
 
 This is the single contract for honestly recording the evidence available when
 a bounded repair is applied. It is
-the same standard whether the fix is applied inside scheduled Pulse, a manual
-`/pulse-fixer` pass, or an approved measurement change. Load it
+the same standard whether the fix is applied inside scheduled Pulse, a fix run,
+a Technical review started from the Pulse tab, or an approved measurement
+change. Load it
 before applying a fix. Issue closure records the applied repair; a verified
 claim separately records a check that actually passed. A failed mutation or an
 immediate check that still reproduces the defect must remain active.

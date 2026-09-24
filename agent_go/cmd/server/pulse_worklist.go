@@ -2630,7 +2630,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"summary":           map[string]interface{}{"type": "string"},
 		"impact":            map[string]interface{}{"type": "string"},
 		"evidence":          map[string]interface{}{"type": "array", "minItems": 1, "items": map[string]interface{}{"type": "string"}},
-		"recommended_route": map[string]interface{}{"type": "string", "enum": []string{"decision_required", "evidence_wait", "fixer_handoff"}},
+		"recommended_route": map[string]interface{}{"type": "string", "enum": []string{"decision_required", "fixer_handoff"}},
 		"human_input_id":    map[string]interface{}{"type": "string", "description": "Required with recommended_route=decision_required. Create the pending reviewer-owned decision first and pass its exact id so the finding is atomically linked as awaiting_user."},
 		"next_check":        map[string]interface{}{"type": "string"},
 		"workaround":        map[string]interface{}{"type": "string"},

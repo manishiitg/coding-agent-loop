@@ -302,11 +302,12 @@ exact step under review, not merely to exist somewhere in the backlog.
   `disposition="external_action_required"` with a `reason_code`, an
   `external_owner`, and a `reopen_condition` — those three fields belong to
   the disposition, not to `record_pulse_finding` itself.
-- **Insufficient evidence to choose or apply a fix safely right now** (e.g.
-  the intended source of a field is unknown and would have to be guessed;
-  no repair has been applied): `record_pulse_finding` with `step_id`,
-  `recommended_route="evidence_wait"`, and an exact `next_check`. Missing future
-  verification of an already-applied fix does not qualify for this route.
+- **The fix depends on a fact you cannot find** (e.g. the intended source of a
+  field is unknown and would have to be guessed): investigate it now with the
+  data, runs and code you can read. If it is still unknown, ask the user for
+  that fact through a decision (`recommended_route="decision_required"`). Pulse
+  never parks an issue waiting for future evidence; missing future verification
+  of an applied fix is not a reason to keep it open.
 - Only as a last resort — a fix that is real, workflow-owned, and safe in
   principle, but too large or cross-cutting for this focused pass to
   complete on its own — fall back to `record_pulse_finding` with

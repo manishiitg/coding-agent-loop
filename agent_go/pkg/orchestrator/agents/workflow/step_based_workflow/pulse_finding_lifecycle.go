@@ -701,6 +701,10 @@ type PulseActionableBacklogReconciliation struct {
 	ActionableWorkflowIssues  int `json:"actionable_workflow_issues"`
 	HumanDecisions            int `json:"human_decisions"`
 	EvidenceWaits             int `json:"evidence_waits"`
+	// Retired evidence waits: closed when the review found no problem,
+	// otherwise handed to the fixer for this pass.
+	ClosedEvidenceWaits   int `json:"closed_evidence_waits"`
+	ReroutedEvidenceWaits int `json:"rerouted_evidence_waits"`
 }
 
 // ReconcilePulseFindingLifecycle runs the compatibility migrations explicitly
@@ -818,6 +822,45 @@ func ReconcilePulseActionableBacklog(ctx context.Context, workspacePath string) 
 	}
 	if affected, affectedErr := platform.RowsAffected(); affectedErr == nil {
 		result.PlatformHandoffs = int(affected)
+	}
+
+	// Pulse no longer parks issues waiting for evidence. A wait whose review
+	// found no problem is closed; every other wait goes to the fixer so this
+	// pass repairs it or asks the user.
+	closedWaits, err := db.ExecContext(ctx, `UPDATE run_concerns SET
+		status=?, resolved_at=?, resolved_by='pulse_evidence_wait_retirement',
+		resolution_note='Closed: the review found no problem to fix. Pulse no longer keeps issues open waiting for evidence.'
+		WHERE status NOT IN (?, ?, ?)
+			AND EXISTS (SELECT 1 FROM pulse_finding_details d WHERE d.fingerprint=run_concerns.fingerprint
+				AND json_extract(d.detail_json, '$.recommended_route')=?
+				AND COALESCE(json_extract(d.detail_json, '$.classification'), '') IN ('no_material_problem', 'no_issue', 'no_problem'))`,
+		ConcernStatusResolved, now,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired, pulseFindingRouteEvidenceWait)
+	if err != nil {
+		return PulseActionableBacklogReconciliation{}, err
+	}
+	if affected, affectedErr := closedWaits.RowsAffected(); affectedErr == nil {
+		result.ClosedEvidenceWaits = int(affected)
+	}
+	// A parked wait was "acknowledged"; handing it to the fixer reopens it.
+	if _, err := db.ExecContext(ctx, `UPDATE run_concerns SET status=?
+		WHERE status=? AND EXISTS (SELECT 1 FROM pulse_finding_details d WHERE d.fingerprint=run_concerns.fingerprint
+			AND json_extract(d.detail_json, '$.recommended_route')=?)`,
+		ConcernStatusOpen, ConcernStatusAcknowledged, pulseFindingRouteEvidenceWait); err != nil {
+		return PulseActionableBacklogReconciliation{}, err
+	}
+	rerouted, err := db.ExecContext(ctx, `UPDATE pulse_finding_details SET
+		detail_json=json_set(detail_json, '$.recommended_route', ?), updated_at=?
+		WHERE json_extract(detail_json, '$.recommended_route')=?
+			AND EXISTS (SELECT 1 FROM run_concerns c WHERE c.fingerprint=pulse_finding_details.fingerprint
+				AND c.status NOT IN (?, ?, ?))`,
+		pulseFindingRouteFixerHandoff, now, pulseFindingRouteEvidenceWait,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired)
+	if err != nil {
+		return PulseActionableBacklogReconciliation{}, err
+	}
+	if affected, affectedErr := rerouted.RowsAffected(); affectedErr == nil {
+		result.ReroutedEvidenceWaits = int(affected)
 	}
 
 	const active = `c.status NOT IN ('resolved', 'rejected', 'external_action_required')`

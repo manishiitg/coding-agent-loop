@@ -462,8 +462,8 @@ and an outcome test. Consolidate related ideas and reuse existing matching pendi
 cards. Unknown benefit alone is not a reason to withhold a bounded experiment from
 human choice. Do not apply strategic changes during review. Enforce its declared route:
 `decision_required` must create and link one `awaiting_user` decision;
-`evidence_wait` becomes `proposal_only` only with the exact non-empty
-`next_check`; `engineering_handoff` must be attempted through the normal safe repair
+there is no evidence-wait route: Pulse fixes an issue, asks the user, or closes
+it when nothing is wrong; `engineering_handoff` must be attempted through the normal safe repair
 lifecycle rather than parked as a proposal. Use
 `create_human_input_request(source="strategic_review", input_id="strategic-proposal-...")`
 for a strategic decision so the UI preserves who asked. An actionable alternative

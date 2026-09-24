@@ -152,15 +152,17 @@ func validateTypedPulseReviewFinding(input PulseReviewFindingInput) (pulseFindin
 	if marker.RecommendedRoute != pulseFindingRouteDecisionRequired && strings.TrimSpace(input.HumanInputID) != "" {
 		return marker, fmt.Errorf("human_input_id is valid only with recommended_route=decision_required")
 	}
+	// Pulse finds an issue and closes it by fixing it; it never parks one
+	// waiting for future evidence. Investigate now: fix it, ask the user, or,
+	// when there is no problem, do not file it.
+	if marker.RecommendedRoute == pulseFindingRouteEvidenceWait {
+		return marker, fmt.Errorf("recommended_route=evidence_wait is retired: Pulse does not wait for evidence. Investigate now, then use fixer_handoff and fix it in this pass, decision_required if only the user can choose, or do not file it when the review found no problem")
+	}
 	if isPulseAdvisorModule(marker.Module) {
 		switch marker.RecommendedRoute {
 		case pulseFindingRouteDecisionRequired, pulseFindingRouteFixerHandoff:
-		case pulseFindingRouteEvidenceWait:
-			if marker.NextCheck == "" {
-				return marker, fmt.Errorf("recommended_route=evidence_wait requires next_check")
-			}
 		default:
-			return marker, fmt.Errorf("advisor findings require recommended_route decision_required, evidence_wait, or fixer_handoff")
+			return marker, fmt.Errorf("advisor findings require recommended_route decision_required or fixer_handoff")
 		}
 	}
 	return marker, nil

@@ -242,7 +242,7 @@ func TestCreateCrewToolEndToEnd(t *testing.T) {
 	}
 	ctx := context.Background()
 	result, err := tool.exec(ctx, map[string]interface{}{
-		"title": "Release Reviewer", "purpose": "Own release quality",
+		"title": "Release Reviewer", "purpose": "Own release quality", "role": "Reviewer",
 		"step_instruction": "Review the release.", "idempotency_key": "proposal-1",
 	})
 	if err != nil {
@@ -275,7 +275,7 @@ func TestCreateCrewToolEndToEnd(t *testing.T) {
 		t.Fatalf("triggers = %+v, want one internal binding", triggers)
 	}
 	again, err := tool.exec(ctx, map[string]interface{}{
-		"title": "Release Reviewer", "purpose": "Own release quality",
+		"title": "Release Reviewer", "purpose": "Own release quality", "role": "Reviewer",
 		"step_instruction": "Review the release.", "idempotency_key": "proposal-1",
 	})
 	if err != nil {
@@ -303,7 +303,7 @@ func TestCreateCrewToolRejectsBadInput(t *testing.T) {
 		t.Fatalf("non-array skills err = %v, want rejection", err)
 	}
 	if _, err := tool.exec(ctx, map[string]interface{}{
-		"title": "T", "purpose": "P", "idempotency_key": "k",
+		"title": "T", "purpose": "P", "role": "R", "idempotency_key": "k",
 	}); err == nil {
 		t.Fatal("missing step instruction: expected rejection")
 	}

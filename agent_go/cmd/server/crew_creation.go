@@ -24,9 +24,13 @@ type CreateCrewRequest struct {
 	WorkflowPath string
 	ProfileID    string
 	Title        string
-	Description  string
 	Icon         string
+	Role         string
 	Purpose      string
+	// Purpose is the Crew's whole identity statement: it is stored as the
+	// top-level project description (the slot the Identity panel reads) and
+	// seeded into the starter brief. There is intentionally no separate
+	// description field — one concept, one value.
 	Instructions string
 	Skills       []string
 	Servers      []string
@@ -124,11 +128,17 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if title == "" || len([]rune(title)) > 60 {
 		return CreatedCrew{}, fmt.Errorf("crew title must be 1-60 characters")
 	}
-	if len([]rune(strings.TrimSpace(req.Description))) > 2000 {
-		return CreatedCrew{}, fmt.Errorf("crew description must be at most 2000 characters")
-	}
 	if len([]rune(strings.TrimSpace(req.Icon))) > 8 {
 		return CreatedCrew{}, fmt.Errorf("crew icon must be at most 8 characters")
+	}
+	if strings.TrimSpace(req.Role) == "" {
+		return CreatedCrew{}, fmt.Errorf("crew role is required")
+	}
+	if len([]rune(strings.TrimSpace(req.Role))) > 120 {
+		return CreatedCrew{}, fmt.Errorf("crew role must be at most 120 characters")
+	}
+	if strings.TrimSpace(req.Purpose) == "" {
+		return CreatedCrew{}, fmt.Errorf("crew purpose is required")
 	}
 	if len([]rune(strings.TrimSpace(req.Purpose))) > 2000 {
 		return CreatedCrew{}, fmt.Errorf("crew purpose must be at most 2000 characters")
@@ -214,7 +224,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 			// The receipt outlived its manifests (a crash between the
 			// receipt write and the manifest writes, or deleted
 			// manifests): rebuild under the frozen identity.
-			created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
+			created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Purpose, req.Role, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
 			if err != nil {
 				return CreatedCrew{}, err
 			}
@@ -222,7 +232,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 			created.Pending = pending
 		}
 	} else {
-		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
+		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Purpose, req.Role, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
 		if err != nil {
 			return CreatedCrew{}, err
 		}
@@ -389,10 +399,11 @@ func ensureCrewCreationTrigger(ctx context.Context, svc *ProductScheduleService,
 
 // writeCrewCreationManifests writes a fresh crew's runtime manifest, identity
 // manifest, and code folder, mirroring the UI creation layout.
-func writeCrewCreationManifests(ctx context.Context, userID string, profile agentprofiles.Profile, profileID, workflowPath, title, description, icon, crewID, workspacePath string, inheritedLLM *workflowtypes.AgentLLMConfig) (CreatedCrew, error) {
+func writeCrewCreationManifests(ctx context.Context, userID string, profile agentprofiles.Profile, profileID, workflowPath, title, purpose, role, icon, crewID, workspacePath string, inheritedLLM *workflowtypes.AgentLLMConfig) (CreatedCrew, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	sessionID := profileID + ":project:" + crewID
-	description = strings.TrimSpace(description)
+	purpose = strings.TrimSpace(purpose)
+	role = strings.TrimSpace(role)
 	icon = strings.TrimSpace(icon)
 	if icon == "" {
 		icon = strings.ToUpper(string([]rune(title)[:1]))
@@ -428,11 +439,11 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 		"product":        profileID,
 		"id":             crewID,
 		"title":          title,
-		"description":    description,
+		"description":    purpose,
 		"session_id":     sessionID,
 		"created_at":     now,
 		"updated_at":     now,
-		"identity":       map[string]interface{}{"name": title, "icon": icon},
+		"identity":       map[string]interface{}{"name": title, "icon": icon, "role": role},
 	}
 	if err := writeCrewCreationManifest(ctx, filepath.ToSlash(filepath.Join(workspacePath, "workflow.json")), runtimeManifest); err != nil {
 		return CreatedCrew{}, err
@@ -918,15 +929,15 @@ func crewCreationFingerprint(userID, workflowPath, profileID string, req CreateC
 		return out
 	}
 	payload := struct {
-		UserID, WorkflowPath, ProfileID                 string
-		Title, Description, Icon, Purpose, Instructions string
-		Skills, Servers, Secrets, GlobalSecrets         []string
-		Alias, TriggerName, TriggerMessage              string
-		StepID, StepTitle, StepInstruction              string
-		ContextDependencies                             []string
+		UserID, WorkflowPath, ProfileID          string
+		Title, Icon, Role, Purpose, Instructions string
+		Skills, Servers, Secrets, GlobalSecrets  []string
+		Alias, TriggerName, TriggerMessage       string
+		StepID, StepTitle, StepInstruction       string
+		ContextDependencies                      []string
 	}{
 		UserID: userID, WorkflowPath: workflowPath, ProfileID: profileID,
-		Title: trimmed(req.Title), Description: trimmed(req.Description), Icon: trimmed(req.Icon),
+		Title: trimmed(req.Title), Icon: trimmed(req.Icon), Role: trimmed(req.Role),
 		Purpose: trimmed(req.Purpose), Instructions: trimmed(req.Instructions),
 		Skills: lists(req.Skills), Servers: lists(req.Servers), Secrets: lists(req.Secrets), GlobalSecrets: lists(req.GlobalSecrets),
 		Alias: trimmed(req.Alias), TriggerName: trimmed(req.TriggerName), TriggerMessage: trimmed(req.TriggerMessage),

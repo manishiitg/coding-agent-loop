@@ -46,6 +46,7 @@ UPDATE_MMX_CLI=false
 FRONTEND_BUILD_MODE=false
 WITHOUT_ELECTRON=false
 ENABLE_CHAT_TERMINAL_DEBUGS=false
+DEBUG_MEMORY=false
 MCP_SERVER_API_TOKEN_ARG=""
 MCP_SERVER_API_TOKEN_ARG_SET=false
 EXPECT_MCP_SERVER_API_TOKEN_VALUE=false
@@ -62,6 +63,7 @@ print_usage() {
     printf '%s\n' '  --only-frontend               Start only the frontend and Electron app.'
     printf '%s\n' '  --build                       Build and serve the frontend (use with --only-frontend).'
     printf '%s\n' '  --without-electron            Do not launch Electron.'
+    printf '%s\n' '  --debug-memory                Electron with heap-snapshot port + RSS sampler.'
     printf '%s\n' '  --enable-chat-terminal-debugs Enable the developer terminal/step diagnostics rail.'
     printf '%s\n' '  --background, -b              Run services in the background.'
     printf '%s\n' '  --test-connections, -t [file] Test an MCP config file.'
@@ -98,6 +100,9 @@ for arg in "$@"; do
             ;;
         --without-electron)
             WITHOUT_ELECTRON=true
+            ;;
+        --debug-memory)
+            DEBUG_MEMORY=true
             ;;
         --enable-chat-terminal-debugs)
             ENABLE_CHAT_TERMINAL_DEBUGS=true
@@ -579,16 +584,39 @@ EOF
         echo "🌐 Browser-only frontend requested; Electron will not be started"
     else
         echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
+        ELECTRON_EXTRA_ARGS=""
+        if [ "$DEBUG_MEMORY" = true ]; then
+            ELECTRON_EXTRA_ARGS="--remote-debugging-port=9222 --js-flags=--expose-gc"
+        fi
         if [ "$BACKGROUND_MODE" = true ]; then
-            nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$FRONTEND_URL\" exec \"$ELECTRON_BIN\" ." >> "$ELECTRON_LOG_PATH" 2>&1 &
+            # shellcheck disable=SC2086
+            nohup bash -lc "cd \"$DESKTOP_DIR\" && DEV_URL=\"$FRONTEND_URL\" exec \"$ELECTRON_BIN\" . $ELECTRON_EXTRA_ARGS" >> "$ELECTRON_LOG_PATH" 2>&1 &
         else
             (
                 cd "$DESKTOP_DIR" || exit 1
-                DEV_URL="$FRONTEND_URL" exec "$ELECTRON_BIN" .
+                # shellcheck disable=SC2086
+                DEV_URL="$FRONTEND_URL" exec "$ELECTRON_BIN" . $ELECTRON_EXTRA_ARGS
             ) >> "$ELECTRON_LOG_PATH" 2>&1 &
         fi
         ELECTRON_PID=$!
         echo "✅ Electron started (PID: $ELECTRON_PID)"
+        if [ "$DEBUG_MEMORY" = true ]; then
+            echo "🧠 Memory debug on: heap snapshots at http://127.0.0.1:9222 (open in Chrome → inspect → Memory)"
+            echo "🧠 RSS sampler logging to $ELECTRON_LOG_PATH every 30s"
+            (
+                while kill -0 "$ELECTRON_PID" 2>/dev/null; do
+                    # RSS of the whole Electron tree in MB (macOS ps rss is KiB).
+                    EPIDS=$(pgrep -f "electron/dist/Electron.app" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+                    if [ -n "$EPIDS" ]; then
+                        total_kb=$(ps -o rss= -p "$EPIDS" 2>/dev/null | awk '{s+=$1} END {print s+0}')
+                    else
+                        total_kb=0
+                    fi
+                    echo "[MEMDBG] $(date '+%H:%M:%S') electron_tree_rss_mb=$((total_kb / 1024))" >> "$ELECTRON_LOG_PATH"
+                    sleep 30
+                done
+            ) &
+        fi
         sleep 2
         if ! kill -0 "$ELECTRON_PID" 2>/dev/null; then
             echo "❌ Error: Electron exited immediately. Check logs: $ELECTRON_LOG_PATH"

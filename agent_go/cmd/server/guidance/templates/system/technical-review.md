@@ -75,7 +75,13 @@ is ruled out; only `ask` turns that into a decision. Preserve the goal and const
 and apply contracts for behavior changes requiring approval. Continue until
 every workflow issue is closed: fixed, not a problem, the user's decision (with
 the exact change ready to approve), or platform-owned. Nothing is left for a
-later pass; a pass that ends with open issues is partial. Record truthful partial failure
+later pass; a pass that ends with open issues is partial. Older issues may still
+carry a `next_check` such as "the next normal run must show X" or a
+classification such as `insufficient_evidence`: those are not reasons to wait.
+Read the current plan, code and data now; if the fix is already in place, close
+it (`verified_no_change` with the check, or `changed_unverified` for a change
+you apply); if not, fix it. A due or failed Plan Drift is not a reason to leave
+an issue open either. Record truthful partial failure
 if a repair cannot be completed. Never launch an additional reviewer or Fixer.
 
 Validate changed contracts through the affected consumers. Record exact changed

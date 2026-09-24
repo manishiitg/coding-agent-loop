@@ -3074,7 +3074,7 @@ func pulseLifecyclePlanDriftReviewStep(pulseRunID string) pulseLifecycleStep {
 // Architecture proposes against the clean baseline, Technical repairs concrete
 // behavior, and Strategic evaluates outcomes.
 func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleStep {
-	label, reference, contract := "technical-review", "technical-review", "Investigate material correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
+	label, reference, contract := "technical-review", "technical-review", "First close every open workflow issue in get_pulse_state(view=\"backlog\"): fix it, close it as not a problem with the check that shows it, ask the user through a decision with the exact change, or hand a platform defect off. Nothing stays open waiting: an old next_check that waits for a future run or more evidence is not a reason to wait (check whether the fix is already in place and close it, or fix it now), and a due or failed Plan Drift is not a reason to leave issues open. Then investigate new correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
 	switch module {
 	case pulseModuleArchitectureReview:
 		label, reference, contract = "architecture-review", "architecture-review", "Improve the construction of a working workflow, including evidence-based execution tier/model choices. Use actual quality, retries, cost and latency evidence; preserve explicit user pins and propose measured trials with a checkpoint and rollback through architecture decisions. Runtime does not change tiers from run counts. Research and propose bounded improvements; do not mutate implementation in the review."

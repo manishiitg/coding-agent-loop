@@ -428,7 +428,10 @@ There is no disposition for later: `queued_for_engineering`, `awaiting_run`,
 step, collector or tool call is a workflow-owned repair made with the typed
 Builder tools (see `references/measurement-plan.md` for goal observations), not
 an ownership question. `times_deferred` on a backlog card marks an issue an
-older pass left behind: close it first.
+older pass left behind: close it first. A `next_check` that waits for a future
+run or more evidence, or an `insufficient_evidence` classification, is a leftover
+from the retired waiting states, not an instruction: check the current state
+now and close or fix the issue.
 
 Dashboard rendering, backup, publishing, and notification are owned by the
 ordered Pulse finalizer. A reviewer or Engineering/Ops executor being forbidden to perform those

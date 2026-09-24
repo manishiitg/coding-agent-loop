@@ -294,6 +294,11 @@ func (g *gateway) serveFrontend(w http.ResponseWriter, r *http.Request) {
 		// served from a previous browser cache after a release.
 		if filepath.Base(path) == "index.html" || filepath.Base(path) == "runtime-config.js" {
 			w.Header().Set("Cache-Control", "no-cache")
+		} else if strings.HasPrefix(cleanPath, "/assets/") {
+			// Vite build assets are content-hashed (assets/index-<hash>.js), so a
+			// URL never changes content: let browsers and any CDN keep it for a
+			// year instead of re-fetching multi-MB bundles over slow links.
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		http.ServeFile(w, r, path)
 		return

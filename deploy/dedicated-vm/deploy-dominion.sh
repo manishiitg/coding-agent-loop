@@ -262,7 +262,29 @@ printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/dominion/st
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/dominion-workspace.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-workspace.service.d/20-disable-cdp.conf"
+# Keep service logs bounded (agent.log and workspace.log grew to hundreds of
+# MB with no rotation). Same policy as RTS: rotate at 100M, keep 7, every 10m.
+mkdir -p "$HOME/.config/systemd/user" /srv/dominion/state
+cat > /srv/dominion/state/logrotate.conf <<'LOGROTATE'
+/srv/dominion/logs/*.log {
+    size 100M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+}
+LOGROTATE
+printf '%s\n' '[Unit]' 'Description=Rotate Dominion service logs' '' '[Service]' 'Type=oneshot' \
+  'ExecStart=/usr/sbin/logrotate --state /srv/dominion/state/logrotate.status /srv/dominion/state/logrotate.conf' \
+  'Nice=19' 'IOSchedulingClass=idle' 'CPUQuota=20%' 'MemoryMax=256M' > "$HOME/.config/systemd/user/dominion-logrotate.service"
+printf '%s\n' '[Unit]' 'Description=Keep Dominion service logs bounded' '' '[Timer]' 'OnBootSec=5m' 'OnUnitActiveSec=10m' \
+  'AccuracySec=1m' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > "$HOME/.config/systemd/user/dominion-logrotate.timer"
 systemctl --user daemon-reload
+systemctl --user enable --now dominion-logrotate.timer || echo "WARNING: could not enable dominion-logrotate.timer" >&2
 # dominion-agent depends on dominion-workspace (After=dominion-workspace.service
 # in its unit), so restart it first -- and it must actually be restarted here:
 # until now this script only ever restarted dominion-agent, so dominion-workspace
@@ -302,7 +324,15 @@ if ! systemctl --user is-active --quiet dominion-gateway; then
   exit 1
 fi
 
-if curl -fsS -o /dev/null -w '' http://127.0.0.1:21000/api/health; then
+# The agent recovers queued conversation turns and warms caches before it
+# listens, which can take well over the few seconds slept above. A single
+# probe rolled back a healthy release (2026-09-24); wait up to ~2 minutes.
+healthy=false
+for _ in $(seq 1 60); do
+  if curl -fsS -o /dev/null -w '' http://127.0.0.1:21000/api/health; then healthy=true; break; fi
+  sleep 2
+done
+if $healthy; then
   echo "==> Health check passed. Active release: $(readlink -f "$CURRENT_LINK")"
 else
   echo "FATAL: health check failed after restart — rolling back to $PREVIOUS_RELEASE" >&2

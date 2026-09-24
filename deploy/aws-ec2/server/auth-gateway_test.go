@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -761,6 +762,31 @@ func TestNonTokenBearerStillRejectedWithoutSession(t *testing.T) {
 		g.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s: got %d, want 401", bearer, rec.Code)
+		}
+	}
+}
+
+func TestServeFrontendCachesHashedAssetsImmutably(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"index.html": "<html></html>", "runtime-config.js": "x", "assets/index-abc123.js": "js"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := &gateway{frontendDir: dir}
+	for path, want := range map[string]string{
+		"/assets/index-abc123.js": "public, max-age=31536000, immutable",
+		"/index.html":             "no-cache",
+		"/runtime-config.js":      "no-cache",
+		"/some/spa/route":         "no-cache",
+	} {
+		rec := httptest.NewRecorder()
+		g.serveFrontend(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Fatalf("%s Cache-Control = %q, want %q", path, got, want)
 		}
 	}
 }

@@ -334,9 +334,8 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 			return productWebhookResponse{}, false, err
 		}
 		if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
-			// A Crew caller must be one of the requester's own Crews: the
-			// target is already owner-resolved above, so both ends of a
-			// crew→crew binding belong to the same user.
+			// A Crew caller may be any Crew on the server (Crews are shared
+			// server-wide); it must exist and must not be the target itself.
 			caller := *trigger.Caller
 			caller.Type = triggerCallerCrew
 			caller.ProfileID = normalizeInternalProfileID(caller.ProfileID)

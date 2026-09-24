@@ -133,7 +133,8 @@ func (s *ProductScheduleService) crewProjectExists(ctx context.Context, userID, 
 	if strings.TrimSpace(profileID) == "" {
 		profileID = "work"
 	}
-	_, _, _, err := s.projectManifest(ctx, userID, profileID, projectID)
+	// Crews are shared server-wide, so a caller Crew may belong to any owner.
+	_, _, _, _, err := s.projectManifestAnyOwner(ctx, userID, profileID, projectID)
 	return err == nil
 }
 

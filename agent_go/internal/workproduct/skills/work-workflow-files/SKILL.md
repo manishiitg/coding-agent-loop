@@ -38,17 +38,19 @@ Resolve the authorized root before reading:
 - For an AgentWorks workflow or another Crew reference, use the exact path
   supplied in attached context. `list_accessible_workflows` returns separate
   `workflows` and `crews` lists; every entry includes its project `name` and
-  display `identity` (`name` and `icon`). Another Crew can be attached only
-  when it belongs to the same signed-in account. Use the exact returned path;
-  never guess a project path or scan unattached projects.
+  display `identity` (`name` and `icon`), and each Crew also its `owner`.
+  Crews are shared: any Crew on the server can be attached. Use the exact
+  returned path; never guess a project path or scan unattached projects.
 - For a host folder, call `list_work_folders` and use its
   `$WORK_FOLDER_<ALIAS>` variable. Do not inspect the parent directory.
-- Both kinds are read-only unless a host-folder grant explicitly says
-  `read_write`. Never edit a referenced workflow. Execution is allowed only
-  through the attached-workflow trigger procedure below.
+- Workflow references and host folders are read-only unless a host-folder
+  grant explicitly says `read_write`. Never edit a referenced workflow.
+  Execution is allowed only through the trigger procedures below.
+- Crew references (tagged or attached, any owner) are read-write: you may
+  edit another Crew's files when the user asks, as you would your own.
 
 A `#` workflow selection applies only to that message. For durable access to a
-workflow or another same-account Crew, use
+workflow or another Crew, use
 `list_accessible_workflows`, disambiguate by its exact returned path, and call
 `attach_workflow_reference` only when the user asks to keep it attached. Use
 the exact saved path for `detach_workflow_reference`. Durable references live
@@ -87,8 +89,10 @@ work around those checks with shell access or constructed HTTP requests.
 Crews and workflows call each other through secretless internal triggers, in
 every direction (Crew→Crew, Crew→workflow, workflow→Crew, workflow→workflow).
 The user usually tags the target as `#crew:<name>` or `#workflow:<name>`; those
-tags are references, never Slack channels. Targets are the user's own Crews
-and workflows they own or can edit.
+tags are references, never Slack channels. Targets are any Crew on the server
+and workflows the user owns or can edit. Every Crew is callable with no setup:
+`call_target` creates or reuses the standard trigger automatically. Creating
+extra triggers on any Crew, or using its existing ones, is always fine.
 
 1. **Connect** — `connect_to_target(target)` reuses this caller's trigger on the
    target or creates a standard one. To give the target Crew standing

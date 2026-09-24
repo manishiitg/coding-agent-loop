@@ -28,7 +28,35 @@ func accessibleProjectIcon(icon, name string) string {
 }
 
 func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]map[string]interface{}, error) {
-	root := agentProfileRuntimeWorkspace(userID, "Chats/Work/projects")
+	// Crews are shared server-wide: list the caller's own Crews (logical
+	// Chats/Work/projects/<x> paths) and every other owner's Crews (physical
+	// _users/<owner>/... paths), all read-write for Crew-to-Crew work.
+	items, err := listCrewProjectsForOwner(ctx, userID, userID, query)
+	if err != nil {
+		return nil, err
+	}
+	for _, ownerID := range crewProjectOwnerCandidates(userID) {
+		others, err := listCrewProjectsForOwner(ctx, userID, ownerID, query)
+		if err != nil {
+			continue
+		}
+		items = append(items, others...)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		left := strings.ToLower(fmt.Sprint(items[i]["name"], "\n", items[i]["workspace_path"]))
+		right := strings.ToLower(fmt.Sprint(items[j]["name"], "\n", items[j]["workspace_path"]))
+		return left < right
+	})
+	return items, nil
+}
+
+// listCrewProjectsForOwner lists one owner's Crew projects as seen by userID.
+func listCrewProjectsForOwner(ctx context.Context, userID, ownerID, query string) ([]map[string]interface{}, error) {
+	root := agentProfileRuntimeWorkspace(ownerID, "Chats/Work/projects")
+	if sanitizeUserIDForPath(ownerID) != sanitizeUserIDForPath(userID) && root == agentProfileRuntimeWorkspace(userID, "Chats/Work/projects") {
+		// Single-account layouts share one Chats root; don't list it twice.
+		return nil, nil
+	}
 	store := defaultProductProjectStore()
 	paths, exists, err := store.listPaths(ctx, root)
 	if err != nil {
@@ -38,6 +66,13 @@ func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]ma
 		return []map[string]interface{}{}, nil
 	}
 	rootPrefix := strings.TrimSuffix(filepath.ToSlash(root), "/") + "/"
+	access, ownerLabel := "owner", "you"
+	if sanitizeUserIDForPath(ownerID) != sanitizeUserIDForPath(userID) {
+		access, ownerLabel = "write", ownerID
+		if record := directoryUserFor(ownerID, "", ""); record != nil && strings.TrimSpace(record.Username) != "" {
+			ownerLabel = record.Username
+		}
+	}
 	seen := map[string]bool{}
 	items := make([]map[string]interface{}, 0)
 	for _, candidate := range paths {
@@ -80,16 +115,13 @@ func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]ma
 				Icon: identityIcon,
 			},
 			"workspace_path": workspacePath,
-			"access":         "owner",
+			"access":         access,
+			"owner":          ownerLabel,
 		})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		left := strings.ToLower(fmt.Sprint(items[i]["name"], "\n", items[i]["workspace_path"]))
-		right := strings.ToLower(fmt.Sprint(items[j]["name"], "\n", items[j]["workspace_path"]))
-		return left < right
-	})
 	return items, nil
 }
+
 
 func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...string) {
 	cfg := common.GetSessionShellConfig(sessionID)
@@ -107,7 +139,30 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 		}
 	}
 	reads = appendUniqueStrings(reads, add...)
-	common.SetSessionFolderGuard(sessionID, reads, cfg.WritePaths)
+	// Crew references are read-write; workflow references stay read-only.
+	writes := make([]string, 0, len(cfg.WritePaths)+len(add))
+	for _, path := range cfg.WritePaths {
+		if !removeSet[strings.TrimSuffix(strings.TrimSpace(path), "/")] {
+			writes = append(writes, path)
+		}
+	}
+	crewWrites, _ := splitCrewReferenceFolders(add)
+	writes = appendUniqueStrings(writes, crewWrites...)
+	common.SetSessionFolderGuard(sessionID, reads, writes)
+}
+
+// splitCrewReferenceFolders separates Crew project roots (any owner) from
+// other reference folders. Crews are shared read-write between Crews, so
+// their roots join the write set; workflow roots stay read-only.
+func splitCrewReferenceFolders(folders []string) (crewWrite, readOnly []string) {
+	for _, folder := range folders {
+		if isCrewProjectPath(folder) {
+			crewWrite = append(crewWrite, strings.TrimSuffix(strings.TrimSpace(folder), "/")+"/")
+			continue
+		}
+		readOnly = append(readOnly, folder)
+	}
+	return crewWrite, readOnly
 }
 
 // registerAccessibleWorkflowListTool gives product and Builder agents the same
@@ -127,7 +182,7 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read and Crew projects owned by the signed-in user. Each result includes its project name and display identity (identity name and icon). In Crew, pass an exact returned workspace_path to attach_workflow_reference for durable read-only access. An empty query lists everything accessible.", map[string]interface{}{
+	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read and every Crew project on the server (each Crew lists its owner). Each result includes its project name and display identity (identity name and icon). In Crew, pass an exact returned workspace_path to attach_workflow_reference for durable access. An empty query lists everything accessible.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{"type": "string", "description": "Optional case-insensitive workflow/Crew project name, identity, id, icon, or path search."},
@@ -219,7 +274,7 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow or same-account Crew project to this Crew as durable read-only context. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
+	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow or any Crew project on the server to this Crew as durable context: Crew references are read-write, workflow references read-only. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact workflow or Crew workspace_path returned by list_accessible_workflows."},
@@ -249,7 +304,7 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
 		encoded, err := json.MarshalIndent(map[string]interface{}{
 			"workflow_context_paths": paths,
-			"note":                   "The project is saved as read-only project context and file access is active now.",
+			"note":                   "The project is saved as durable context and file access is active now (Crew references are read-write, workflow references read-only).",
 		}, "", "  ")
 		return string(encoded), err
 	}); err != nil {

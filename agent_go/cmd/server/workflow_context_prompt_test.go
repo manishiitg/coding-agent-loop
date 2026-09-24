@@ -13,12 +13,13 @@ func TestWorkflowContextPromptUsesCompactReadOnlyReferences(t *testing.T) {
 	}, "http://workspace.invalid")
 
 	for _, want := range []string{
-		"## Workflow Context (Read-Only)",
+		"## Workflow Context",
+		"Crew folders (any owner) are shared read-write",
 		"(workflow) `Workflow/HDFC-Personal-Accounts/`",
 		"(workflow) `Workflow/ICICI-BANK-PARSING-v2/`",
 		"(Crew) `Chats/Work/projects/company-ca-a1b2c3d4/`",
 		"planning/plan.json",
-		"Read only the files needed",
+		"read only the files needed",
 		"$WORKSPACE_DOCS_PATH/<listed-path>/...",
 		"Do not list or probe the parent `Workflow/` directory",
 		"failure to list that parent does not mean",

@@ -5723,7 +5723,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					profileRoot := agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder)
 					profileWrite := strings.TrimSuffix(profileRoot, "/") + "/"
 					sandbox := resolvedProfile.Definition.Runtime.Sandbox
-					profileReadOnly := agentProfileReadOnlyFolders(sandbox, workflowReadOnlyFolders)
+					// Crew references (# tags and attached Crews, any owner) are
+					// shared read-write like the Crew itself; workflow references
+					// stay read-only. A Crew Run-mode reader keeps them read-only.
+					crewRefWrite, nonCrewReadOnly := splitCrewReferenceFolders(workflowReadOnlyFolders)
+					if currentUserIsReadOnly && resolvedProfile.Definition.ID == "work" {
+						crewRefWrite, nonCrewReadOnly = nil, workflowReadOnlyFolders
+					}
+					profileReadOnly := agentProfileReadOnlyFolders(sandbox, nonCrewReadOnly)
 					chatHistoryGrants := agentProfileChatHistoryGrants(sandbox, perUserChatHistory)
 					workGrantWrite := []string(nil)
 					workGrantReadOnly := []string(nil)
@@ -5759,12 +5766,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						guardWrite = nil
 						guardBlocked = append(guardBlocked, profileWrite)
 					}
-					executorWrite := append(append([]string{}, chatHistoryGrants...), workGrantWrite...)
+					executorWrite := append(append(append([]string{}, chatHistoryGrants...), workGrantWrite...), crewRefWrite...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, guardWriteRoot, guardReadOnly, executorWrite...)
 					workspace.SetSessionWorkingDir(sessionID, profileRoot)
 					workspace.SetSessionFolderGuard(sessionID,
-						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
-						append(append(guardWrite, chatHistoryGrants...), workGrantWrite...),
+						append(append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...), crewRefWrite...),
+						append(append(append(guardWrite, chatHistoryGrants...), workGrantWrite...), crewRefWrite...),
 					)
 					guardBlocked = append(guardBlocked, workGrantReadOnly...)
 					if len(guardBlocked) > 0 {

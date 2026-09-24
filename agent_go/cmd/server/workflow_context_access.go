@@ -48,6 +48,10 @@ func contextReferenceReadRoot(userID, folder string) (string, bool) {
 		return folder, true
 	case len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != ".." && strings.TrimSpace(userID) != "":
 		return agentProfileRuntimeWorkspace(userID, folder), true
+	case isOtherOwnerCrewPath(parts) && strings.TrimSpace(userID) != "":
+		// Crews are shared server-wide: another owner's Crew is addressed by
+		// its physical _users/<owner>/Chats/Work/projects/<project> path.
+		return folder, true
 	default:
 		return "", false
 	}
@@ -88,7 +92,7 @@ func authorizeWorkflowContextPathsWithReadRoots(ctx context.Context, paths []str
 			if _, err := authorizeWorkflowContextPaths(ctx, []string{folder}); err != nil {
 				return nil, nil, denied
 			}
-		case len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != "..":
+		case (len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != "..") || isOtherOwnerCrewPath(parts):
 			if claims == nil || strings.TrimSpace(claims.UserID) == "" {
 				return nil, nil, denied
 			}
@@ -123,4 +127,18 @@ func mergeDurableWorkflowContextPaths(ctx context.Context, selectedFolder string
 		return appendUniqueStrings(nil, transient...)
 	}
 	return appendUniqueStrings(manifest.WorkflowContextPaths, transient...)
+}
+
+// isOtherOwnerCrewPath reports whether parts spell a physical Crew project
+// path _users/<owner>/Chats/Work/projects/<project>.
+func isOtherOwnerCrewPath(parts []string) bool {
+	if len(parts) != 6 || parts[0] != "_users" || parts[2] != "Chats" || parts[3] != "Work" || parts[4] != "projects" {
+		return false
+	}
+	for _, part := range []string{parts[1], parts[5]} {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }

@@ -815,6 +815,9 @@ func (receiver webhookReceiver) deliver(ctx context.Context, manifestID, workspa
 	if len(deliveryID) > 256 || len(event) > 256 {
 		return internalTriggerDeliveryResult{}, &invalidWebhookDeliveryError{"delivery ID and event must be at most 256 bytes"}
 	}
+	if strings.TrimSpace(deliveryID) == "" {
+		deliveryID = uuid.NewString()
+	}
 	runID := webhookDeliveryRunID(manifestID, sched.ID, deliveryID)
 	lookupExisting := func() (internalTriggerDeliveryResult, bool, error) {
 		run, lookupErr := receiver.existing(ctx, runID)

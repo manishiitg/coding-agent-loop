@@ -17,7 +17,11 @@ generated per-function tool; arguments and results are validated, a call
 that finishes within 120 s returns its result directly, longer calls come
 back as an `[AUTO-NOTIFICATION]`, and callers can poll progress or ask a
 Crew target for an update mid-run. Built on the existing internal-trigger
-bindings; not yet deployed.
+bindings. Since 2026-09-24 functions are the only way to call a Crew (the
+`*_target` tools are removed): every caller, whether a Crew, a workflow or
+MCP/CLI, gets one continuing conversation with each Crew it calls, never its
+main chat. The Triggers tab is now Webhooks (external only), and callers are
+listed under Functions → Callers. Not yet deployed.
 
 ## Attached context made query_workflow_db "ambiguous" — PLAT-356
 

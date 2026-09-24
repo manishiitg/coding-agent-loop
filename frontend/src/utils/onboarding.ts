@@ -1,5 +1,12 @@
 export const LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY = 'llm_discovery_onboarding_dismissed'
-export const WORKFLOW_WALKTHROUGH_DISMISSED_KEY = 'workflow_walkthrough_dismissed'
+export type WalkthroughSurface = 'overview' | 'empty-automation' | 'automation' | 'empty-crew' | 'crew'
+const WALKTHROUGH_DISMISSED_KEYS: Record<WalkthroughSurface, string> = {
+  overview: 'agentworks_overview_walkthrough_v2_dismissed',
+  'empty-automation': 'agentworks_empty_automation_walkthrough_v2_dismissed',
+  automation: 'agentworks_automation_walkthrough_v2_dismissed',
+  'empty-crew': 'agentworks_empty_crew_walkthrough_v2_dismissed',
+  crew: 'agentworks_crew_walkthrough_v2_dismissed',
+}
 
 export const LLM_DISCOVERY_ONBOARDING_OPENED_EVENT = 'llm-discovery-onboarding-opened'
 export const LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT = 'llm-discovery-onboarding-cleared'
@@ -41,11 +48,11 @@ export const dismissLLMDiscoveryOnboarding = () => {
   setStorageValue(LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY, 'true')
 }
 
-export const isWorkflowWalkthroughDismissed = () =>
-  getStorageValue(WORKFLOW_WALKTHROUGH_DISMISSED_KEY) === 'true'
+export const isWorkflowWalkthroughDismissed = (surface: WalkthroughSurface) =>
+  getStorageValue(WALKTHROUGH_DISMISSED_KEYS[surface]) === 'true'
 
-export const dismissWorkflowWalkthrough = () => {
-  setStorageValue(WORKFLOW_WALKTHROUGH_DISMISSED_KEY, 'true')
+export const dismissWorkflowWalkthrough = (surface: WalkthroughSurface) => {
+  setStorageValue(WALKTHROUGH_DISMISSED_KEYS[surface], 'true')
 }
 
 export const getLLMDiscoveryOnboardingState = (): LLMDiscoveryOnboardingState => {

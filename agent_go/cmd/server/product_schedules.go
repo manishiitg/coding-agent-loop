@@ -213,6 +213,9 @@ type ProductScheduleService struct {
 	// turns never interleave in the same conversation. Key: userID + "\x1f" +
 	// conversation key. s.running stays per job for Running/Stop lookups.
 	conversations map[string]bool
+	// heldConversation reports a conversation as busy without a claim, so
+	// deliveries queue instead of starting a live agent turn; tests only.
+	heldConversation func(convKey string) bool
 	// queued holds accepted deliveries waiting their turn, FIFO per conversation key.
 	queued map[string][]productScheduleQueuedRun
 	// deferred holds the quiet-rule reason for jobs currently held back, so
@@ -1012,7 +1015,7 @@ func (s *ProductScheduleService) claimAutomationRun(ctx context.Context, job pro
 	convKey := job.UserID + "\x1f" + conversationKeyForJob(job)
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
-	if s.conversations[convKey] {
+	if s.conversations[convKey] || (s.heldConversation != nil && s.heldConversation(convKey)) {
 		if !options.AllowQueue {
 			s.mu.Unlock()
 			cancel()
@@ -1110,18 +1113,14 @@ func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, ca
 		cancel()
 	}()
 
-	// One identity for the run record and, for triggers, the chat key.
+	// One identity for the run record.
 	runID := firstNonEmptyTrimmed(options.RunID, uuid.NewString())
 	var binding productConversationBinding
 	var bindErr error
 	if job.ProjectID != "" && job.Schedule.Isolated {
 		kind := firstNonEmptyTrimmed(job.AutomationKind, "schedule")
-		automationID := isolatedAutomationID(kind, job.Schedule.ID, runID)
 		title := job.ProjectTitle + " · " + job.Schedule.Name
-		if strings.EqualFold(kind, "trigger") {
-			title += " · " + time.Now().Format("2006-01-02 15:04")
-		}
-		binding, bindErr = resolveIsolatedProjectAutomationBinding(runCtx, job.UserID, job.Profile, job.ProjectID, kind, automationID, title)
+		binding, bindErr = resolveIsolatedProjectAutomationBinding(runCtx, job.UserID, job.Profile, job.ProjectID, kind, job.Schedule.ID, title)
 	} else if job.ProjectID != "" {
 		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, job.ProjectID)
 	} else if job.Schedule.Isolated {

@@ -775,6 +775,8 @@ type WorkflowSchedule struct {
 	Webhook         *WorkflowWebhookConfig `json:"webhook,omitempty"`
 	Kind            string                 `json:"kind,omitempty"`
 	Caller          *triggerCaller         `json:"caller,omitempty"`
+	// Function makes a kind=function trigger a callable workflow function.
+	Function *WorkflowFunctionSpec `json:"function,omitempty"`
 	Mode            string                 `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
 	Messages        []string               `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
 	// DirectMessagesReason records why a schedule-local conversation is preferable

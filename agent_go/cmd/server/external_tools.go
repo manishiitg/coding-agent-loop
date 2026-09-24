@@ -119,6 +119,13 @@ func externalTools() ([]externalTool, error) {
 		p["session_id"] = externalString("Run session ID returned by a previous run call.")
 		p["since_index"] = externalInteger(-1, 1000000000)
 		addRun("run_status", "Poll a run session started externally: session status, event page, pending inputs, and its active executions.", false, p, "session_id")
+		addRun("list_workflow_functions", "List the workflow's functions: typed entry points (a route plus named inputs set as that run's variables) that callers invoke with call_workflow_function.", false, nil)
+		addRun("call_workflow_function", "Call one of the workflow's functions (see list_workflow_functions). Inputs are checked first: a missing, unknown or mistyped input is refused before anything runs. Returns the run outcome (status, error, step outputs) if it finishes within wait_seconds, otherwise status=running with a call_id for get_workflow_function_call. Requires the runs:execute scope and workflow write access.", true, map[string]any{
+			"function":     externalString("Function name from list_workflow_functions."),
+			"args":         map[string]any{"type": "object", "description": "Inputs matching the function's input schema."},
+			"wait_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": externalCrewMaxWaitSeconds, "description": "Seconds to wait for the outcome before returning a call_id to poll (default and max 25)."},
+		}, "function")
+		addRun("get_workflow_function_call", "Poll a call started with call_workflow_function: status (queued, running, completed, failed), the run outcome, and any error.", false, map[string]any{"call_id": externalString("call_id returned by call_workflow_function.")}, "call_id")
 		addRun("list_executions", "List the workflow's active executions: execution and session IDs, step, status, and run folder.", false, nil)
 		addRun("list_schedules", "List the workflow's schedules: IDs, type, cron or calendar shape, timezone, enabled state, and groups.", false, nil)
 		p = page()
@@ -145,10 +152,11 @@ func externalTools() ([]externalTool, error) {
 		add("list_crew_files", "List a Crew's project files (crew-relative paths). Private areas — chat transcripts under builder/, db/, and the Crew's manifests — are never listed. Requires crews:read.", false, false, crewID(nil), "crew_id")
 		add("read_crew_file", "Read one text file from a Crew's project (crew-relative path, up to 256 KiB). Private areas are refused. Requires crews:read.", false, false, crewID(map[string]any{"path": externalString("Crew-relative file path from list_crew_files.")}), "crew_id", "path")
 		add("list_crew_functions", "List a Crew's functions: name, description, input and result schemas, including the built-in ask. Requires crews:read.", false, false, crewID(nil), "crew_id")
-		// crews:run — the call runs as a turn in the Crew's own chat.
+		// crews:run — the call runs as a turn in this user's own continuing
+		// conversation with the Crew, never its main chat.
 		wait := map[string]any{"type": "integer", "minimum": 0, "maximum": externalCrewMaxWaitSeconds, "description": "Seconds to wait for the result before returning a call_id to poll (default and max 25; proxies cut requests near 30s)."}
-		add("call_crew_function", "Call one of a Crew's functions (see list_crew_functions) with arguments matching its input schema. The Crew does the work in its own chat; the result is validated against the function's result schema. Returns the result if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"function": externalString("Function name from list_crew_functions."), "args": map[string]any{"type": "object", "description": "Arguments matching the function's input schema."}, "wait_seconds": wait}), "crew_id", "function")
-		add("ask_crew", "Ask a Crew anything in free text (its built-in ask function); the answer is its final reply. Returns the answer if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"message": externalString("The question or task for the Crew."), "wait_seconds": wait}), "crew_id", "message")
+		add("call_crew_function", "Call one of a Crew's functions (see list_crew_functions) with arguments matching its input schema. The Crew does the work in your own continuing conversation with it (never its main chat); the result is validated against the function's result schema. Returns the result if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"function": externalString("Function name from list_crew_functions."), "args": map[string]any{"type": "object", "description": "Arguments matching the function's input schema."}, "wait_seconds": wait}), "crew_id", "function")
+		add("ask_crew", "Ask a Crew anything in free text (its built-in ask function); the answer is its final reply. Repeated asks continue one conversation with that Crew, so you can chat with it: it remembers your earlier asks. Returns the answer if it finishes within wait_seconds, otherwise status=running with a call_id for get_crew_function_call. Requires crews:run.", false, false, crewID(map[string]any{"message": externalString("The question or task for the Crew."), "wait_seconds": wait}), "crew_id", "message")
 		add("get_crew_function_call", "Poll a call started with call_crew_function or ask_crew: status (queued, running, completed, failed), progress reports, and the result or error. Requires crews:read or crews:run.", false, false, map[string]any{"call_id": externalString("call_id returned by call_crew_function or ask_crew.")}, "call_id")
 		// Membership comes from product.yaml's run mode: external_tools
 		// first, in yaml order, then every run.tools name (the single
@@ -385,6 +393,11 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	}
 	if tool.Name == "list_step_code" {
 		api.externalListStepCode(w, r, *selected, args)
+		return
+	}
+	switch tool.Name {
+	case "list_workflow_functions", "call_workflow_function", "get_workflow_function_call":
+		api.externalWorkflowFunctionCall(w, r, tool.Name, args, *selected, access)
 		return
 	}
 	// Run operations dispatch before the workflow lock: proxy turns forward

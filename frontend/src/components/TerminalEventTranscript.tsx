@@ -24,7 +24,7 @@ import { formatToolCallArguments, formatToolCallResult } from '../utils/toolCall
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { parseProductInteraction, type ProductInteraction } from '../../shared/session/interactions'
 import { ConversationContinuityNotice, isConversationContinuityNotice } from './ConversationContinuityNotice'
-import { DeliveryTick } from './events/system/DeliveryTick'
+import { DeliveryFailedResend, DeliveryTick } from './events/system/DeliveryTick'
 import { deliveryTickState } from './events/system/deliveryTickState'
 import { askAIDisplayText, hasAskAIMessage } from '../utils/askAIMessage'
 import { isChatDeliveryTelemetryEvent, recordChatDeliveryTelemetry } from '../utils/chatDeliveryTelemetry'
@@ -152,6 +152,8 @@ const TranscriptEvent: React.FC<{
   event: PollingEvent
   onSendMessage?: (msg: string) => void
   onRetryLastMessage?: () => void | Promise<void>
+  /** Resends a user message whose delivery failed. */
+  onResendMessage?: (msg: string) => void
   compactUserBottom?: boolean
   /** Rendered inside a turn block that already draws the border and header. */
   inTurn?: boolean
@@ -160,7 +162,7 @@ const TranscriptEvent: React.FC<{
   assistantIcon?: React.ReactNode
   /** The turn's clock is shown elsewhere or not at all; draw no time on this row. */
   hideTimestamp?: boolean
-}> = ({ event, onSendMessage, onRetryLastMessage, compactUserBottom = false, inTurn = false, renderInteraction, assistantLabel, assistantIcon, hideTimestamp = false }) => {
+}> = ({ event, onSendMessage, onRetryLastMessage, onResendMessage, compactUserBottom = false, inTurn = false, renderInteraction, assistantLabel, assistantIcon, hideTimestamp = false }) => {
   if (event.type === 'product_interaction') {
     const interaction = parseProductInteraction(event)
     return interaction && renderInteraction ? <>{renderInteraction(interaction, event)}</> : null
@@ -216,14 +218,14 @@ const TranscriptEvent: React.FC<{
   if (isConversationContinuityNotice(content)) {
     const notice = <ConversationContinuityNotice content={content} timestamp={timestamp} />
     if (!displayContent) return notice
-    return <>{notice}<UserTranscriptMessage content={displayContent} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} /></>
+    return <>{notice}<UserTranscriptMessage content={displayContent} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} onResend={onResendMessage} /></>
   }
-  return <UserTranscriptMessage content={displayContent || content || 'Message'} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} />
+  return <UserTranscriptMessage content={displayContent || content || 'Message'} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} onResend={onResendMessage} />
 }
 
 const USER_MESSAGE_PREVIEW_LIMIT = 480
 
-const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; metadata?: Record<string, unknown>; compactBottom?: boolean }> = ({ content, timestamp, metadata, compactBottom = false }) => {
+const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; metadata?: Record<string, unknown>; compactBottom?: boolean; onResend?: (text: string) => void }> = ({ content, timestamp, metadata, compactBottom = false, onResend }) => {
   // Ask AI blocks collapse to their plain-words request; the builder-only
   // instructions stay one click away behind the usual expansion toggle.
   const askAI = hasAskAIMessage(content)
@@ -246,6 +248,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; meta
         <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(20px*var(--chat-scale,1))] text-foreground">{shown}</div>
         {showReceipt && (
           <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px] leading-4 text-muted-foreground">
+            <DeliveryFailedResend metadata={metadata} text={content} onResend={onResend} />
             {timestamp && <span className="tabular-nums">{timestamp}</span>}
             <DeliveryTick metadata={metadata} />
           </div>
@@ -266,6 +269,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; meta
           {expanded ? 'Show less' : 'Show full message'}
         </button>
         <div className="ml-auto flex items-center gap-2 text-[10px] leading-4 text-muted-foreground">
+          <DeliveryFailedResend metadata={metadata} text={content} onResend={onResend} />
           {timestamp && <span className="tabular-nums">{timestamp}</span>}
           <DeliveryTick metadata={metadata} />
         </div>
@@ -746,6 +750,8 @@ interface TerminalEventTranscriptProps {
   siblingTerminals?: TerminalSnapshot[]
   onSendMessage?: (msg: string) => void
   onRetryLastMessage?: () => void | Promise<void>
+  /** Resends a user message whose delivery failed. */
+  onResendMessage?: (msg: string) => void
   loading?: boolean
   loadingOlder?: boolean
   hasOlder?: boolean
@@ -775,6 +781,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
   siblingTerminals,
   onSendMessage,
   onRetryLastMessage,
+  onResendMessage,
   loading = false,
   loadingOlder = false,
   hasOlder = false,
@@ -998,6 +1005,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
                 <TranscriptEvent
                   event={item.event}
                   onSendMessage={onSendMessage}
+                  onResendMessage={onResendMessage}
                   onRetryLastMessage={item === retryItem ? onRetryLastMessage : undefined}
                   compactUserBottom={listData[index + 1]?.kind === 'tools'}
                   inTurn={Boolean(slot?.agent)}

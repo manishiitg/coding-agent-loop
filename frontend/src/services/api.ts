@@ -441,7 +441,19 @@ export function invalidateDedupedGet(key: string): void {
   dedupedGetRequests.delete(key)
 }
 
-function dedupedGet<T>(key: string, request: () => Promise<T>): Promise<T> {
+/** Drops every shared GET whose key starts with prefix (after a write). */
+export function invalidateDedupedGetPrefix(prefix: string): void {
+  for (const key of Array.from(dedupedGetRequests.keys())) {
+    if (key.startsWith(prefix)) dedupedGetRequests.delete(key)
+  }
+}
+
+/**
+ * Shares one in-flight GET between callers asking for the same key at the
+ * same time (and for DEDUPED_GET_REUSE_MS after it succeeds), so panels that
+ * load together on page open do not each hit the server.
+ */
+export function dedupedGet<T>(key: string, request: () => Promise<T>): Promise<T> {
   const now = Date.now()
   const existing = dedupedGetRequests.get(key)
   if (existing && (existing.expiresAt === 0 || existing.expiresAt > now)) {
@@ -2594,18 +2606,21 @@ export const agentApi = {
 
   createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
     invalidateDedupedGet(workflowManifestKey(request.workspace_path))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.post('/api/workflows/manifest', request)
     return response.data
   },
 
   updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
     invalidateDedupedGet(workflowManifestKey(request.workspace_path))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.put('/api/workflows/manifest', request)
     return response.data
   },
 
   deleteWorkflowManifest: async (workspacePath: string) => {
     invalidateDedupedGet(workflowManifestKey(workspacePath))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.delete('/api/workflows/manifest', {
       params: { workspace_path: workspacePath }
     })
@@ -2613,6 +2628,7 @@ export const agentApi = {
   },
 
   deleteWorkflowFolder: async (workspacePath: string) => {
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.delete('/api/workflows/folder', {
       params: { workspace_path: workspacePath }
     })
@@ -2620,6 +2636,7 @@ export const agentApi = {
   },
 
   duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.post('/api/workflows/manifest/duplicate', request)
     return response.data
   },
@@ -2930,8 +2947,11 @@ export const workflowManifestApi = {
     return response.data
   },
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
-    const response = await api.get('/api/workflows/manifests')
-    return response.data
+    // Same key as agentApi.listWorkflowManifests: one request on page open.
+    return dedupedGet('workflow-manifests', async () => {
+      const response = await api.get('/api/workflows/manifests')
+      return response.data
+    })
   },
 
   getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
@@ -2946,18 +2966,21 @@ export const workflowManifestApi = {
 
   createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
     invalidateDedupedGet(workflowManifestKey(request.workspace_path))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.post('/api/workflows/manifest', request)
     return response.data
   },
 
   updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
     invalidateDedupedGet(workflowManifestKey(request.workspace_path))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.put('/api/workflows/manifest', request)
     return response.data
   },
 
   deleteWorkflowManifest: async (workspacePath: string) => {
     invalidateDedupedGet(workflowManifestKey(workspacePath))
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.delete('/api/workflows/manifest', {
       params: { workspace_path: workspacePath }
     })
@@ -2965,6 +2988,7 @@ export const workflowManifestApi = {
   },
 
   deleteWorkflowFolder: async (workspacePath: string) => {
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.delete('/api/workflows/folder', {
       params: { workspace_path: workspacePath }
     })
@@ -2972,6 +2996,7 @@ export const workflowManifestApi = {
   },
 
   duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
+    invalidateDedupedGet('workflow-manifests')
     const response = await api.post('/api/workflows/manifest/duplicate', request)
     return response.data
   },

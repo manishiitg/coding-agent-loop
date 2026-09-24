@@ -182,8 +182,8 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                         onChange={event => void handleRunDestination(job, event.target.value as 'crew_chat' | 'isolated')}
                         className="rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground disabled:opacity-50"
                       >
-                        <option value="crew_chat">Crew chat</option>
-                        <option value="isolated">Isolated run</option>
+                        <option value="crew_chat">Main chat</option>
+                        <option value="isolated">Own conversation</option>
                       </select>
                     </label>
                   )}

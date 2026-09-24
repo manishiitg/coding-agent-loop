@@ -391,6 +391,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {workspacePath && (
             <WorkspaceToolbarGroup
               label="Views"
+              data-tour="workflow-views"
               hideLabel
               hideToggleWhenOpen
               open={openToolbarMenu === 'views'}
@@ -433,6 +434,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <WorkspaceToolbarGroup
             label="Ops"
+            data-tour="workflow-operations"
             hideToggleWhenOpen
             open={openToolbarMenu === 'ops'}
             onToggle={() => toggleToolbarMenu('ops')}
@@ -455,6 +457,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <WorkspaceToolbarGroup
             label="Setup"
+            data-tour="workflow-setup"
             open
             title="Setup: identity, integrations, playbooks and access"
           >

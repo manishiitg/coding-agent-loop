@@ -45,3 +45,10 @@ it('reloads and reports counts when the hub bumps its refresh token', async () =
   expect(productWebhooksApi.list).toHaveBeenCalledTimes(2)
   expect(onCounts).toHaveBeenLastCalledWith({ active: 1, paused: 1 })
 })
+it('lists external webhooks only; caller bindings live under Functions', async () => {
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [trigger, { ...trigger, id: 'bind-1', name: 'Called by Alpha Bot', path: '', kind: 'internal', run_destination: 'isolated' as const }] as never })
+  const { host } = await mount()
+  expect(host.textContent).toContain('Deploy hook')
+  expect(host.textContent).not.toContain('Called by Alpha Bot')
+  expect(host.textContent).toContain('Own conversation')
+})

@@ -429,7 +429,7 @@ func TestDispatchInternalProductTriggerQueuedAndDuplicate(t *testing.T) {
 	svc, files := newInternalDispatchCrew(t, internalDispatchCrewTriggers)
 	// Hold the conversation so dispatch queues instead of starting a live
 	// agent turn; the claim, payload, and queue wiring is what this pins.
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	call := internalCrewTriggerCall{
@@ -466,7 +466,7 @@ func TestDispatchInternalProductTriggerQueuedAndDuplicate(t *testing.T) {
 
 func TestDispatchInternalProductTriggerRejects(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, internalDispatchCrewTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	base := internalCrewTriggerCall{
 		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
@@ -496,7 +496,7 @@ func TestDispatchInternalProductTriggerRejects(t *testing.T) {
 
 func TestGetInternalProductTriggerRun(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, internalDispatchCrewTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	call := internalCrewTriggerCall{
 		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",

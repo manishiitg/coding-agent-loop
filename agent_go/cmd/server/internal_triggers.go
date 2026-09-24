@@ -49,8 +49,11 @@ type triggerCaller struct {
 }
 
 func normalizeTriggerKind(kind string) string {
-	if strings.EqualFold(strings.TrimSpace(kind), triggerKindInternal) {
+	switch {
+	case strings.EqualFold(strings.TrimSpace(kind), triggerKindInternal):
 		return triggerKindInternal
+	case isFunctionTriggerKind(kind):
+		return triggerKindFunction
 	}
 	return ""
 }

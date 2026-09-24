@@ -260,7 +260,7 @@ func summarizeSharedProjectTrigger(trigger productWebhookTrigger) sharedProjectT
 		Enabled:        trigger.Enabled,
 		Kind:           strings.TrimSpace(trigger.Kind),
 		Message:        trigger.Message,
-		RunDestination: strings.TrimSpace(trigger.RunDestination),
+		RunDestination: runDestination(trigger.ownConversation()),
 	}
 	if trigger.Webhook != nil {
 		out.AuthMode = strings.TrimSpace(trigger.Webhook.AuthMode)

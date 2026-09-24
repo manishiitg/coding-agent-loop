@@ -44,6 +44,15 @@ func (t productWebhookTrigger) IsInternal() bool {
 	return isInternalTriggerKind(t.Kind)
 }
 
+// ownConversation reports whether runs go to the trigger's own continuing
+// conversation instead of the Crew's main chat. A caller binding (internal
+// trigger: another Crew, a workflow or an external connection) always does:
+// the main chat is for people. An external webhook follows its
+// run_destination.
+func (t productWebhookTrigger) ownConversation() bool {
+	return t.IsInternal() || strings.EqualFold(strings.TrimSpace(t.RunDestination), runDestinationIsolated)
+}
+
 type productWebhookRequest struct {
 	ProfileID      string         `json:"profile_id"`
 	ProjectID      string         `json:"project_id"`
@@ -83,7 +92,7 @@ func productWebhookDTO(trigger productWebhookTrigger) productWebhookResponse {
 		ID: trigger.ID, Name: trigger.Name, Enabled: trigger.Enabled,
 		Message: trigger.Message, AuthMode: authMode,
 		Path:           path,
-		RunDestination: firstNonEmptyTrimmed(trigger.RunDestination, runDestinationCrewChat),
+		RunDestination: runDestination(trigger.ownConversation()),
 		Kind:           normalizeTriggerKind(trigger.Kind),
 		Caller:         trigger.Caller,
 	}
@@ -325,6 +334,9 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 	}
 	if strings.TrimSpace(req.Kind) != "" || index < 0 {
 		trigger.Kind = normalizeTriggerKind(req.Kind)
+	}
+	if trigger.IsInternal() {
+		trigger.RunDestination = runDestinationIsolated
 	}
 	if req.Caller != nil {
 		caller := *req.Caller
@@ -616,7 +628,7 @@ func (s *ProductScheduleService) deliverProductTrigger(ctx context.Context, matc
 		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %w", ErrProductTriggerNotPersist, err)
 	}
 	message := triggerTurnMessage(match.Trigger.Message, sourceNote, relativePayloadPath)
-	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: strings.EqualFold(match.Trigger.RunDestination, runDestinationIsolated), Messages: []string{message}}}
+	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: match.Trigger.ownConversation(), Messages: []string{message}}}
 	_, dispatchErr := s.runWithOptions(context.Background(), job, "webhook", time.Time{}, productScheduleRunOptions{RunID: runID, Webhook: metadata, Detach: true, AllowQueue: true})
 	switch {
 	case dispatchErr == nil:

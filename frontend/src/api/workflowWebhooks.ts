@@ -13,6 +13,25 @@ export interface WorkflowAPITrigger {
   max_concurrency?: number
   payload_mappings?: WebhookPayloadMappings
   secret?: string
+  /** '' = external webhook, 'function' = callable function, 'internal' = one bound caller. */
+  kind?: '' | 'internal' | 'function'
+  caller?: { type: string; id: string; profile_id?: string }
+  function?: WorkflowFunctionSpec
+}
+
+export interface WorkflowFunctionInput {
+  name: string
+  type?: 'string' | 'integer' | 'number' | 'boolean'
+  required?: boolean
+  description?: string
+  enum?: string[]
+}
+
+export interface WorkflowFunctionSpec {
+  name: string
+  description?: string
+  inputs?: WorkflowFunctionInput[]
+  allowed_callers?: { type: string; id: string; profile_id?: string }[]
 }
 
 export interface WebhookValueMapping {

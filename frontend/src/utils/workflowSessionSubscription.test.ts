@@ -75,3 +75,20 @@ describe('shouldKeepChatSessionSubscribed', () => {
     })).toBe(false)
   })
 })
+
+describe('visible workflow Builder chat keeps its stream', () => {
+  it('stays subscribed while visible even when idle-but-alive (live input into a retained CLI)', () => {
+    // RTS rts-pr-reviewer (Cursor): input typed into the idle retained CLI set
+    // no streaming flag and the session was not backend-active, so the visible
+    // Builder chat had no stream and the reply appeared only after a reload.
+    expect(shouldKeepChatSessionSubscribed({ isVisible: true, isStreaming: false, hasRunningBackgroundAgents: false, isBackendActive: false })).toBe(true)
+    expect(shouldKeepChatSessionSubscribed({ isVisible: false, isStreaming: false, hasRunningBackgroundAgents: false, isBackendActive: false })).toBe(false)
+  })
+  it('ChatArea applies the visible-chat rule to workflow tabs', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync('src/components/ChatArea.tsx', 'utf8')
+    const workflowBranch = source.slice(source.indexOf("if (tab.metadata?.mode === 'workflow') {"), source.indexOf('// Skip completed sessions (definitely done)'))
+    expect(workflowBranch).toContain('shouldKeepChatSessionSubscribed({')
+    expect(workflowBranch).toContain('isVisible: activeTabIdFromStore === tab.tabId')
+  })
+})

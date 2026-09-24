@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getApiBaseUrl, getAuthToken } from '../services/api'
+import { dedupedGet, getApiBaseUrl, getAuthToken, invalidateDedupedGetPrefix } from '../services/api'
 import type {
   ScheduledJob,
   CreateScheduledJobRequest,
@@ -10,6 +10,12 @@ import type {
 } from '../services/api-types'
 
 const API_BASE_URL = getApiBaseUrl()
+
+const SCHEDULER_JOBS_KEY = 'scheduler-jobs:'
+
+function afterJobWrite<T>(result: Promise<T>): Promise<T> {
+  return result.finally(() => invalidateDedupedGetPrefix(SCHEDULER_JOBS_KEY))
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -32,32 +38,35 @@ export const schedulerApi = {
   updateConfig: (req: SchedulerConfig) =>
     api.put<SchedulerConfig>('/api/scheduler/config', req).then(r => r.data),
 
+  // Several panels list jobs together on page open; identical requests
+  // share one call. Any job write drops the shared result.
   listJobs: (params?: { entity_type?: string; enabled?: boolean; limit?: number; offset?: number; mode?: string }) =>
-    api.get<ListScheduledJobsResponse>('/api/scheduler/jobs', { params }).then(r => r.data),
+    dedupedGet(`${SCHEDULER_JOBS_KEY}${JSON.stringify(params ?? {})}`, () =>
+      api.get<ListScheduledJobsResponse>('/api/scheduler/jobs', { params }).then(r => r.data)),
 
   getJob: (id: string) =>
     api.get<ScheduledJob>(`/api/scheduler/jobs/${id}`).then(r => r.data),
 
   createJob: (req: CreateScheduledJobRequest) =>
-    api.post<ScheduledJob>('/api/scheduler/jobs', req).then(r => r.data),
+    afterJobWrite(api.post<ScheduledJob>('/api/scheduler/jobs', req).then(r => r.data)),
 
   updateJob: (id: string, req: UpdateScheduledJobRequest) =>
-    api.put<ScheduledJob>(`/api/scheduler/jobs/${id}`, req).then(r => r.data),
+    afterJobWrite(api.put<ScheduledJob>(`/api/scheduler/jobs/${id}`, req).then(r => r.data)),
 
   deleteJob: (id: string) =>
-    api.delete(`/api/scheduler/jobs/${id}`),
+    afterJobWrite(api.delete(`/api/scheduler/jobs/${id}`)),
 
   cleanupJobRuns: (params: { workspace_path: string; older_than_days: number; schedule_ids?: string }) =>
-    api.delete<{ deleted_count: number; workspace_path: string }>('/api/scheduler/jobs/runs/cleanup', { params }).then(r => r.data),
+    afterJobWrite(api.delete<{ deleted_count: number; workspace_path: string }>('/api/scheduler/jobs/runs/cleanup', { params }).then(r => r.data)),
 
   enableJob: (id: string) =>
-    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/enable`).then(r => r.data),
+    afterJobWrite(api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/enable`).then(r => r.data)),
 
   disableJob: (id: string) =>
-    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/disable`).then(r => r.data),
+    afterJobWrite(api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/disable`).then(r => r.data)),
 
   triggerJob: (id: string) =>
-    api.post<{ session_id: string }>(`/api/scheduler/jobs/${id}/trigger`).then(r => r.data),
+    afterJobWrite(api.post<{ session_id: string }>(`/api/scheduler/jobs/${id}/trigger`).then(r => r.data)),
 
   runPulse: (workspacePath: string) =>
     api.post<{ run_id: string }>('/api/scheduler/workflows/pulse-run', {
@@ -68,7 +77,7 @@ export const schedulerApi = {
     api.get<ListScheduledJobRunsResponse>(`/api/scheduler/jobs/${id}/runs`, { params: { limit, offset } }).then(r => r.data),
 
   stopJob: (id: string) =>
-    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/stop`).then(r => r.data),
+    afterJobWrite(api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/stop`).then(r => r.data)),
 }
 
 // --- Provider API Keys (server-side encrypted storage) ---

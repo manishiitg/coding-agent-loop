@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Check, CheckCheck, CircleAlert, Clock } from 'lucide-react'
 import { deliveryTickState, deliveryTickTitle } from './deliveryTickState'
 
@@ -31,6 +31,27 @@ export const DeliveryTick: React.FC<{ metadata: Record<string, unknown> | undefi
   return (
     <span data-testid="delivery-tick" data-state={state} title={deliveryTickTitle(metadata, state)} className={`shrink-0 select-none leading-none ${tone}`} aria-label={deliveryTickTitle(metadata, state)}>
       <Icon className="h-3 w-3" aria-hidden="true" />
+    </span>
+  )
+}
+
+// A failed live input is lost unless the user notices a faint icon and
+// retypes it. Say so next to the message and offer a one-click resend
+// through the chat's normal send path.
+export const DeliveryFailedResend: React.FC<{ metadata: Record<string, unknown> | undefined; text: string; onResend?: (text: string) => void }> = ({ metadata, text, onResend }) => {
+  const [resent, setResent] = useState(false)
+  if (deliveryTickState(metadata) !== 'failed' || !onResend || !text.trim()) return null
+  if (resent) return <span className="text-muted-foreground">Resent</span>
+  return (
+    <span data-testid="delivery-failed-resend" className="text-red-500/90 dark:text-red-400/80">
+      Not delivered ·{' '}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:text-red-600 dark:hover:text-red-300"
+        onClick={() => { setResent(true); onResend(text) }}
+      >
+        Resend
+      </button>
     </span>
   )
 }

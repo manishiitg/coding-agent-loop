@@ -33,7 +33,19 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 			"input_mode":        map[string]interface{}{"type": "string", "enum": []string{"raw", "envelope"}},
 			"allowed_variables": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 			"auth_mode":         map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}},
-			"kind":              map[string]interface{}{"type": "string", "enum": []string{"internal"}, "description": "Set to internal with a crew or workflow caller to bind a calling Crew or another workflow without a public URL or secret."},
+			"kind":              map[string]interface{}{"type": "string", "enum": []string{"internal", "function"}, "description": "function exposes this route as a typed function other Crews, workflows and MCP/CLI tools call with call_function (no URL or secret; set function). internal binds one named caller (legacy; prefer function)."},
+			"function": map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"name", "inputs"}, "description": "kind=function only. The callable contract: each input is a declared workflow variable set for that run from the caller's argument. Mark inputs the run cannot do without (e.g. PR_NUMBER) required, so a call without them is rejected before anything runs instead of falling back to a saved value.", "properties": map[string]interface{}{
+				"name":        map[string]interface{}{"type": "string", "description": "snake_case, e.g. review_pr."},
+				"description": map[string]interface{}{"type": "string", "description": "What the function does, for callers."},
+				"inputs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"name"}, "properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "description": "A declared, non-secret workflow variable (from list.declared_variables)."},
+					"type":        map[string]interface{}{"type": "string", "enum": []string{"string", "integer", "number", "boolean"}},
+					"required":    map[string]interface{}{"type": "boolean"},
+					"description": map[string]interface{}{"type": "string"},
+					"enum":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				}}},
+				"allowed_callers": map[string]interface{}{"type": "array", "description": "Optional: only these Crews/workflows may call; omit for anyone who can run this workflow.", "items": triggerCallerToolSchema(triggerCallerCrew, triggerCallerWorkflow)},
+			}},
 			"caller":            triggerCallerToolSchema(triggerCallerCrew, triggerCallerWorkflow),
 			"step_id":           map[string]interface{}{"type": "string", "description": "Optional single-step target from list.steps; requires empty route_selections. Empty selects route/full workflow; omission preserves an existing target on update. Only this step runs; prior outputs must not be assumed."},
 			"route_selections":  map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Map routing step IDs to saved route IDs, obtained from list."},
@@ -65,6 +77,9 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 			if isInternalTriggerKind(kind) {
 				required = []string{"name", "enabled", "route_selections", "group_names", "caller"}
 			}
+			if isFunctionTriggerKind(kind) {
+				required = []string{"name", "enabled", "route_selections", "group_names", "function"}
+			}
 			for _, key := range required {
 				v, ok := args[key]
 				if !ok {
@@ -72,7 +87,7 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 				}
 				payload[key] = v
 			}
-			for _, key := range []string{"input_mode", "allowed_variables", "step_id", "payload_mappings", "kind", "caller"} {
+			for _, key := range []string{"input_mode", "allowed_variables", "step_id", "payload_mappings", "kind", "caller", "function"} {
 				if v, ok := args[key]; ok {
 					payload[key] = v
 				}

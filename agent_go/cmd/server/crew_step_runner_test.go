@@ -31,7 +31,9 @@ func crewRunnerDeliveryBase(req stepworkflow.CrewStepRequest) string {
 	if scope == "" {
 		scope = req.WorkflowRunFolder
 	}
-	return crewStepDeliveryBase(req.WorkflowID, scope, req.Group, req.StepID, req.TriggerID, runDestinationCrewChat)
+	// Crew steps call through an internal trigger, which always runs in its
+	// own conversation.
+	return crewStepDeliveryBase(req.WorkflowID, scope, req.Group, req.StepID, req.TriggerID, runDestinationIsolated)
 }
 
 func TestCrewStepDeliveryBaseVariesWithTrigger(t *testing.T) {
@@ -49,7 +51,7 @@ func TestCrewStepDeliveryBaseVariesWithTrigger(t *testing.T) {
 
 func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
@@ -92,7 +94,7 @@ func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {
 
 func TestRunCrewStepIsolatesExecutionsSharingRunFolder(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
@@ -146,7 +148,7 @@ func TestRunCrewStepIsolatesExecutionsSharingRunFolder(t *testing.T) {
 
 func TestRunCrewStepGroupsDoNotShareDelivery(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
@@ -199,7 +201,7 @@ func TestRunCrewStepGroupsDoNotShareDelivery(t *testing.T) {
 
 func TestRunCrewStepRetryAdoptsSameExecutionDelivery(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
@@ -240,7 +242,7 @@ func TestRunCrewStepRetryAdoptsSameExecutionDelivery(t *testing.T) {
 
 func TestRunCrewStepReinvokesPastFailedDuplicate(t *testing.T) {
 	svc, files := newInternalDispatchCrew(t, crewRunnerTriggers)
-	convKey := "owner\x1fconversation:crewx:rts"
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
 	svc.conversations = map[string]bool{convKey: true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
@@ -290,7 +292,7 @@ func TestRunCrewStepReinvokesPastFailedDuplicate(t *testing.T) {
 
 func TestRunCrewStepRevokedAccess(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
 	req.TriggerID = "trig-off"
@@ -307,7 +309,7 @@ func TestRunCrewStepRevokedAccess(t *testing.T) {
 
 func TestRunCrewStepCanceled(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(20 * time.Millisecond)
@@ -323,7 +325,7 @@ func TestRunCrewStepCanceled(t *testing.T) {
 
 func TestPollCrewStepReturnsPartialOnFailure(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
 	runID := webhookDeliveryRunID("rts", "trig-1", "poll-failure")
@@ -354,7 +356,7 @@ func TestPollCrewStepReturnsPartialOnFailure(t *testing.T) {
 
 func TestPollCrewStepTimeoutKeepsRunID(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
 	runID := webhookDeliveryRunID("rts", "trig-1", "poll-timeout")

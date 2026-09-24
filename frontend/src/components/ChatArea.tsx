@@ -58,7 +58,6 @@ import {
 } from '../utils/chatSubmitHelpers'
 import {
   shouldKeepChatSessionSubscribed,
-  shouldKeepWorkflowSessionSubscribed,
 } from '../utils/workflowSessionSubscription'
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
@@ -2608,7 +2607,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const bgTab = chatStore.getTab(tab.tabId)
         const bgStreaming = bgTab?.isStreaming ?? tab.isStreaming
         const bgRunning = bgTab?.hasRunningBgAgents ?? false
-        return shouldKeepWorkflowSessionSubscribed({
+        // The visible Builder chat keeps its stream like any chat: input typed
+        // into an idle-but-alive retained CLI (no streaming flag, not listed
+        // as backend-active) must still stream its reply without a reload.
+        return shouldKeepChatSessionSubscribed({
+          isVisible: activeTabIdFromStore === tab.tabId,
           isStreaming: bgStreaming,
           hasRunningBackgroundAgents: bgRunning,
           isBackendActive: activeIds.has(tab.sessionId),
@@ -3481,6 +3484,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     await submitQueryWithQuery(content, undefined, { sourceTabId: activeTab?.tabId })
   }, [activeTab?.tabId, displayEvents, submitQueryWithQuery])
 
+  // "Not delivered · Resend" on a user message whose live input failed.
+  const resendProductMessage = useCallback((content: string) => {
+    if (!content.trim()) return
+    void submitQueryWithQuery(content, undefined, { sourceTabId: activeTab?.tabId })
+  }, [activeTab?.tabId, submitQueryWithQuery])
+
   // If the active tab is stuck in streaming state, ChatInput queues the user's text
   // instead of calling /api/query. Force-refresh active sessions so the store can
   // clear stale streaming state and let the queue flush as the next turn.
@@ -3868,6 +3877,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                     events={transcriptEvents}
                     terminal={null}
                     onRetryLastMessage={activeTabBusy ? undefined : retryLastProductMessage}
+                    onResendMessage={resendProductMessage}
                     streamingText={activeStreamingText}
                     streamingStatus={streamingStatus}
                     hasOlder={historyPagination?.hasMore ?? false}
@@ -3931,6 +3941,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                     events={transcriptEvents}
                     terminal={null}
                     onRetryLastMessage={activeTabBusy ? undefined : retryLastProductMessage}
+                    onResendMessage={resendProductMessage}
                     streamingText={activeStreamingText}
                     streamingStatus={streamingStatus}
                     hasOlder={historyPagination?.hasMore ?? false}

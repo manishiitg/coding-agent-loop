@@ -5,10 +5,78 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `vertical slice on main; not deployed; live RTS check pending` |
+| Ticket state | `one call model (functions + per-caller conversations) on main; not deployed; live RTS check pending` |
 | Last synchronized | `2026-09-24` |
 | Priority | `P1 product` |
 | Category | integrations (runner-up: scheduler-runs) |
+
+## 2026-09-24 — one call model
+
+Crew-to-Crew calling had grown five overlapping ideas: `crew_chat` vs
+`isolated` run destinations, fresh-per-call isolated trigger chats, free-form
+`call_target`, typed functions and the default `ask`. They are now one model
+(user doc: [docs/crew-calls.md](../../../crew-calls.md)):
+
+- **One way to call:** functions. `ask` covers free-form tasks; typed
+  functions add validated inputs and results. `connect_to_target`,
+  `call_target`, `get_target_run` and `send_to_target_run` are removed;
+  `ask_function_update` carries mid-run follow-ups.
+- **One place calls run:** each caller's own continuing conversation with the
+  target Crew. An internal trigger (caller binding) always runs there
+  (`productWebhookTrigger.ownConversation`), whatever `run_destination` it
+  was saved with, and it is keyed by trigger ID only. The per-run
+  `triggerID:runID` suffix (`isolatedAutomationID`) is removed, so a caller's
+  follow-up calls remember earlier ones. The Crew's main chat is for people.
+- **External webhooks and schedules** keep the main chat / own conversation
+  choice. A webhook's own conversation now also continues across deliveries
+  instead of starting fresh each time.
+- **UI:** the Triggers tab is now **Webhooks** (external only), and caller
+  bindings are listed under **Functions → Callers** with Disconnect.
+  Destination labels read "Main chat" / "Own conversation".
+- **MCP/CLI:** each AgentWorks user's `ask_crew` calls continue one
+  conversation with that Crew, so an external tool can chat with a Crew.
+
+Migration: none needed. Existing caller bindings saved as `crew_chat` are
+routed to their own conversation at dispatch. Old per-run isolated trigger
+chats stay in history. Deferred: an optional one-line summary of each
+finished call in the Crew's main chat.
+
+## 2026-09-24 — workflow functions are function triggers
+
+Incident: the SDE Crew asked the PR-review gate workflow to review #149 with a
+free-text `ask`. A free-text call could not set `GITHUB_OWNER` /
+`GITHUB_REPO` / `PR_NUMBER`, so the gate used the saved `PR_NUMBER=147`, found
+it already merged, skipped, and reported success.
+
+Fix:
+- **Workflows no longer have `ask`.** They offer only function triggers
+  (`kind: "function"`): a fixed route and groups plus
+  `function: {name, description, inputs, allowed_callers}`.
+- **Inputs are declared variables**, typed (`string`, `integer`, `number`,
+  `boolean`), required or optional, optionally with an enum. They are set as
+  that run's variables (`WorkflowWebhookDelivery.Variables` and `Group`).
+- **Checked before anything runs:** a missing required input, an unknown or
+  mistyped input, or a bad group is refused
+  (`workflowFunctionArgs`, `dispatchWorkflowFunction`).
+- **Auth:** no URL and no secret. The server stamps the caller. A Crew or
+  workflow chat needs a user with edit access to the workflow; MCP/CLI needs
+  `runs:execute` and the token's workflow bound. `allowed_callers` narrows
+  this further.
+- **Result:** the run's outcome (status, error, steps) returns through the
+  normal function call: directly, as an auto-notification, or by polling.
+- **Surfaces:**
+  - Builder: `manage_workflow_webhook kind=function`;
+  - Crews and workflows: `list_functions` / `call_function` (and generated
+    tools);
+  - MCP: `list_workflow_functions` / `call_workflow_function` /
+    `get_workflow_function_call`;
+  - CLI: `agentworks functions`;
+  - UI: a Functions section on the workflow's Webhooks tab.
+- `define_function` / `delete_function` on a workflow now refuse and point to
+  its Builder.
+
+Not live-verified yet: needs a real function trigger on a workflow and one
+real call.
 
 ## Problem
 

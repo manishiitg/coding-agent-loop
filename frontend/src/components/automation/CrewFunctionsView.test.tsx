@@ -3,9 +3,12 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { list, remove } = vi.hoisted(() => ({ list: vi.fn(), remove: vi.fn() }))
+const { list, remove, listTriggers, removeTrigger } = vi.hoisted(() => ({ list: vi.fn(), remove: vi.fn(), listTriggers: vi.fn(), removeTrigger: vi.fn() }))
 vi.mock('../../api/crewFunctions', () => ({
   crewFunctionsApi: { list: (...args: unknown[]) => list(...args), delete: (...args: unknown[]) => remove(...args) },
+}))
+vi.mock('../../api/productWebhooks', () => ({
+  productWebhooksApi: { list: (...args: unknown[]) => listTriggers(...args), delete: (...args: unknown[]) => removeTrigger(...args) },
 }))
 
 import CrewFunctionsView, { schemaFields } from './CrewFunctionsView'
@@ -29,6 +32,13 @@ describe('CrewFunctionsView', () => {
     root = createRoot(container)
     list.mockReset()
     remove.mockReset()
+    listTriggers.mockReset()
+    removeTrigger.mockReset()
+    listTriggers.mockResolvedValue({ triggers: [
+      { id: 'hook-1', name: 'GitHub push', enabled: true, message: 'x', auth_mode: 'github', path: '/api/hooks/product/hook-1', run_destination: 'crew_chat' },
+      { id: 'bind-1', name: 'Called by Alpha Bot', enabled: true, message: 'x', auth_mode: '', path: '', run_destination: 'isolated', kind: 'internal', caller: { type: 'crew', id: 'alpha' } },
+    ] })
+    removeTrigger.mockResolvedValue({})
     list.mockResolvedValue({
       functions: [
         {
@@ -89,5 +99,15 @@ describe('CrewFunctionsView', () => {
   it('describes schema fields', () => {
     expect(schemaFields({ type: 'object', required: ['a'], properties: { a: { type: 'array', items: { type: 'number' } }, b: { type: 'boolean' } } }))
       .toEqual([{ name: 'a', type: 'number[]', required: true }, { name: 'b', type: 'boolean', required: false }])
+  })
+  it('lists callers (not webhooks) and disconnects one', async () => {
+    await renderView()
+    const callers = byTestId('crew-function-callers')!
+    expect(callers.textContent).toContain('Called by Alpha Bot')
+    expect(callers.textContent).toContain('Crew')
+    expect(callers.textContent).not.toContain('GitHub push')
+    const disconnect = Array.from(callers.querySelectorAll('button')).find(button => button.textContent === 'Disconnect')!
+    await act(async () => { disconnect.click(); await Promise.resolve() })
+    expect(removeTrigger).toHaveBeenCalledWith(scope, 'bind-1')
   })
 })

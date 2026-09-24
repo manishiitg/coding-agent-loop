@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
 import { crewFunctionsApi, type CrewFunction, type CrewFunctionCall, type CrewFunctionSchema } from '../../api/crewFunctions'
-import type { ProductTriggerScope } from '../../api/productWebhooks'
+import { productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
 
 const buttonClass = 'rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50'
 
@@ -29,6 +29,8 @@ function formatTime(value?: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+const CALLER_KIND: Record<string, string> = { crew: 'Crew', workflow: 'Workflow', user: 'External connection' }
+
 const STATUS_LABEL: Record<string, string> = { queued: 'Queued', running: 'Running', completed: 'Done', failed: 'Failed' }
 
 function FieldList({ label, schema }: { label: string; schema?: CrewFunctionSchema }) {
@@ -50,6 +52,9 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
 }) {
   const [functions, setFunctions] = useState<CrewFunction[]>([])
   const [calls, setCalls] = useState<CrewFunctionCall[]>([])
+  // Caller bindings: one per Crew, workflow or external connection that has
+  // called this Crew, each with its own continuing conversation.
+  const [callers, setCallers] = useState<ProductAPITrigger[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -60,6 +65,8 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
       const data = await crewFunctionsApi.list(scope)
       setFunctions(data.functions ?? [])
       setCalls(data.calls ?? [])
+      const triggers = await productWebhooksApi.list(scope).then(result => result.triggers).catch(() => [] as ProductAPITrigger[])
+      setCallers(triggers.filter(trigger => trigger.kind === 'internal'))
       setError('')
     } catch (cause) { setError(errorMessage(cause)) }
     finally { setLoaded(true) }
@@ -79,9 +86,17 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
     finally { setBusy(false) }
   }
 
+  const disconnect = async (id: string) => {
+    if (busy) return
+    setBusy(true); setError('')
+    try { await productWebhooksApi.delete(scope, id); await refresh() }
+    catch (cause) { setError(errorMessage(cause)) }
+    finally { setBusy(false) }
+  }
+
   return <div className="h-full min-w-0 w-full max-w-none overflow-x-hidden overflow-y-auto bg-background">
     <div className="space-y-4 p-4">
-      <p className="text-xs leading-relaxed text-muted-foreground">Functions are typed actions other Crews and workflows can call. Every Crew also answers the built-in <code>ask</code>. Ask the Crew chat to add or change one.</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">Functions are how other Crews, workflows and external tools (MCP, CLI) call this Crew. Every Crew answers the built-in <code>ask</code>; typed functions add checked inputs and results. Each caller gets its own continuing conversation here, never the main chat. Ask the Crew chat to add or change a function.</p>
       {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
       <div className="min-w-0 max-w-full space-y-2">
         {functions.map(fn => <section key={fn.name} data-testid={`crew-function-${fn.name}`} className="min-w-0 max-w-full space-y-2 overflow-hidden rounded-lg border border-border p-3">
@@ -99,6 +114,16 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
         </section>)}
         {loaded && functions.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No functions yet.</p>}
       </div>
+
+      <section className="space-y-2" data-testid="crew-function-callers">
+        <h3 className="text-sm font-medium">Callers</h3>
+        {callers.length === 0 && <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">Nothing has called this Crew yet.</p>}
+        {callers.map(caller => <div key={caller.id} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border p-2 text-xs">
+          <span className="min-w-0 truncate">{caller.name}<span className="text-muted-foreground"> · {CALLER_KIND[caller.caller?.type ?? ''] ?? 'Caller'}{caller.enabled ? '' : ' · disabled'}</span></span>
+          <button type="button" disabled={busy} className={buttonClass} title="Remove this caller's binding; its next call creates a new one" onClick={() => void disconnect(caller.id)}>Disconnect</button>
+        </div>)}
+        {callers.length > 0 && <p className="text-[11px] text-muted-foreground">Each caller's conversation is listed under Chats.</p>}
+      </section>
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium">Recent calls</h3>

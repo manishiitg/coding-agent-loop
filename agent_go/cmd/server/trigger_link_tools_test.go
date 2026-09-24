@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
@@ -90,28 +89,33 @@ func newTriggerLinkEnv(t *testing.T) triggerLinkEnv {
 		completionLoopStarted: map[string]bool{"sess-caller": true, "sess-builder": true}}
 	api.scheduler = NewSchedulerService(api)
 	svc.api = api
-	// Hold both Crew conversations so deliveries queue instead of starting
-	// live agent turns: the tools' claim, binding and poll wiring is under test.
-	svc.conversations = map[string]bool{"owner\x1fconversation:work:beta": true, "owner\x1fconversation:work:alpha": true}
+	// Hold every Crew conversation (main chats and each caller's own) so
+	// deliveries queue instead of starting live agent turns: the claim,
+	// binding and poll wiring is under test.
+	svc.conversations = map[string]bool{}
+	svc.heldConversation = func(string) bool { return true }
 	return triggerLinkEnv{api: api, svc: svc, mock: mock}
 }
 
-func (env triggerLinkEnv) crewTools(t *testing.T, crewPath string) map[string]recordedTool {
+// connect binds the caller at callerPath (a Crew, or a workflow when
+// workflow is true) to target the way a first function call does.
+func (env triggerLinkEnv) connect(t *testing.T, callerPath string, workflow bool, target string) (string, bool, error) {
 	t.Helper()
-	reg := &recordingRegistrar{}
-	if err := env.api.registerTriggerLinkTools(reg, "owner", "sess-caller", QueryRequest{SelectedFolder: crewPath}, crewTriggerLinkCaller(crewPath)); err != nil {
+	claims := &UserClaims{UserID: "owner"}
+	ctx := context.WithValue(context.Background(), UserContextKey, claims)
+	resolveCaller := crewTriggerLinkCaller(callerPath)
+	if workflow {
+		resolveCaller = workflowTriggerLinkCaller(callerPath)
+	}
+	caller, err := resolveCaller(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return reg.tools
-}
-
-func (env triggerLinkEnv) workflowTools(t *testing.T, workflowPath string) map[string]recordedTool {
-	t.Helper()
-	reg := &recordingRegistrar{}
-	if err := env.api.registerTriggerLinkTools(reg, "owner", "sess-builder", QueryRequest{SelectedFolder: workflowPath}, workflowTriggerLinkCaller(workflowPath)); err != nil {
-		t.Fatal(err)
+	resolved, err := resolveTriggerTarget(ctx, claims, target)
+	if err != nil {
+		return "", false, err
 	}
-	return reg.tools
+	return env.api.connectTriggerTarget(ctx, "owner", caller, resolved)
 }
 
 func decodeToolJSON(t *testing.T, out string) map[string]interface{} {
@@ -123,101 +127,85 @@ func decodeToolJSON(t *testing.T, out string) map[string]interface{} {
 	return decoded
 }
 
-// Crew A connects to Crew B by the #crew tag: the created trigger is an
-// ordinary internal trigger in B's own list, named for and bound to A, and a
-// second connect reuses it.
+// Crew A's first call to Crew B creates an ordinary internal trigger in B's
+// own list, named for and bound to A, that always runs in A's own
+// conversation with B; a second call reuses it.
 func TestConnectCrewToCrewCreatesVisibleBoundTrigger(t *testing.T) {
 	env := newTriggerLinkEnv(t)
-	tools := env.crewTools(t, linkAlphaPath)
 	ctx := context.Background()
 
-	out, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "#crew:Beta"})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	first := decodeToolJSON(t, out)
-	if first["created"] != true || first["trigger_id"] == "" {
-		t.Fatalf("first connect = %v", first)
+	firstID, created, err := env.connect(t, linkAlphaPath, false, "#crew:Beta")
+	if err != nil || !created || firstID == "" {
+		t.Fatalf("connect = %q created=%v err=%v", firstID, created, err)
 	}
 	triggers, err := env.svc.projectWebhookConfigs(ctx, "owner", "work", "beta")
 	if err != nil || len(triggers) != 1 {
 		t.Fatalf("beta triggers = %+v err=%v", triggers, err)
 	}
-	created := triggers[0]
-	if !created.IsInternal() || !created.Enabled || created.Caller == nil || created.Caller.Type != triggerCallerCrew || created.Caller.ID != "alpha" {
-		t.Fatalf("created trigger = %+v, want an enabled internal trigger bound to crew alpha", created)
+	bound := triggers[0]
+	if !bound.IsInternal() || !bound.Enabled || bound.Caller == nil || bound.Caller.Type != triggerCallerCrew || bound.Caller.ID != "alpha" {
+		t.Fatalf("created trigger = %+v, want an enabled internal trigger bound to crew alpha", bound)
 	}
-	if created.Name != "Called by Alpha Bot" || !strings.Contains(created.Message, "Alpha Bot") {
-		t.Fatalf("trigger does not record its creator: name=%q message=%q", created.Name, created.Message)
+	if bound.Name != "Called by Alpha Bot" || !strings.Contains(bound.Message, "Alpha Bot") {
+		t.Fatalf("trigger does not record its caller: name=%q message=%q", bound.Name, bound.Message)
 	}
-	if created.Webhook != nil {
-		t.Fatalf("internal trigger carries secret material: %+v", created.Webhook)
+	if !bound.ownConversation() || bound.RunDestination != runDestinationIsolated {
+		t.Fatalf("caller binding must run in its own conversation: %+v", bound)
 	}
+	if bound.Webhook != nil {
+		t.Fatalf("internal trigger carries secret material: %+v", bound.Webhook)
+	}
+	againID, created, err := env.connect(t, linkAlphaPath, false, "Beta")
+	if err != nil || created || againID != firstID {
+		t.Fatalf("second connect = %q created=%v err=%v, want reuse of %q", againID, created, err, firstID)
+	}
+}
 
-	again, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "Beta"})
-	if err != nil {
-		t.Fatalf("second connect: %v", err)
+// An existing caller binding saved with crew_chat still runs in its own
+// conversation: the main chat is for people.
+func TestCallerBindingNeverRunsInMainChat(t *testing.T) {
+	trigger := productWebhookTrigger{ID: "t", Kind: triggerKindInternal, RunDestination: runDestinationCrewChat}
+	if !trigger.ownConversation() {
+		t.Fatal("internal trigger with crew_chat must still run in its own conversation")
 	}
-	if second := decodeToolJSON(t, again); second["created"] != false || second["trigger_id"] != first["trigger_id"] {
-		t.Fatalf("second connect = %v, want reuse of %v", second, first["trigger_id"])
+	if webhook := (productWebhookTrigger{ID: "w", RunDestination: runDestinationCrewChat}); webhook.ownConversation() {
+		t.Fatal("an external webhook keeps its main-chat destination")
 	}
-
-	custom, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "crew:beta", "name": "Nightly QA", "instructions": "Run the QA checklist."})
-	if err != nil {
-		t.Fatalf("custom connect: %v", err)
-	}
-	if decodeToolJSON(t, custom)["created"] != true {
-		t.Fatalf("custom trigger not created: %s", custom)
-	}
-	triggers, _ = env.svc.projectWebhookConfigs(ctx, "owner", "work", "beta")
-	if len(triggers) != 2 || triggers[1].Name != "Nightly QA" || !strings.HasPrefix(triggers[1].Message, "Run the QA checklist.") {
-		t.Fatalf("custom trigger = %+v", triggers)
+	if webhook := (productWebhookTrigger{ID: "w", RunDestination: runDestinationIsolated}); !webhook.ownConversation() {
+		t.Fatal("an external webhook may choose its own conversation")
 	}
 }
 
 func TestTriggerLinkPermissions(t *testing.T) {
 	env := newTriggerLinkEnv(t)
-	tools := env.crewTools(t, linkAlphaPath)
-	ctx := context.Background()
 	for _, tt := range []struct {
 		name, target, want string
 	}{
 		{"read-only workflow", "workflow:Shared", "only have read access"},
-		{"itself", "Alpha Bot", "cannot call itself"},
+		{"itself", "Alpha Bot", "cannot connect to itself"},
 		{"unknown", "nope", "no Crew or workflow you can edit"},
 	} {
-		_, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": tt.target})
+		_, _, err := env.connect(t, linkAlphaPath, false, tt.target)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("%s: err = %v, want %q", tt.name, err, tt.want)
 		}
 	}
 }
 
-// Crews are shared server-wide: a Crew connects to and creates triggers on
-// another user's Crew, by name or physical path, and the trigger lands in
-// that Crew's own list under its owner.
+// Crews are shared server-wide: a Crew calls another user's Crew, by name or
+// physical path, and the binding lands in that Crew's own list under its
+// owner.
 func TestTriggerLinkReachesAnotherUsersCrew(t *testing.T) {
 	env := newTriggerLinkEnv(t)
-	tools := env.crewTools(t, linkAlphaPath)
 	ctx := context.Background()
 	for _, target := range []string{"Gamma", linkGammaPath} {
-		out, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": target})
-		if err != nil {
-			t.Fatalf("connect %q to another user's crew: %v", target, err)
-		}
-		if got := decodeToolJSON(t, out); got["trigger_id"] == "" {
-			t.Fatalf("connect %q returned no trigger: %s", target, out)
+		if triggerID, _, err := env.connect(t, linkAlphaPath, false, target); err != nil || triggerID == "" {
+			t.Fatalf("connect %q to another user's crew = %q err=%v", target, triggerID, err)
 		}
 	}
 	triggers, err := env.svc.projectWebhookConfigs(ctx, "other", "work", "gamma")
 	if err != nil || len(triggers) != 1 || !triggers[0].IsInternal() {
-		t.Fatalf("expected one reused standard trigger on gamma, got %+v err=%v", triggers, err)
-	}
-	if _, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "Gamma", "name": "Nightly QA", "instructions": "Run the QA checklist."}); err != nil {
-		t.Fatalf("custom trigger on another user's crew: %v", err)
-	}
-	if triggers, _ = env.svc.projectWebhookConfigs(ctx, "other", "work", "gamma"); len(triggers) != 2 {
-		t.Fatalf("custom trigger not added to gamma's own list: %+v", triggers)
+		t.Fatalf("expected one reused binding on gamma, got %+v err=%v", triggers, err)
 	}
 	// A Crew caller from another owner may bind to a Crew trigger.
 	if _, _, err := env.svc.saveProductWebhookConfig(ctx, "owner", productWebhookRequest{
@@ -241,207 +229,98 @@ func TestTriggerLinkReachesAnotherUsersCrew(t *testing.T) {
 	}
 }
 
-// The Work product gate admits the trigger-link tools through the
-// workflow-references feature (readers are excluded at registration).
+// The Work product gate admits the function tools through the
+// workflow-references feature (readers are excluded at registration); the
+// retired *_target tools are gone.
 func TestTriggerLinkToolsDeclaredByFeature(t *testing.T) {
-	names := []string{"connect_to_target", "call_target", "get_target_run", "send_to_target_run"}
 	profile := agentprofiles.Profile{ID: "p", Features: []agentprofiles.FeatureBinding{{ID: "workflow-references"}}}
 	if err := agentprofiles.ResolveFeatures(&profile); err != nil {
 		t.Fatal(err)
 	}
-	var features []string
+	declared := map[string]bool{}
 	for _, feature := range profile.ResolvedFeatures {
-		features = append(features, feature.Tools...)
-	}
-	for _, name := range names {
-		found := false
-		for _, declared := range features {
-			found = found || declared == name
+		for _, tool := range feature.Tools {
+			declared[tool] = true
 		}
-		if !found {
-			t.Fatalf("%s is not declared by the workflow-references feature: %v", name, features)
+	}
+	for _, name := range []string{"list_functions", "call_function", "get_function_call", "ask_function_update"} {
+		if !declared[name] {
+			t.Fatalf("%s is not declared by the workflow-references feature", name)
+		}
+	}
+	for _, name := range []string{"connect_to_target", "call_target", "get_target_run", "send_to_target_run"} {
+		if declared[name] {
+			t.Fatalf("retired tool %s is still declared", name)
 		}
 	}
 }
 
-// Crew A calls Crew B: the run ID returns at once, polling reads B's run,
-// and when B finishes the caller's chat gets the auto-notification with B's
-// final answer. A mid-run message is refused until the run is running.
-func TestCallCrewTargetPollsAndAutoNotifies(t *testing.T) {
-	previous := triggerTargetPollInterval
-	triggerTargetPollInterval = 10 * time.Millisecond
-	t.Cleanup(func() { triggerTargetPollInterval = previous })
+// A follow-up into a call's run is refused before the run starts and after
+// it ends.
+func TestFollowUpNeedsARunningCall(t *testing.T) {
 	env := newTriggerLinkEnv(t)
-	tools := env.crewTools(t, linkAlphaPath)
-	ctx := context.Background()
-
-	out, err := tools["call_target"].exec(ctx, map[string]interface{}{"target": "#crew:Beta", "task": "Summarise the open bugs.", "payload": map[string]interface{}{"repo": "rts"}})
+	claims := &UserClaims{UserID: "owner"}
+	ctx := context.WithValue(context.Background(), UserContextKey, claims)
+	caller, err := crewTriggerLinkCaller(linkAlphaPath)(ctx)
 	if err != nil {
-		t.Fatalf("call: %v", err)
-	}
-	called := decodeToolJSON(t, out)
-	runID, _ := called["run_id"].(string)
-	triggerID, _ := called["trigger_id"].(string)
-	if runID == "" || triggerID == "" || called["status"] != "queued" {
-		t.Fatalf("call = %v", called)
-	}
-	notify, ok := called["auto_notification"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("auto notification not registered: %v", called)
-	}
-	executionID, _ := notify["execution_id"].(string)
-
-	payloadPath := linkBetaPath + "/triggers/deliveries/" + runID + ".json"
-	env.mock.mu.Lock()
-	payload := env.mock.files[payloadPath]
-	env.mock.mu.Unlock()
-	if !strings.Contains(payload, `"task":"Summarise the open bugs."`) || !strings.Contains(payload, `"repo":"rts"`) || !strings.Contains(payload, `"name":"Alpha Bot"`) {
-		t.Fatalf("delivery payload = %s", payload)
-	}
-
-	polled, err := tools["get_target_run"].exec(ctx, map[string]interface{}{"target": "Beta", "trigger_id": triggerID, "run_id": runID})
-	if err != nil {
-		t.Fatalf("poll: %v", err)
-	}
-	if state := decodeToolJSON(t, polled); state["terminal"] != false || state["status"] != "queued" {
-		t.Fatalf("poll = %v", state)
-	}
-	if _, err := tools["send_to_target_run"].exec(ctx, map[string]interface{}{"target": "Beta", "trigger_id": triggerID, "run_id": runID, "message": "Also include P2s."}); err == nil || !strings.Contains(err.Error(), "has not started yet") {
-		t.Fatalf("mid-run message before start: err = %v", err)
-	}
-
-	runsWorkspace := agentProfileRuntimeWorkspace("owner", linkBetaPath)
-	if err := UpdateScheduleRunFinalResponse(ctx, runsWorkspace, runID, "3 open bugs: A, B, C."); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpdateScheduleRun(ctx, runsWorkspace, runID, "success", "", nil, "", "sess-beta"); err != nil {
+	target, err := resolveTriggerTarget(ctx, claims, "Beta")
+	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		agent := env.api.bgAgentRegistry.Get("sess-caller", executionID)
-		if agent == nil {
-			t.Fatal("watch execution disappeared")
-		}
-		snapshot := agent.GetSnapshot()
-		if snapshot.Status == BGAgentCompleted {
-			if !strings.Contains(snapshot.Result, "3 open bugs: A, B, C.") || !strings.Contains(snapshot.Result, "finished (success)") {
-				t.Fatalf("notification result = %q", snapshot.Result)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("watch did not complete: %+v", snapshot)
-		}
-		time.Sleep(10 * time.Millisecond)
+	triggerID, _, err := env.api.connectTriggerTarget(ctx, "owner", caller, target)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := tools["send_to_target_run"].exec(ctx, map[string]interface{}{"target": "Beta", "trigger_id": triggerID, "run_id": runID, "message": "late"}); err == nil || !strings.Contains(err.Error(), "already finished") {
-		t.Fatalf("mid-run message after finish: err = %v", err)
+	delivery, err := env.api.dispatchTargetTrigger(ctx, "owner", caller, target, triggerID, "d-1", crewFunctionEvent, map[string]interface{}{"task": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.api.sendToCrewTriggerRun(ctx, "owner", caller, target, triggerID, delivery.RunID, "more"); err == nil || !strings.Contains(err.Error(), "has not started yet") {
+		t.Fatalf("follow-up before start: err = %v", err)
+	}
+	if err := UpdateScheduleRun(ctx, agentProfileRuntimeWorkspace("owner", linkBetaPath), delivery.RunID, "success", "", nil, "", "s"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.api.sendToCrewTriggerRun(ctx, "owner", caller, target, triggerID, delivery.RunID, "late"); err == nil || !strings.Contains(err.Error(), "already finished") {
+		t.Fatalf("follow-up after finish: err = %v", err)
 	}
 }
 
-func TestCallTargetFailureAndTimeoutNotify(t *testing.T) {
-	previous := triggerTargetPollInterval
-	triggerTargetPollInterval = 10 * time.Millisecond
-	t.Cleanup(func() { triggerTargetPollInterval = previous })
-	env := newTriggerLinkEnv(t)
-	tools := env.crewTools(t, linkAlphaPath)
-	ctx := context.Background()
-
-	waitFor := func(executionID string) BackgroundAgentSnapshot {
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			snapshot := env.api.bgAgentRegistry.Get("sess-caller", executionID).GetSnapshot()
-			if snapshot.Status != BGAgentRunning {
-				return snapshot
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("watch still running: %+v", snapshot)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	out, err := tools["call_target"].exec(ctx, map[string]interface{}{"target": "Beta", "task": "fail please", "delivery_id": "fail-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	called := decodeToolJSON(t, out)
-	runID := called["run_id"].(string)
-	executionID := called["auto_notification"].(map[string]interface{})["execution_id"].(string)
-	if err := UpdateScheduleRun(ctx, agentProfileRuntimeWorkspace("owner", linkBetaPath), runID, "error", "model quota exhausted", nil, "", "sess-beta"); err != nil {
-		t.Fatal(err)
-	}
-	if failed := waitFor(executionID); failed.Status != BGAgentFailed || !strings.Contains(failed.Error, "model quota exhausted") {
-		t.Fatalf("failure notification = %+v", failed)
-	}
-
-	// A run that never finishes notifies a timeout.
-	target, err := resolveTriggerTarget(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "owner"}), &UserClaims{UserID: "owner"}, "Beta")
-	if err != nil {
-		t.Fatal(err)
-	}
-	caller, err := crewTriggerLinkCaller(linkAlphaPath)(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "owner"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	triggerID := called["trigger_id"].(string)
-	stuck, err := tools["call_target"].exec(ctx, map[string]interface{}{"target": "Beta", "task": "hang", "notify": false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stuckRun := decodeToolJSON(t, stuck)["run_id"].(string)
-	timeoutID, err := env.api.startTriggerTargetWatch(QueryRequest{SelectedFolder: linkAlphaPath}, "sess-caller", "owner", caller, target, triggerID, stuckRun, 50*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if timedOut := waitFor(timeoutID); timedOut.Status != BGAgentFailed || !strings.Contains(timedOut.Error, "did not finish within") {
-		t.Fatalf("timeout notification = %+v", timedOut)
-	}
-}
-
-// Builder chat (a workflow) connects to a Crew (workflow→crew) and to
-// another workflow (workflow→workflow); a workflow cannot call itself.
+// A workflow (Builder chat) calls a Crew (workflow→crew) and another
+// workflow (workflow→workflow); a workflow cannot call itself.
 func TestWorkflowCallerConnectsToCrewAndWorkflow(t *testing.T) {
 	env := newTriggerLinkEnv(t)
-	tools := env.workflowTools(t, "Workflow/pipeline")
 	ctx := context.Background()
 
-	out, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "#crew:Beta"})
-	if err != nil {
-		t.Fatalf("workflow→crew connect: %v", err)
-	}
-	if decodeToolJSON(t, out)["created"] != true {
-		t.Fatalf("workflow→crew = %s", out)
+	if _, created, err := env.connect(t, "Workflow/pipeline", true, "#crew:Beta"); err != nil || !created {
+		t.Fatalf("workflow→crew connect created=%v err=%v", created, err)
 	}
 	triggers, _ := env.svc.projectWebhookConfigs(ctx, "owner", "work", "beta")
-	if len(triggers) != 1 || triggers[0].Caller.Type != triggerCallerWorkflow || triggers[0].Name != "Called by Pipeline" {
+	if len(triggers) != 1 || triggers[0].Caller.Type != triggerCallerWorkflow || triggers[0].Name != "Called by Pipeline" || !triggers[0].ownConversation() {
 		t.Fatalf("crew trigger for workflow caller = %+v", triggers)
 	}
 
-	out, err = tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "#workflow:Reports"})
+	triggerID, _, err := env.connect(t, "Workflow/pipeline", true, "#workflow:Reports")
 	if err != nil {
 		t.Fatalf("workflow→workflow connect: %v", err)
 	}
-	connected := decodeToolJSON(t, out)
 	manifest, _, err := ReadWorkflowManifest(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "owner"}), "Workflow/reports")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var bound *WorkflowSchedule
 	for i := range manifest.Schedules {
-		if manifest.Schedules[i].ID == connected["trigger_id"] {
+		if manifest.Schedules[i].ID == triggerID {
 			bound = &manifest.Schedules[i]
 		}
 	}
 	if bound == nil || !bound.IsInternalTrigger() || bound.Caller == nil || bound.Caller.Type != triggerCallerWorkflow || bound.Name != "Called by Pipeline" {
 		t.Fatalf("workflow binding = %+v", bound)
 	}
-	if _, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "workflow:Pipeline"}); err == nil || !strings.Contains(err.Error(), "cannot call itself") {
+	if _, _, err := env.connect(t, "Workflow/pipeline", true, "workflow:Pipeline"); err == nil || !strings.Contains(err.Error(), "cannot connect to itself") {
 		t.Fatalf("self connect err = %v", err)
-	}
-	if _, err := tools["send_to_target_run"].exec(ctx, map[string]interface{}{"target": "Reports", "trigger_id": "x", "run_id": "y", "message": "hi"}); err == nil || !strings.Contains(err.Error(), "workflow runs do not accept") {
-		t.Fatalf("workflow mid-run message err = %v", err)
 	}
 }
 
@@ -481,7 +360,7 @@ func TestWorkflowContextPromptListsTypedTags(t *testing.T) {
 		"**#crew:Beta Bot** (Crew) `_users/owner/Chats/Work/projects/beta/`",
 		"**#workflow:Weekly Reports** (workflow) `Workflow/reports/`",
 		"never a Slack channel",
-		"connect_to_target",
+		"call_function",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)

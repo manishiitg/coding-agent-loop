@@ -40,7 +40,7 @@ type AutomationHubPanelProps = {
 
 const SECTION_DEFS = [
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
-  { id: 'triggers', label: 'Triggers', icon: Webhook },
+  { id: 'triggers', label: 'Webhooks', icon: Webhook },
   { id: 'functions', label: 'Functions', icon: Braces },
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'chats', label: 'Chats', icon: MessageSquareText },
@@ -114,7 +114,7 @@ export function AutomationHubPanel({
   const refreshAction = section === 'schedules'
     ? { label: 'Refresh schedules', run: () => setSchedulesRefreshToken(token => token + 1), spinning: schedulesStatus?.isLoading }
     : section === 'triggers'
-      ? { label: 'Refresh triggers', run: () => setTriggersRefreshToken(token => token + 1), spinning: false }
+      ? { label: 'Refresh webhooks', run: () => setTriggersRefreshToken(token => token + 1), spinning: false }
       : section === 'functions'
         ? { label: 'Refresh functions', run: () => setFunctionsRefreshToken(token => token + 1), spinning: false }
       : section === 'chats'

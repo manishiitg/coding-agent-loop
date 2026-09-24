@@ -93,8 +93,8 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 	// (or flipping isolated/crew_chat) fires a new run instead of
 	// adopting the previous trigger's success.
 	destination := runDestinationCrewChat
-	if _, _, _, trigger, terr := r.crews.findInternalProductTrigger(ctx, r.userID, req.ProfileID, req.ProjectID, req.TriggerID); terr == nil && trigger != nil && strings.EqualFold(strings.TrimSpace(trigger.RunDestination), runDestinationIsolated) {
-		destination = runDestinationIsolated
+	if _, _, _, trigger, terr := r.crews.findInternalProductTrigger(ctx, r.userID, req.ProfileID, req.ProjectID, req.TriggerID); terr == nil && trigger != nil {
+		destination = runDestination(trigger.ownConversation())
 	}
 	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.Group, req.StepID, req.TriggerID, destination)
 	runID := ""

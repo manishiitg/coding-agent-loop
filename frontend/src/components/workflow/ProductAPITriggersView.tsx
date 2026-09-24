@@ -21,7 +21,9 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
   const [copied, setCopied] = useState('')
 
   const refresh = useCallback(async () => {
-    try { setTriggers((await productWebhooksApi.list({ profileId, projectId })).triggers) }
+    // Caller bindings (kind=internal) are listed under Functions → Callers;
+    // this view is external webhooks only.
+    try { setTriggers((await productWebhooksApi.list({ profileId, projectId })).triggers.filter(trigger => trigger.kind !== 'internal')) }
     catch (cause) { setError(errorMessage(cause)) }
   }, [profileId, projectId])
 
@@ -72,7 +74,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
       </>}
     />}
     <div className="space-y-4 p-4">
-    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Choose the main Crew chat or a persistent isolated conversation. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">Webhooks let outside systems (GitHub, CI) start work. Each one runs in the Crew's main chat or in its own continuing conversation. Other Crews, workflows and MCP/CLI tools call this Crew through Functions instead. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
     {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {issued?.secret && <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
       <h3 className="text-sm font-medium">New secret for {issued.name}</h3>
@@ -88,8 +90,8 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
         <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <span className="shrink-0 font-medium text-foreground">Run in</span>
         <select aria-label={`Run destination for ${trigger.name}`} disabled={busy} value={trigger.run_destination || 'crew_chat'} onChange={event => void save({ ...trigger, run_destination: event.target.value as 'crew_chat' | 'isolated' })} className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground">
-          <option value="crew_chat">Crew chat</option>
-          <option value="isolated">Isolated run</option>
+          <option value="crew_chat">Main chat</option>
+          <option value="isolated">Own conversation</option>
         </select>
         </label>
         <div className="flex flex-wrap gap-1.5"><button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button></div>

@@ -68,7 +68,7 @@ describe('AutomationHubPanel', () => {
       expect(panel?.className).toContain('flex-1')
       expect(panel?.className).toContain('min-w-0')
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
-      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Triggers', 'Functions', 'Bots', 'Chats'])
+      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Webhooks', 'Functions', 'Bots', 'Chats'])
       expect(host.querySelector('[data-testid="schedules"]')?.getAttribute('data-hide-header')).toBe('true')
 
       await act(async () => { tabs[4]!.click(); await Promise.resolve() })
@@ -116,7 +116,7 @@ describe('AutomationHubPanel Ask AI', () => {
       await act(async () => { tabs.find(tab => tab.textContent === 'Chats')!.click(); await Promise.resolve() })
       expect(host.querySelectorAll('[data-testid="ask-ai"]').length).toBe(1)
       expect(message()).toContain('past chats and automatic jobs')
-      await act(async () => { tabs.find(tab => tab.textContent === 'Triggers')!.click(); await Promise.resolve() })
+      await act(async () => { tabs.find(tab => tab.textContent === 'Webhooks')!.click(); await Promise.resolve() })
       expect(message()).toContain('set up or change a webhook')
       expect(host.querySelector('[data-testid="schedules"] [data-testid="ask-ai"]')).toBeNull()
     } finally {
@@ -211,9 +211,9 @@ describe('AutomationHubPanel Ask AI', () => {
     })
     try {
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
-      const refresh = () => host.querySelector('button[aria-label="Refresh triggers"]')
+      const refresh = () => host.querySelector('button[aria-label="Refresh webhooks"]')
       expect(refresh()).toBeNull()
-      await act(async () => { tabs.find(tab => tab.textContent === 'Triggers')!.click(); await Promise.resolve() })
+      await act(async () => { tabs.find(tab => tab.textContent === 'Webhooks')!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="triggers"]')?.getAttribute('data-hide-header')).toBe('true')
       expect(host.querySelector('[data-testid="triggers"]')?.getAttribute('data-refresh-token')).toBe('0')
       expect(refresh()).not.toBeNull()
@@ -232,7 +232,7 @@ describe('AutomationHubPanel Ask AI', () => {
     })
     try {
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
-      await act(async () => { tabs.find(tab => tab.textContent === 'Triggers')!.click(); await Promise.resolve() })
+      await act(async () => { tabs.find(tab => tab.textContent === 'Webhooks')!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="workflow-triggers"]')?.getAttribute('data-hide-header')).toBe('true')
       const onCounts = triggersPanelProps.current?.onCounts as ((counts: { active: number; paused: number }) => void) | undefined
       expect(onCounts).toBeTypeOf('function')

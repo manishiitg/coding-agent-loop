@@ -81,9 +81,10 @@ not proof of success: scripted steps and crashed agents may emit none.
 `get_pulse_state(view="step_outputs")` shows each step's own summary of its
 latest runs side by side. A step whose recent runs all completed without new
 work (re-checked or rebuilt an earlier run's output) makes Technical Review due.
-An active issue with `times_deferred` of 1 or more, or one that blinds the goal
-or stops the main output, also makes Technical Review due: deferred work must
-not wait for a quiet pass.
+Any open workflow issue makes Technical Review due: Pulse closes issues in the
+pass that finds them, so an open issue is unfinished work, never something to
+wait on. Issues that blind the goal or stop the main output, and any with
+`times_deferred`, go first.
 
 If retention no longer covers the period since the last check, record that
 coverage gap honestly. Do not treat a partial sample as complete.

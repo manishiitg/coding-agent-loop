@@ -1174,45 +1174,15 @@ func TestMigrateUnlinkedAwaitingUserFindingsKeepsLinkedDecision(t *testing.T) {
 	}
 }
 
-func TestAdvisorProposalRoutingRequiresEvidenceOrDecision(t *testing.T) {
-	ctx := context.Background()
-	workspacePath := concernsWorkspace(t)
-	pulseRunID := "pulse-advisor-routing"
-	nextCheck := "after three completed outcome-bearing runs, compare follower growth with the current baseline"
-	concern := filedAdvisorConcern(t, workspacePath, pulseRunID, pulsemodules.LegacyStrategyAuditorID,
-		"current allocation over-concentrates on reciprocal engagement", pulseFindingRouteEvidenceWait, nextCheck)
-	db, err := openRunConcernsDB(ctx, workspacePath, false)
-	if err != nil || db == nil {
-		t.Fatalf("open workflow db: %v", err)
-	}
-	defer db.Close()
-	if err := ensurePulseFindingLifecycleSchema(ctx, db); err != nil {
-		t.Fatalf("ensure schema: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS report_human_inputs (
-		id TEXT PRIMARY KEY, workspace_path TEXT, source TEXT, priority TEXT,
-		question TEXT, context TEXT, options_json TEXT, allow_free_text INTEGER,
-		status TEXT, selected_option_id TEXT, note TEXT, run_id TEXT,
-		consumed_by TEXT NOT NULL DEFAULT '', outcome_summary TEXT NOT NULL DEFAULT '',
-		consumed_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '')`); err != nil {
-		t.Fatalf("create human inputs table: %v", err)
-	}
-
-	proposal := PulseFindingDisposition{
-		Fingerprint: concern.Fingerprint,
-		FindingID:   "STRATEGY-1",
-		Disposition: FindingDispositionProposalOnly,
-		Summary:     "Reserve more allocation for reach-bearing tactics.",
-	}
-	if err := RecordPulseFindingDispositionsTx(ctx, db, pulsemodules.LegacyStrategyAuditorID, pulseRunID,
-		[]PulseFindingDisposition{proposal}, ""); err == nil || !strings.Contains(err.Error(), "without next_check") {
-		t.Fatalf("actionable advisor proposal was silently parked without a decision: %v", err)
-	}
-
-	proposal.NextCheck = nextCheck
-	if err := RecordPulseFindingDispositionsTx(ctx, db, pulsemodules.LegacyStrategyAuditorID, pulseRunID,
-		[]PulseFindingDisposition{proposal}, ""); err != nil {
-		t.Fatalf("evidence-waiting advisor proposal was rejected: %v", err)
+func TestParkingDispositionsAreRefused(t *testing.T) {
+	for _, disposition := range []string{FindingDispositionProposalOnly, FindingDispositionQueuedForEngineering, FindingDispositionAwaitingRun, FindingDispositionBlocked} {
+		err := validateFindingDisposition(PulseFindingDisposition{
+			Fingerprint: "fp", FindingID: "PUL-1", Disposition: disposition,
+			Summary: "Deferred to a later pass.", NextCheck: "next pass",
+		})
+		if err == nil || !strings.Contains(err.Error(), "retired") || !strings.Contains(err.Error(), "does not park issues") {
+			t.Fatalf("%s must be refused as a parking disposition, got %v", disposition, err)
+		}
 	}
 }
 
@@ -1303,61 +1273,15 @@ func TestAdvisorAwaitingUserRequiresOwnedDecision(t *testing.T) {
 // files, and nothing was fixed. Reading those as blockers points the operator at
 // decisions that do not exist. The legacy disposition stays accepted for old
 // review payloads, but it is returned to the active issue register.
+// Old review payloads may still carry awaiting_run; reading them returns the
+// issue to the active register rather than another waiting bucket.
 func TestAwaitingRunCompatibilityMapsToActiveIssue(t *testing.T) {
-	base := PulseFindingDisposition{
-		Fingerprint: "fp", FindingID: "SEC-1",
-		Disposition: FindingDispositionAwaitingRun,
-		Summary:     "security_daily_metrics has no rows; those steps did not run.",
-	}
-
-	// Waiting with no stated boundary is indistinguishable from stalling.
-	if err := validateFindingDisposition(base); err == nil ||
-		!strings.Contains(err.Error(), "requires next_check") {
-		t.Fatalf("awaiting_run accepted with no evidence boundary: %v", err)
-	}
-
-	// A finding that changed files is a fix awaiting proof, not a wait.
-	withFix := base
-	withFix.NextCheck = "next scheduled dev collection run"
-	withFix.ChangedFiles = []string{"planning/plan.json"}
-	if err := validateFindingDisposition(withFix); err == nil ||
-		!strings.Contains(err.Error(), "changed_unverified") {
-		t.Fatalf("a finding with changes applied was accepted as awaiting_run: %v", err)
-	}
-
-	valid := base
-	valid.NextCheck = "next scheduled dev collection run"
-	if err := validateFindingDisposition(valid); err != nil {
-		t.Fatalf("a genuine wait-for-data finding was rejected: %v", err)
-	}
-
-	// A future run is not a closure gate. Compatibility input must create an
-	// active issue rather than another invisible waiting bucket.
 	status, event, _ := lifecycleStatusForDisposition(FindingDispositionAwaitingRun)
 	if status != ConcernStatusOpen {
 		t.Fatalf("awaiting_run compatibility mapped to status %q, want %q", status, ConcernStatusOpen)
 	}
 	if event != "reopened_for_review" {
 		t.Fatalf("awaiting_run event = %q", event)
-	}
-}
-
-func TestQueuedForEngineeringSeparatesDeferredWorkFromBlocked(t *testing.T) {
-	queued := PulseFindingDisposition{
-		Fingerprint: "fp", FindingID: "ENG-1",
-		Disposition: FindingDispositionQueuedForEngineering,
-		Summary:     "Snapshot scoping repair deferred to the next Engineering pass.",
-	}
-	if err := validateFindingDisposition(queued); err == nil || !strings.Contains(err.Error(), "requires next_check") {
-		t.Fatalf("queued repair accepted without a repair boundary: %v", err)
-	}
-	queued.NextCheck = "next Engineering Pulse pass applies the snapshot-scoping repair"
-	if err := validateFindingDisposition(queued); err != nil {
-		t.Fatalf("queued repair was rejected: %v", err)
-	}
-	status, event, _ := lifecycleStatusForDisposition(FindingDispositionQueuedForEngineering)
-	if status != ConcernStatusQueuedForEngineering || event != "queued_for_engineering" {
-		t.Fatalf("queued repair mapped to status=%q event=%q", status, event)
 	}
 }
 
@@ -1586,21 +1510,33 @@ func TestReconcileRetiresUnroutedStepFiledTypedRows(t *testing.T) {
 	}
 }
 
-func TestCountActionableWorkflowIssuesForPassIgnoresOldUnroutedBacklog(t *testing.T) {
+// A pass is done only when nothing it owns is left open: every open workflow
+// issue counts, however old, except one waiting on the user's decision.
+// Parked states from retired dispositions are reopened first.
+func TestPassMustCloseEveryOpenWorkflowIssue(t *testing.T) {
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
 	recordTestReviewFinding(t, workspacePath, "pulse-old", testReviewFinding(pulsemodules.TechnicalReviewID, "old unrouted defect"))
 	handoff := testReviewFinding(pulsemodules.TechnicalReviewID, "routed to the fixer")
 	handoff.RecommendedRoute = pulseFindingRouteFixerHandoff
 	recordTestReviewFinding(t, workspacePath, "pulse-old", handoff)
-
-	future := time.Now().UTC().Add(time.Hour)
-	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, future); err != nil || n != 1 {
-		t.Fatalf("count since after both were seen = %d (%v), want only the fixer handoff", n, err)
+	queued := recordTestReviewFinding(t, workspacePath, "pulse-old", testReviewFinding(pulsemodules.TechnicalReviewID, "queued for a later pass"))
+	db, err := openRunConcernsDB(ctx, workspacePath, false)
+	if err != nil || db == nil {
+		t.Fatalf("open db: %v", err)
 	}
-	past := time.Now().UTC().Add(-time.Hour)
-	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, past); err != nil || n != 2 {
-		t.Fatalf("count since before both were seen = %d (%v), want both", n, err)
+	if _, err := db.ExecContext(ctx, `UPDATE run_concerns SET status=? WHERE fingerprint=?`, ConcernStatusQueuedForEngineering, queued.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	result, err := ReconcilePulseActionableBacklog(ctx, workspacePath)
+	if err != nil || result.ReopenedParkedIssues != 1 {
+		t.Fatalf("reconcile = %+v (%v), want the queued issue reopened", result, err)
+	}
+	future := time.Now().UTC().Add(time.Hour)
+	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, future); err != nil || n != 3 {
+		t.Fatalf("open issues the pass must close = %d (%v), want all 3", n, err)
 	}
 }
 

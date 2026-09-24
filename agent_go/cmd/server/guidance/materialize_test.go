@@ -459,19 +459,19 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 	}
 }
 
-func TestPulseFixerPracticesRequireBoundedAgenticProgress(t *testing.T) {
+func TestPulseFixerPracticesCloseTheWholeBacklog(t *testing.T) {
 	raw, err := os.ReadFile("templates/system/pulse-fixer-practices.md")
 	if err != nil {
 		t.Fatalf("read pulse-fixer-practices template: %v", err)
 	}
 	practices := string(raw)
 	for _, want := range []string{
-		"Bounded backlog progress contract",
+		"Backlog close-out contract",
 		"Freeze a starting manifest",
-		"Rank from compact lifecycle evidence",
-		"Maintain an explicit remaining list",
+		"Order by impact",
+		"Close each bundle before the next",
 		"Reconcile before completion",
-		"A pass may complete while the durable backlog remains",
+		"There is no queue for later passes",
 		`record_pulse_result`,
 	} {
 		if !strings.Contains(practices, want) {
@@ -483,8 +483,8 @@ func TestPulseFixerPracticesRequireBoundedAgenticProgress(t *testing.T) {
 	for _, want := range []string{
 		"complete active starting manifest",
 		"do not hide retained work",
-		"Bounded backlog progress contract",
-		"bounded repair batch",
+		"Backlog close-out contract",
+		"There is no disposition for later",
 		"truthful remaining queue",
 	} {
 		if !strings.Contains(scheduled, want) {

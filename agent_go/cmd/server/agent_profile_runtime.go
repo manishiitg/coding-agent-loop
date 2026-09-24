@@ -650,6 +650,15 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			if err := api.registerTriggerLinkTools(registrar, userID, sessionID, QueryRequest{SelectedFolder: workspacePath}, crewTriggerLinkCaller(workspacePath)); err != nil {
 				return err
 			}
+			// Typed functions (PLAT-357): generated per-function tools for the
+			// Crews/workflows tagged in this message or attached to the Crew.
+			functionReq := QueryRequest{SelectedFolder: workspacePath}
+			if len(req) > 0 {
+				functionReq.WorkflowContextPaths = req[0].WorkflowContextPaths
+			}
+			if err := api.registerCrewFunctionTools(registrar, userID, sessionID, functionReq, crewTriggerLinkCaller(workspacePath), gate.Declare); err != nil {
+				return err
+			}
 		}
 	}
 	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {

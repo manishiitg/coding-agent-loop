@@ -94,6 +94,35 @@ and workflows the user owns or can edit. Every Crew is callable with no setup:
 `call_target` creates or reuses the standard trigger automatically. Creating
 extra triggers on any Crew, or using its existing ones, is always fine.
 
+### Typed functions (preferred)
+
+A Crew or workflow can offer **functions**: a name, typed input and result
+schemas, and instructions, stored in its `functions.json`.
+
+- **Discover** — `list_functions(target)` shows what a target offers. Generated
+  tools named `<crew>__<function>` appear for tagged or attached targets.
+- **Call** — `call_function(target, function, args)` validates `args`, runs the
+  function as a turn in the target (queued if busy) and returns the validated
+  result directly when it finishes within about 2 minutes. Otherwise it
+  returns `status: running` with a `call_id`; tell the user and end the turn —
+  the result arrives as an `[AUTO-NOTIFICATION]`.
+- **Follow** — `get_function_call(call_id)` shows status, the target's progress
+  reports and what it is doing right now, without interrupting it.
+  `ask_function_update(call_id, question)` asks a running Crew target
+  directly (Crew targets only); it answers with a progress report.
+- **Offer** — `define_function(name, description, instructions, input_schema,
+  result_schema)` declares a function on this Crew (omit `target`) or on
+  another Crew / editable workflow; `delete_function` removes it.
+- **Serve** — when you receive a `[Function call <id>]` task, do the work,
+  report milestones with `report_function_progress(call_id, message,
+  percent)`, and finish with `return_function_result(call_id, result)` (or
+  `error`). The caller receives exactly that result, not your chat reply.
+
+Calls that would loop back to a target already in the call chain, or go
+deeper than 4 levels, are refused.
+
+### Free-form tasks
+
 1. **Connect** — `connect_to_target(target)` reuses this caller's trigger on the
    target or creates a standard one. To give the target Crew standing
    instructions for these calls, pass `name` and `instructions`; the trigger

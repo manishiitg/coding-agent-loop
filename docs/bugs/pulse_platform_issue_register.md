@@ -1,3 +1,14 @@
+## Crew functions: typed calls between Crews and workflows — PLAT-357
+
+[PLAT-357](pulse_platform/integrations/plat-357.md) adds typed functions a
+Crew or workflow declares (`functions.json`: input schema, result schema,
+instructions). Other Crews and workflows call them with `call_function` or a
+generated per-function tool; arguments and results are validated, a call
+that finishes within 120 s returns its result directly, longer calls come
+back as an `[AUTO-NOTIFICATION]`, and callers can poll progress or ask a
+Crew target for an update mid-run. Built on the existing internal-trigger
+bindings; not yet deployed.
+
 ## Attached context made query_workflow_db "ambiguous" — PLAT-356
 
 [PLAT-356](pulse_platform/step-execution/plat-356.md) fixes

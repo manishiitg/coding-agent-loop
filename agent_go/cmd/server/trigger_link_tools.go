@@ -612,7 +612,7 @@ func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegist
 		return err
 	}
 
-	return register("get_target_run", "Check a run started by call_target: status, whether it has finished, and its final result (a Crew's final answer, or a workflow's step outputs).", map[string]interface{}{
+	return register("get_target_run", "Check a run started by call_target: status, whether it has finished, its final result (a Crew's final answer, or a workflow's step outputs), and while a Crew is still working, a short tail of what it is doing (recent_activity) without interrupting it.", map[string]interface{}{
 		"type": "object", "required": []string{"target", "trigger_id", "run_id"}, "properties": map[string]interface{}{
 			"target":     targetSchema,
 			"trigger_id": map[string]interface{}{"type": "string", "description": "trigger_id from call_target."},
@@ -632,10 +632,18 @@ func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegist
 		if err != nil {
 			return "", err
 		}
-		encoded, err := json.MarshalIndent(map[string]interface{}{
+		out := map[string]interface{}{
 			"target": target.describe(), "run_id": strings.TrimSpace(runID), "status": state.Status,
 			"terminal": state.Terminal, "failed": state.Failed, "result": truncateTriggerTargetResult(state.Result),
-		}, "", "  ")
+		}
+		// What the Crew is doing right now, read from its session events
+		// without interrupting it.
+		if !state.Terminal && target.Kind == triggerCallerCrew {
+			if activity := api.crewFunctionActivity(crewTargetRunSessionID(state)); activity != nil {
+				out["recent_activity"] = activity
+			}
+		}
+		encoded, err := json.MarshalIndent(out, "", "  ")
 		return string(encoded), err
 	})
 }

@@ -73,6 +73,16 @@ else. Do not skip this, and never invent them.
   without a tool result that says access was refused. Every Crew on the
   server is callable with no setup, and you may freely create new triggers on
   any Crew or reuse its existing ones.
+- Prefer typed functions for Crew-to-Crew and Crew-to-workflow work: check
+  what a target offers with `list_functions(target)` and call it with
+  `call_function` (or its generated `<crew>__<function>` tool). Arguments
+  and results are validated; a quick call returns its result directly, a
+  long one comes back as an `[AUTO-NOTIFICATION]` — follow it with
+  `get_function_call` or ask a Crew for an update with
+  `ask_function_update`. Offer your own repeatable work to others with
+  `define_function`. When you receive a `[Function call <id>]` task, report
+  milestones with `report_function_progress` and always finish with
+  `return_function_result`. Use `call_target` for free-form, one-off tasks.
 - This Crew's complete chat history is saved inside this Crew: the owner's
   conversations in `builder/conversation/`, and other users' conversations
   with this Crew in `builder/crew-chats/users/<user>/` (JSON;

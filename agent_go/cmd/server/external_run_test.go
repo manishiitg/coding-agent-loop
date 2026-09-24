@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,6 +124,24 @@ func TestExternalScheduleRunsRemainReadableAfterScheduleDeletion(t *testing.T) {
 	page := externalTestBody(t, f.call(t, "owner", "get_schedule_runs", map[string]any{"workflow_id": "invoices", "schedule_id": "deleted-schedule", "offset": 1}), 200)
 	if page["schedule_deleted"] != true || page["total"] != float64(1) || len(page["runs"].([]any)) != 0 {
 		t.Fatalf("deleted schedule history does not paginate: %v", page)
+	}
+}
+
+func TestExternalScheduleRunsPagesPastTwoHundred(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","label":"Invoice processing","created_by":"owner","access":{"owners":["owner"]},"schedules":[{"id":"deploy-hook","name":"Deploy hook","schedule_type":"webhook","enabled":true}]}`)
+	runs := make([]ScheduleRunEntry, maxScheduleRuns+5)
+	for index := range runs {
+		runs[index] = ScheduleRunEntry{ID: fmt.Sprintf("run-%03d", index), ScheduleID: "deploy-hook", Status: "success", StartedAt: time.Now().UTC().Add(-time.Duration(index) * time.Minute)}
+	}
+	raw, err := json.Marshal(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, "Workflow/invoices/schedule-runs.json", string(raw))
+	body := externalTestBody(t, f.call(t, "owner", "get_schedule_runs", map[string]any{"workflow_id": "invoices", "schedule_id": "deploy-hook", "offset": maxScheduleRuns, "limit": 10}), 200)
+	if body["total"] != float64(maxScheduleRuns+5) || body["has_more"] != false || len(body["runs"].([]any)) != 5 {
+		t.Fatalf("older run history page unavailable: %v", body)
 	}
 }
 

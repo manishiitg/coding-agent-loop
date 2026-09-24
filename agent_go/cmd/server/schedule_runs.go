@@ -62,6 +62,7 @@ type ScheduleRunEntry struct {
 }
 
 const maxScheduleRuns = 200
+const workflowScheduleRunRetentionDays = 90
 
 type scheduleRunDurationAverage struct {
 	DurationMs int64
@@ -152,7 +153,27 @@ func writeScheduleRunsUnlocked(ctx context.Context, workspacePath string, runs [
 	return writeFileToWorkspace(ctx, scheduleRunsPath(workspacePath), string(data))
 }
 
-// AppendScheduleRun adds a run entry, keeping at most maxScheduleRuns entries (trimming oldest).
+// retainedScheduleRuns keeps workflow history for 90 days so the existing
+// paginated readers can reach older runs. Other schedule stores keep their
+// historical 200-entry cap. Active and undated runs are never pruned here.
+func retainedScheduleRuns(workspacePath string, runs []ScheduleRunEntry, now time.Time) []ScheduleRunEntry {
+	if strings.HasPrefix(workspacePath, "Workflow/") {
+		cutoff := now.AddDate(0, 0, -workflowScheduleRunRetentionDays)
+		kept := runs[:0]
+		for _, run := range runs {
+			if run.StartedAt.IsZero() || !isTerminalScheduleRunStatus(run.Status) || !run.StartedAt.Before(cutoff) {
+				kept = append(kept, run)
+			}
+		}
+		return kept
+	}
+	if len(runs) > maxScheduleRuns {
+		return runs[:maxScheduleRuns]
+	}
+	return runs
+}
+
+// AppendScheduleRun adds a run entry and applies the retention policy.
 func AppendScheduleRun(ctx context.Context, workspacePath string, run *ScheduleRunEntry) error {
 	if run == nil {
 		return fmt.Errorf("schedule run is required")
@@ -167,11 +188,7 @@ func AppendScheduleRun(ctx context.Context, workspacePath string, run *ScheduleR
 		return err
 	}
 
-	runs = append([]ScheduleRunEntry{*run}, runs...) // prepend (newest first)
-
-	if len(runs) > maxScheduleRuns {
-		runs = runs[:maxScheduleRuns]
-	}
+	runs = retainedScheduleRuns(workspacePath, append([]ScheduleRunEntry{*run}, runs...), time.Now().UTC()) // prepend (newest first)
 
 	return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
 }
@@ -202,10 +219,7 @@ func ClaimScheduleRun(ctx context.Context, workspacePath string, run *ScheduleRu
 			return &found, false, nil
 		}
 	}
-	runs = append([]ScheduleRunEntry{*run}, runs...)
-	if len(runs) > maxScheduleRuns {
-		runs = runs[:maxScheduleRuns]
-	}
+	runs = retainedScheduleRuns(workspacePath, append([]ScheduleRunEntry{*run}, runs...), time.Now().UTC())
 	if err := writeScheduleRunsUnlocked(ctx, workspacePath, runs); err != nil {
 		return nil, false, err
 	}

@@ -585,6 +585,9 @@ marks that case with `schedule_deleted: true`. `list_workflow_knowledge` pages
 the learnings and knowledgebase inventories together with `limit` and `offset`;
 follow `next_offset` while `has_more` is true. Directory listing tools return
 `exists: true` when the requested path exists, even if the result page is empty.
+Workflow schedule history uses the same `limit` and `offset` paging and keeps
+terminal run records for at least 90 days. Older records are pruned when a new
+run is recorded; run artifacts have a separate retention policy.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint

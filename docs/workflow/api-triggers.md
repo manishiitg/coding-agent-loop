@@ -87,6 +87,8 @@ authentication secret are excluded from history responses. The original
 delivery body is stored with the run artifacts and can be opened in the UI.
 External `get_schedule_runs` includes the deploy fields under each run's
 `webhook` object; `get_run` includes the same object for a webhook run folder.
+Workflow run history can be paged with `limit` and `offset` and retains terminal
+records for at least 90 days, independently of run artifact retention.
 
 These fields describe the delivery that **started that run**. A rollout may
 send one ping per component. If several pings share a SHA and collision policy

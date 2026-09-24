@@ -188,7 +188,9 @@ the gap this profile exists to close."*
 Two tool sets `tool_policy` does **not** govern, so don't rely on it for
 either: mcpagent's own intrinsic tools (`get_api_spec`, `get_prompt`,
 `get_resource`, `read_skill`, injected by mcpagent itself), and — under
-`agent_tools.mode: hybrid` only — the coding CLI's own native tools, which
+`agent_tools.mode: hybrid` only — the coding CLI's own native tools (read,
+search, skills, todos, subagents; never native writes, see
+[../design/native_agent_tools.md](../design/native_agent_tools.md)), which
 the gate never sees at all (this is why `hybrid` is a materially bigger
 trust boundary than `mcp_only`; see the design doc's own reasoning for why
 Video Studio picked `mcp_only` over `hybrid` despite `hybrid` being

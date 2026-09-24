@@ -54,6 +54,10 @@ type ScheduleContext struct {
 	// Pulse action. Version preflight still runs before Pulse, which reviews the
 	// latest retained workflow evidence and then executes the normal finalizer.
 	PulseOnly              bool
+	// PulseFixRun marks a Pulse fix run (pulse_fix_run.go): no Gate agent,
+	// Technical Review+Fix only, and a light finish. PulseFixReason is why.
+	PulseFixRun            bool
+	PulseFixReason         string
 	PulseEvidenceRunFolder string
 	PulseEvidenceRunStatus string
 	CalendarItem           *CalendarScheduleItem
@@ -497,7 +501,12 @@ func (s *SchedulerService) tickLoop(ctx context.Context) {
 			// The workflow's own Pulse schedule: the time each Pulse chose for
 			// itself, bounded by the interval guards, or earlier for a durable
 			// fast request (pulse_schedule.go).
-			go s.launchDuePulses(context.Background())
+			// Then fix runs: a short Technical Review+Fix pass for a workflow
+			// with something to fix, instead of waiting for the full Pulse.
+			go func() {
+				s.launchDuePulses(context.Background())
+				s.launchDueFixRuns(context.Background())
+			}()
 			lastTick = t
 		}
 	}
@@ -1393,8 +1402,20 @@ func (s *SchedulerService) TriggerScheduledPulse(workspacePath string) (string, 
 	return s.triggerPulseOnly(workspacePath, "cron")
 }
 
+// TriggerPulseFixRun starts a Pulse fix run for a workflow with something to
+// fix. It does not move the full Pulse schedule.
+func (s *SchedulerService) TriggerPulseFixRun(workspacePath, reason string) (string, error) {
+	return s.triggerPulseRun(workspacePath, "cron", strings.TrimSpace(reason))
+}
+
 func (s *SchedulerService) triggerPulseOnly(workspacePath, triggerSource string) (string, error) {
+	return s.triggerPulseRun(workspacePath, triggerSource, "")
+}
+
+// triggerPulseRun starts a full Pulse, or a fix run when fixReason is set.
+func (s *SchedulerService) triggerPulseRun(workspacePath, triggerSource, fixReason string) (string, error) {
 	ctx := context.Background()
+	fixRun := fixReason != ""
 	workspacePath = filepath.Clean(strings.TrimSpace(workspacePath))
 	if workspacePath == "." || workspacePath == "" {
 		return "", errors.New("workspace_path is required")
@@ -1418,10 +1439,17 @@ func (s *SchedulerService) triggerPulseOnly(workspacePath, triggerSource string)
 		Mode:           "workshop",
 		WorkshopMode:   "workshop",
 	}
+	if fixRun {
+		sched.ID = pulseFixRunScheduleID
+		sched.Name = "Pulse fix run"
+		sched.Description = "Technical Review+Fix on current issues; started because " + fixReason
+	}
 	sctx := buildScheduleContext(workspacePath, manifest, sched)
 	sctx.TriggerSource = triggerSource
 	sctx.ForcePulseReview = true
 	sctx.PulseOnly = true
+	sctx.PulseFixRun = fixRun
+	sctx.PulseFixReason = fixReason
 	sctx.PulseEvidenceRunFolder, sctx.PulseEvidenceRunStatus = latestRetainedPulseEvidence(ctx, workspacePath)
 	startTime := time.Now().UTC()
 
@@ -1464,8 +1492,13 @@ func (s *SchedulerService) triggerPulseOnly(workspacePath, triggerSource string)
 		return "", context.Canceled
 	}
 	// Scheduled and manual full Pulses both reset the Pulse schedule's guards;
-	// the new pass chooses the next time with record_pulse_next_run.
-	if err := markPulseStarted(ctx, workspacePath, runID, startTime); err != nil {
+	// the new pass chooses the next time with record_pulse_next_run. A fix run
+	// is counted separately and leaves the full Pulse schedule alone.
+	if fixRun {
+		if err := recordPulseFixRunStarted(ctx, workspacePath, runID, fixReason, startTime); err != nil {
+			scheduleLogf("[PULSE] could not record fix run start for %s: %v", workspacePath, err)
+		}
+	} else if err := markPulseStarted(ctx, workspacePath, runID, startTime); err != nil {
 		scheduleLogf("[PULSE] could not record Pulse start for %s: %v", workspacePath, err)
 	}
 
@@ -1497,7 +1530,7 @@ func latestRetainedPulseEvidenceFromRuns(runs []ScheduleRunEntry) (string, strin
 	fallbackFolder := ""
 	fallbackStatus := ""
 	for _, run := range runs {
-		if run.ScheduleID == manualWorkflowPulseScheduleID || strings.TrimSpace(run.RunFolder) == "" {
+		if run.ScheduleID == manualWorkflowPulseScheduleID || run.ScheduleID == pulseFixRunScheduleID || strings.TrimSpace(run.RunFolder) == "" {
 			continue
 		}
 		status := strings.TrimSpace(run.Status)
@@ -2614,6 +2647,20 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 		s.sessionLogf(sctx, sessionID, "[PULSE] basic post-run finalization selected for %s; Gate, drift review, reviewers, and Fixer are disabled by this schedule", sctx.Schedule.ID)
 	} else if !reviewEvidenceAvailable {
 		steps = pulseLifecycleNoRunSteps(pulseRunID, runFailureReason, notificationInstructionsFromCapabilities(sctx.Capabilities))
+	} else if sctx.PulseFixRun {
+		// A fix run records its own worklist instead of running the Gate agent:
+		// Plan Drift when its checks require it, then Technical Review+Fix,
+		// then the light finish (backup, publish, notify).
+		if err := recordPulseFixRunWorklist(ctx, sctx.WorkspacePath, pulseRunID, sctx.PulseFixReason); err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] fix run could not record its worklist: %v", err)
+		} else {
+			if due, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, pulseModulePlanDriftReview); err == nil && due {
+				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
+			}
+			steps = append(steps, pulseLifecycleModuleReviewStep(pulseRunID, pulseModuleTechnicalReview))
+		}
+		steps = append(steps, scheduledRunFinalizeStepWithPulseTiming(scheduleRunID, "", notificationInstructionsFromCapabilities(sctx.Capabilities))...)
+		s.sessionLogf(sctx, sessionID, "[PULSE] fix run selected %d steps for %s: %s", len(steps), sctx.WorkspacePath, sctx.PulseFixReason)
 	} else {
 		gateStep := pulseLifecycleGateStep(pulseRunID, runFolder, runStatus)
 		if sctx.Schedule.PulseReviewOnly {

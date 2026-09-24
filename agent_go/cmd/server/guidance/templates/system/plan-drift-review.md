@@ -251,7 +251,7 @@ judge:
 
 For every check that failed, fix it now if it is a bounded, safe,
 workflow-owned repair — the same standard `technical_review` applies to its
-own repair batches. This is the normal path, not the exception:
+own repairs. This is the normal path, not the exception:
 
 - A broken `window.report.query(...)`, `validation_schema.db[]` rule, or
   scripted `main.py` query usually means a report/schema/script still

@@ -44,10 +44,9 @@ func TestFindingDispositionRejectionsNameTheContractTheyEnforce(t *testing.T) {
 	// value pass unnoticed in both places at once.
 	allDispositions := []string{
 		FindingDispositionFixedVerified, FindingDispositionVerifiedNoChange,
-		FindingDispositionChangedUnverified, FindingDispositionProposalOnly,
-		FindingDispositionAwaitingUser, FindingDispositionAwaitingRun,
-		FindingDispositionBlocked, FindingDispositionExternalAction,
-		FindingDispositionFailed, FindingDispositionRejected,
+		FindingDispositionChangedUnverified, FindingDispositionAwaitingUser,
+		FindingDispositionExternalAction, FindingDispositionFailed,
+		FindingDispositionRejected,
 	}
 	allVerdicts := []string{VerificationPassed, VerificationFailed, VerificationInconclusive}
 	allExternalOwners := []string{"platform", "user", "vendor", "workflow_owner"}
@@ -112,7 +111,7 @@ func TestFindingDispositionRejectionsNameTheContractTheyEnforce(t *testing.T) {
 			name: "missing verification check names the entry and the verdict set",
 			disposition: PulseFindingDisposition{
 				Fingerprint: "fp-1", FindingID: "PUL-5D41A7E0",
-				Disposition: FindingDispositionBlocked, Summary: "Blocked.",
+				Disposition: FindingDispositionRejected, Summary: "Not a problem.",
 				Verification: []PulseFindingVerification{{Verdict: VerificationPassed}},
 			},
 			want: append([]string{"verification[0]", "check"}, allVerdicts...),
@@ -121,7 +120,7 @@ func TestFindingDispositionRejectionsNameTheContractTheyEnforce(t *testing.T) {
 			name: "invalid verdict names the closed set and the value that arrived",
 			disposition: PulseFindingDisposition{
 				Fingerprint: "fp-1", FindingID: "PUL-1",
-				Disposition: FindingDispositionBlocked, Summary: "Blocked.",
+				Disposition: FindingDispositionRejected, Summary: "Not a problem.",
 				Verification: []PulseFindingVerification{{Check: "ran the suite", Verdict: "ok"}},
 			},
 			want: append([]string{`invalid verdict "ok"`, "verification[0]"}, allVerdicts...),
@@ -175,7 +174,7 @@ func TestFindingDispositionRejectionsNameTheContractTheyEnforce(t *testing.T) {
 		{
 			name: "missing internal lifecycle identity names the public issue id",
 			disposition: PulseFindingDisposition{
-				FindingID: "PUL-1", Disposition: FindingDispositionBlocked, Summary: "Blocked.",
+				FindingID: "PUL-1", Disposition: FindingDispositionRejected, Summary: "Not a problem.",
 			},
 			want: []string{"issue_id", "lifecycle identity was not resolved", "issue_id=set"},
 		},
@@ -202,15 +201,6 @@ func TestFindingDispositionAcceptanceIsUnchangedByMessageDetail(t *testing.T) {
 			Disposition: FindingDispositionExternalAction, Summary: "Owned by the harness.",
 			ExternalOwner: "platform", ReasonCode: "missing_platform_tool",
 			ReopenCondition: "harness exposes a resume tool",
-		},
-		{
-			Fingerprint: "fp-1", FindingID: "PUL-1",
-			Disposition: FindingDispositionAwaitingRun, Summary: "Waiting on the digest run.",
-			NextCheck: "next digest run",
-		},
-		{
-			Fingerprint: "fp-1", FindingID: "PUL-1",
-			Disposition: FindingDispositionBlocked, Summary: "No action available.",
 		},
 	}
 	for index, disposition := range accepted {

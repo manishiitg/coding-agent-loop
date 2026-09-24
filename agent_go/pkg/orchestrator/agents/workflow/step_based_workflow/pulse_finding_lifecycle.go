@@ -105,18 +105,25 @@ const (
 // platform, because nothing in the error said the set was closed or what was
 // in it.
 var (
+	// Pulse finds an issue and closes it in the same pass: fixed, not a
+	// problem, the user's decision, or platform-owned. A failed fix stays open
+	// and is retried. There is no disposition that parks an issue for later.
 	pulseFindingDispositionValues = []string{
 		FindingDispositionFixedVerified,
 		FindingDispositionVerifiedNoChange,
 		FindingDispositionChangedUnverified,
-		FindingDispositionProposalOnly,
 		FindingDispositionAwaitingUser,
-		FindingDispositionQueuedForEngineering,
-		FindingDispositionAwaitingRun,
-		FindingDispositionBlocked,
 		FindingDispositionExternalAction,
 		FindingDispositionFailed,
 		FindingDispositionRejected,
+	}
+	// pulseRetiredFindingDispositions parked an issue instead of closing it.
+	// They are still read from old records but refused on new writes.
+	pulseRetiredFindingDispositions = map[string]string{
+		FindingDispositionProposalOnly:         "proposal_only",
+		FindingDispositionQueuedForEngineering: "queued_for_engineering",
+		FindingDispositionAwaitingRun:          "awaiting_run",
+		FindingDispositionBlocked:              "blocked",
 	}
 	pulseVerificationVerdictValues = []string{
 		VerificationPassed,
@@ -705,6 +712,9 @@ type PulseActionableBacklogReconciliation struct {
 	// otherwise handed to the fixer for this pass.
 	ClosedEvidenceWaits   int `json:"closed_evidence_waits"`
 	ReroutedEvidenceWaits int `json:"rerouted_evidence_waits"`
+	// Issues parked by a retired disposition (queued, blocked, proposal,
+	// awaiting a run) returned to the active register to be fixed now.
+	ReopenedParkedIssues int `json:"reopened_parked_issues"`
 }
 
 // ReconcilePulseFindingLifecycle runs the compatibility migrations explicitly
@@ -863,6 +873,25 @@ func ReconcilePulseActionableBacklog(ctx context.Context, workspacePath string) 
 		result.ReroutedEvidenceWaits = int(affected)
 	}
 
+	// Retired parking states return to the active register. An acknowledged
+	// issue stays only when it waits on a real user decision.
+	parked, err := db.ExecContext(ctx, `UPDATE run_concerns SET status=?
+		WHERE status IN (?, ?, ?)
+			OR (status=?
+				AND NOT EXISTS (SELECT 1 FROM pulse_finding_details d WHERE d.fingerprint=run_concerns.fingerprint
+					AND json_extract(d.detail_json, '$.recommended_route')=?)
+				AND NOT EXISTS (SELECT 1 FROM pulse_finding_events e WHERE e.fingerprint=run_concerns.fingerprint
+					AND e.event_type='awaiting_user'))`,
+		ConcernStatusOpen,
+		ConcernStatusQueuedForEngineering, ConcernStatusAwaitingRun, ConcernStatusAwaitingVerification,
+		ConcernStatusAcknowledged, pulseFindingRouteDecisionRequired)
+	if err != nil {
+		return PulseActionableBacklogReconciliation{}, err
+	}
+	if affected, affectedErr := parked.RowsAffected(); affectedErr == nil {
+		result.ReopenedParkedIssues = int(affected)
+	}
+
 	const active = `c.status NOT IN ('resolved', 'rejected', 'external_action_required')`
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM run_concerns c
 		JOIN pulse_finding_details d ON d.fingerprint=c.fingerprint
@@ -893,11 +922,12 @@ func ReconcilePulseActionableBacklog(ctx context.Context, workspacePath string) 
 // check. It intentionally excludes platform-owned findings, human decisions,
 // and evidence waits: those remain durable work, but cannot be completed by a
 // workflow repair agent in this run.
-// CountPulseActionableWorkflowIssuesForPass counts the actionable workflow
-// issues a Technical pass owns: those routed to the fixer, and those seen
-// since the given time (the previous Pulse's start). Older unrouted issues
-// stay in the backlog without failing every pass.
+// CountPulseActionableWorkflowIssuesForPass counts the workflow issues a
+// Technical pass must close: every open workflow issue except one waiting on
+// the user's decision. Pulse finds and closes issues in the same pass, so an
+// open issue left behind means the pass did not finish.
 func CountPulseActionableWorkflowIssuesForPass(ctx context.Context, workspacePath string, since time.Time) (int, error) {
+	_ = since // every open workflow issue belongs to the pass; see the comment above
 	db, err := openRunConcernsDB(ctx, workspacePath, true)
 	if err != nil || db == nil {
 		return 0, err
@@ -909,13 +939,11 @@ func CountPulseActionableWorkflowIssuesForPass(ctx context.Context, workspacePat
 	var count int
 	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM run_concerns c
 		JOIN pulse_finding_details d ON d.fingerprint=c.fingerprint
-		WHERE c.status NOT IN (?, ?, ?)
+		WHERE c.status NOT IN (?, ?, ?, ?)
 			AND d.issue_kind=?
-			AND COALESCE(json_extract(d.detail_json, '$.recommended_route'), '') NOT IN (?, ?)
-			AND (COALESCE(json_extract(d.detail_json, '$.recommended_route'), '')=? OR c.last_seen_at >= ?)`,
-		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired,
-		IssueKindWorkflow, pulseFindingRouteDecisionRequired, pulseFindingRouteEvidenceWait,
-		pulseFindingRouteFixerHandoff, since.UTC().Format(time.RFC3339Nano),
+			AND COALESCE(json_extract(d.detail_json, '$.recommended_route'), '')<>?`,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired, ConcernStatusAcknowledged,
+		IssueKindWorkflow, pulseFindingRouteDecisionRequired,
 	).Scan(&count)
 	return count, err
 }
@@ -1731,7 +1759,9 @@ func validateFindingDisposition(disposition PulseFindingDisposition) error {
 		add("requires summary: one sentence stating what was done and what it means for this finding")
 	}
 	dispositionKnown := pulseValueAllowed(disposition.Disposition, pulseFindingDispositionValues)
-	if !dispositionKnown {
+	if _, retired := pulseRetiredFindingDispositions[strings.TrimSpace(disposition.Disposition)]; retired {
+		add("disposition %q is retired: Pulse does not park issues for a later pass. Fix it now (fixed_verified or changed_unverified), close it when nothing is wrong (verified_no_change or rejected), ask the user with a linked decision (awaiting_user), hand a platform-owned defect off (external_action_required), or record failed so it stays open and is retried", disposition.Disposition)
+	} else if !dispositionKnown {
 		add("has invalid disposition %q. Must be one of: %s", disposition.Disposition, pulseAllowed(pulseFindingDispositionValues))
 	}
 

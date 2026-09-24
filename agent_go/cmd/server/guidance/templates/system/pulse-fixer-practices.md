@@ -51,69 +51,44 @@ For each actionable finding:
    post-change proof. Otherwise use `changed_unverified` for the successfully
    applied repair; it closes immediately without a future verification obligation.
 
-## Bounded backlog progress contract
+## Backlog close-out contract
 
-A Pulse pass is one bounded, evidence-backed **repair batch**—not an attempt to
-zero every unrelated backlog root in one context window. Every Fixer pass must
-see the complete active backlog that existed when the pass began, select its
-batch agentically, finish every selected bundle honestly, and leave an exact
-ordered queue for later passes. This is not an arbitrary top-N issue cap: a
-bundle may carry many issue IDs when they truly share a root cause, compatible
-targets, and one verification condition; a batch may carry more than one
-bundle when each can be safely completed and independently proven in the same
-context window.
+Pulse finds an issue and closes it in the same pass. A Fixer pass works through
+the complete active backlog that existed when it began, in priority order,
+until every issue is closed: fixed, not a problem, the user's decision, or
+platform-owned. There is no queue for later passes.
 
 1. **Freeze a starting manifest.** Call
    `get_pulse_state(view="backlog", detail="compact")` exactly once with no
    module filter and retain every exact visible `issue_id`. The backend resolves
    the internal fingerprint and current attempt; never copy those internals into
-   a Pulse write. Use
-   `query_workflow_db` to count and inspect status, owning module, step, age,
-   recurrence, attempts, and next-check boundaries before choosing an order.
-2. **Rank from compact lifecycle evidence.** Use status, owner, severity,
-   recurrence, attempts, next-check boundaries, current Gate evidence, and
-   answered decisions to distinguish actionable roots from waiting or external
-   work. Request `detail="full"` only for the bounded `issue_ids` that could
-   become this pass's objective; do not perform a forensic reread of every row
-   merely to restate the backlog.
-3. **Select a bounded batch, then bundle semantically.** Choose the
-   highest-value bundle that can reach a truthful proof boundary in this pass.
-   Add a next independent bundle only when it is low-risk, needs no broad
-   rediscovery, has its own clear proof boundary, and can finish from the
-   current context plus targeted evidence. Group items only by shared root
-   cause, compatible targets, and one verification condition. Never batch
-   different public-action risks, user decisions, routes that need separate
-   context, or an unresolved design investigation. A repair may carry many
-   finding links, but no finding may disappear inside a bundle.
-4. **Maintain an explicit remaining list.** Prepare a lifecycle disposition for
-   every issue linked to every selected bundle and remove only those exact IDs
-   from the working queue. Leave all other IDs in the existing durable issue queue; do not copy that queue
-   into review_note. Untouched findings retain their existing lifecycle;
-   do not generate no-op attempts or current-pass dispositions for them.
-5. **Check waiting boundaries rather than re-mutating.** An existing waiting
-   state is accounted for only after checking whether its named run, answer,
-   version, or evidence has arrived. If it has arrived, verify or resume the
-   repair. If it has not, preserve the waiting state without manufacturing a
-   redundant fix attempt.
-6. **Reconcile before completion.** Re-read
-   `get_pulse_state(view="backlog", detail="compact")` only after a lifecycle
-   mutation that could have changed the manifest, then compare it with the
-   starting manifest, selected issue IDs, dispositions, and saved
-   remaining queue. Do not reload an unchanged backlog merely to filter or
-   restate it. Every selected issue must have a current-pass disposition.
-   Every unselected starting issue must still be durable or have an independently
-   recorded transition; its prior unmet boundary need not be rewritten. Submit
-   the selected per-module disposition sets through the existing
-   `record_pulse_result` calls and record the terminal module receipts.
+   a Pulse write. Use `query_workflow_db` to inspect status, owning module, step,
+   age, recurrence and attempts before choosing an order.
+2. **Order by impact.** First issues that blind the goal (goal metrics not
+   recorded) or stop the workflow's main output, then any with
+   `times_deferred`, then reproduced failures, then the rest. Request
+   `detail="full"` only for the issue you are about to work on.
+3. **Bundle semantically.** Group items only by shared root cause, compatible
+   targets, and one verification condition. Never bundle different public-action
+   risks, user decisions, or routes that need separate context. A repair may
+   carry many finding links, but no finding may disappear inside a bundle.
+4. **Close each bundle before the next.** Investigate, apply the repair, run
+   the immediate check, and record the disposition. If the check fails, record
+   `failed` and try another fix in this pass. When only the user can choose,
+   create the decision with the exact proposed change and record
+   `awaiting_user`. When it is not a problem, close it with the check that
+   showed it.
+5. **Reconcile before completion.** Re-read
+   `get_pulse_state(view="backlog", detail="compact")` after lifecycle
+   mutations and compare it with the starting manifest. Submit the per-module
+   disposition sets through `record_pulse_result` and record the terminal
+   module receipts.
 
-If a selected item is unaccounted for, continue the pass. If a tool, evidence,
-approval, or runtime failure blocks one selected bundle, record that exact
-boundary and report it truthfully; the agent may continue only with a later
-bundle that was already selected and remains independent of the blocker. Do
-not jump to unrelated queue items merely to make the pass look productive.
-A pass may complete while the durable backlog remains non-empty. Findings first
-created while the frozen pass is running belong to the next pass unless they
-are inseparable consequences of a selected repair.
+If the context runs out before the backlog is empty, stop truthfully: the pass
+ends partial, the scheduler records it, and the next fix run continues from the
+same backlog. Never describe an unclosed issue as deliberately left for later.
+Findings first created while the pass is running are closed in the same pass
+when context allows.
 
 ## Evidence hierarchy
 

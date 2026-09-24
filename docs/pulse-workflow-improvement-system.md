@@ -11,6 +11,17 @@ code: 2026-09-23.
 > self-deciding schedule; normal schedules only back up, publish and notify.
 > See [design/pulse_goal_work.md](design/pulse_goal_work.md). Sections below
 > describe the platform-upkeep reviewers and older history.
+>
+> **2026-09-24: find, fix, close.** Every issue ends the pass that finds it as
+> fixed, not a problem, the user's decision, or platform-owned; the old
+> queued, blocked, proposal, waiting-for-run and waiting-for-evidence states
+> are retired. Fix runs (a short Technical Review+Fix) start automatically when
+> a workflow has open issues, new step concerns or a failed run. The user sets
+> Pulse autonomy with one slider, Goal Work runs on the Pulse model and upkeep
+> reviews on the Medium tier, and the chat keeps only `/pulse` and
+> `/run-goal-work`. Details: the "Find, fix, close" and "Models" sections of
+> [design/pulse_goal_work.md](design/pulse_goal_work.md). Where the sections
+> below mention queueing or waiting, the new rules win.
 
 ## Responsibilities
 

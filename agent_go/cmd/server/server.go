@@ -3849,7 +3849,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
 	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
+	// A changed Crew/product definition makes the retained CLI stale (it is
+	// interrupted below and relaunched), but it is NOT a reason to drop the
+	// native conversation: the relaunch resumes the same native session with
+	// the current definition. Whether a definition change needs a fresh
+	// session (agent-tools mode, a CLI that cannot reload instructions) is
+	// decided per runtime by seedCodingAgentRuntimeFromRestoredConversation.
 	productDefinitionRefreshed := resolvedProfile != nil && !retainedProfileCompatible
+	if productDefinitionRefreshed {
+		log.Printf("[CHAT_HISTORY] Product definition changed for session %s; relaunching the coding CLI and resuming its native session where supported", sessionID)
+	}
 	if !retainedProfileCompatible && !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) {
 		api.interruptWorkflowPolicySession(sessionID, req.Provider)
 	}
@@ -7149,12 +7158,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Product-owned chats resolve SelectedFolder server-side. Work keeps
 				// its transcripts inside that project, so use the trusted project
 				// workspace when locating the native provider resume handle.
-				restoredConversationWorkspace = normalizeConversationWorkspace(req.SelectedFolder)
+				restoredConversationWorkspace = productConversationRuntimeWorkspace(currentUserID, req.SelectedFolder)
 			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
-			if modeChangedThisTurn || productDefinitionRefreshed {
-				// Policy refresh must never seed the previous native session handle.
+			if modeChangedThisTurn {
+				// A role change (Builder <-> Run) must never seed the previous native session handle.
 			} else if target := req.resolvedResumeTarget; target != nil {
 				restoredConversationPathForFallback = target.ConversationPath
 				restoredRuntime = target.Runtime
@@ -7165,7 +7174,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			if !modeChangedThisTurn && !productDefinitionRefreshed && req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+			if !modeChangedThisTurn && req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
@@ -7180,8 +7189,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if !restoredNativeCodingResume && !modeChangedThisTurn && !productDefinitionRefreshed && restoredConversationPath == "" && restoredConversationSessionID == "" {
-				if seeded, currentRuntime := api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent); seeded {
+			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredConversationPath == "" && restoredConversationSessionID == "" {
+				if seeded, currentRuntime := api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, restoredConversationWorkspace, underlyingAgent); seeded {
 					restoredNativeCodingResume = true
 					// Active-tab auto-resume after idle/reap: this same session (the
 					// current tab — NOT an explicit Resume, so RestoredConversationPath is
@@ -7237,10 +7246,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// spurious relaunch. Also gated on isSessionMarkedStopped, same PLAT-130
 			// reasoning as the auto-resume block above — this is the second of the two
 			// blocks that reproduced the live "Stop doesn't stop" incident.
-			if !forceStructuredCodingAgent && !restoredNativeCodingResume && !modeChangedThisTurn && !productDefinitionRefreshed && restoredRuntime == nil &&
+			if !forceStructuredCodingAgent && !restoredNativeCodingResume && !modeChangedThisTurn && restoredRuntime == nil &&
 				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveMainCodingTmux(sessionID) &&
 				!api.isSessionMarkedStopped(sessionID) {
-				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder); err != nil {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Materialize guard: failed to read runtime for session %s: %v", sessionID, err)
 				} else if ok && runtime != nil && workflowCLIResumeAllowed(underlyingAgent, runtime) && restoredRuntimeUsesLaunchableTerminalTransport(runtime) {
 					restoredRuntime = runtime
@@ -7317,7 +7326,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if isCodingAgentProvider(finalProvider, finalModelID) &&
-				!productDefinitionRefreshed && (restoredNativeCodingResume || codingAgentHasNativeResume(finalProvider, underlyingAgent) || api.sessionHasLiveMainCodingTmux(sessionID)) {
+				// A pane launched with an older definition does not own the context
+				// after a definition change; a seeded native resume does.
+				(restoredNativeCodingResume || codingAgentHasNativeResume(finalProvider, underlyingAgent) || (!productDefinitionRefreshed && api.sessionHasLiveMainCodingTmux(sessionID))) {
 				replayHistoryToAgent = false
 				logfWithContext(queryLogCtx, "[CONVERSATION] Coding-agent context is owned by its transport/native continuation; UI history will not be replayed")
 			}

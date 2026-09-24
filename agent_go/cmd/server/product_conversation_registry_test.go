@@ -483,22 +483,9 @@ func TestIsolatedProjectAutomationBindingKeepsProjectPolicyButOwnsConversation(t
 	}
 }
 
-func TestIsolatedAutomationIDFreshChatPerTriggerRun(t *testing.T) {
-	if got := isolatedAutomationID("trigger", "trig-1", "run-9"); got != "trig-1:run-9" {
-		t.Fatalf("trigger key = %q, want run-scoped id", got)
-	}
-	if got := isolatedAutomationID("Trigger", "trig-1", "run-9"); got != "trig-1:run-9" {
-		t.Fatalf("cased trigger key = %q, want run-scoped id", got)
-	}
-	if got := isolatedAutomationID("schedule", "daily", "run-9"); got != "daily" {
-		t.Fatalf("schedule key = %q, want durable id", got)
-	}
-	if got := isolatedAutomationID("trigger", "trig-1", ""); got != "trig-1" {
-		t.Fatalf("runless trigger key = %q, want plain id", got)
-	}
-}
-
-func TestIsolatedTriggerRunsResolveDistinctConversations(t *testing.T) {
+// A caller binding or webhook keeps one continuing conversation: two runs of
+// the same trigger resume the same session, and another trigger gets its own.
+func TestTriggerRunsShareTheTriggersOwnConversation(t *testing.T) {
 	store, _ := memoryProductConversationStore()
 	ctx := context.Background()
 	profile := singletonConversationProfile()
@@ -507,7 +494,7 @@ func TestIsolatedTriggerRunsResolveDistinctConversations(t *testing.T) {
 		ManifestPath: "Chats/Work/projects/project-1/product.json", ResourceID: "project-1",
 		Title: "Crew", AuthoritativeSessionID: "crew-session",
 	}
-	firstBinding, err := isolateProjectAutomationBinding(base, "project-1", "trigger", isolatedAutomationID("trigger", "trig-1", "run-1"), "t")
+	firstBinding, err := isolateProjectAutomationBinding(base, "project-1", "trigger", "trig-1", "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +502,7 @@ func TestIsolatedTriggerRunsResolveDistinctConversations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondBinding, err := isolateProjectAutomationBinding(base, "project-1", "trigger", isolatedAutomationID("trigger", "trig-1", "run-2"), "t")
+	secondBinding, err := isolateProjectAutomationBinding(base, "project-1", "trigger", "trig-1", "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,8 +510,19 @@ func TestIsolatedTriggerRunsResolveDistinctConversations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.SessionID == second.SessionID {
-		t.Fatalf("two trigger runs shared session %q; want a fresh chat per run", first.SessionID)
+	if first.SessionID != second.SessionID {
+		t.Fatalf("two runs of one trigger got sessions %q and %q; want one continuing conversation", first.SessionID, second.SessionID)
+	}
+	otherBinding, err := isolateProjectAutomationBinding(base, "project-1", "trigger", "trig-2", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.resolveOrCreate(ctx, "user-1", profile, otherBinding, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.SessionID == first.SessionID {
+		t.Fatalf("two different triggers shared session %q", first.SessionID)
 	}
 }
 

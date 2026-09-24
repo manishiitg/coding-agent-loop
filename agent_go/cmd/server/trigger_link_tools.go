@@ -13,34 +13,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
-// Trigger links let Crews and workflows call each other in every direction
-// (crew→crew, crew→workflow, workflow→crew, workflow→workflow) through the
-// existing secretless internal trigger bindings:
-//
-//   - connect_to_target reuses or creates the binding on the target that
-//     names this caller,
-//   - call_target fires it and returns the run ID immediately,
-//   - get_target_run polls that run,
-//   - and, unless notify=false, the platform resumes the caller's own chat
-//     with an [AUTO-NOTIFICATION] carrying the final result, failure, or
-//     timeout — the same mechanism trigger_and_auto_notify uses.
+// Crews, workflows and external connections call a Crew or workflow through
+// one mechanism: its functions (crew_functions.go; `ask` is always there).
+// Underneath, each caller has one internal trigger binding on the target,
+// created on the first call. On a Crew that binding always runs in its own
+// continuing conversation with that caller (never the Crew's main chat,
+// which is for people), so follow-up calls remember earlier ones.
 //
 // Targets are any Crew on the server (Crews are shared read-write) and
 // workflows the requester owns or can edit; workflow readers and Crew
-// Run-mode readers cannot trigger.
+// Run-mode readers cannot call.
 
 const (
 	triggerTargetDefaultTimeout = 60 * time.Minute
 	triggerTargetMaxTimeout     = 24 * time.Hour
 	triggerTargetResultLimit    = 16 * 1024
-	triggerTargetEvent          = "agentworks.call"
 )
 
-// triggerTargetPollInterval is how often the auto-notify watcher polls a
-// target run. A package var so tests can shorten it.
+// triggerTargetPollInterval is how often a function call polls its target
+// run. A package var so tests can shorten it.
 var triggerTargetPollInterval = 10 * time.Second
 
 type triggerTarget struct {
@@ -184,51 +177,36 @@ func crewTargetMessage(caller triggerLinkCaller) string {
 	case triggerCallerUser:
 		kind = "external connection"
 	}
-	return fmt.Sprintf("The connected %s %q sent you a task. The task is in the payload's `task` field; any extra input is under `payload`. Do the task, then end with a clear, self-contained final answer: it is returned to the caller.", kind, caller.Label)
+	return fmt.Sprintf("The %s %q called you. This conversation is yours and that caller's alone (earlier calls from it are above); your main chat is for people and does not see it. The task is in the payload's `task` field; any extra input is under `payload`. Do the task, then end with a clear, self-contained final answer: it is returned to the caller.", kind, caller.Label)
 }
 
 // connectTriggerTarget reuses the internal binding on target that names this
 // caller or creates the standard one. It returns the binding's trigger ID and
-// whether it was created.
+// whether it was created. A Crew binding runs every call in the caller's own
+// continuing conversation with that Crew.
 func (api *StreamingAPI) connectTriggerTarget(ctx context.Context, userID string, caller triggerLinkCaller, target triggerTarget) (string, bool, error) {
-	return api.connectTriggerTargetWith(ctx, userID, caller, target, "", "", "")
-}
-
-// connectTriggerTargetWith is connectTriggerTarget with an optional custom
-// Crew trigger: when instructions are given, a new trigger with that name,
-// message and run destination is created on the target Crew instead of
-// reusing the standard binding. The trigger is an ordinary entry in the
-// target's own trigger list; its name and caller stamp record who created it.
-func (api *StreamingAPI) connectTriggerTargetWith(ctx context.Context, userID string, caller triggerLinkCaller, target triggerTarget, name, instructions, destination string) (string, bool, error) {
 	if caller.isTarget(target) {
 		return "", false, fmt.Errorf("a %s cannot connect to itself", target.Kind)
 	}
 	switch target.Kind {
 	case triggerCallerCrew:
 		if api.productSchedules == nil {
-			return "", false, fmt.Errorf("Crew triggers are unavailable")
+			return "", false, fmt.Errorf("Crew calls are unavailable")
 		}
-		custom := strings.TrimSpace(instructions) != ""
-		if !custom {
-			triggers, err := api.productSchedules.projectWebhookConfigs(ctx, target.ownerOr(userID), target.CrewProfile, target.CrewID)
-			if err != nil {
-				return "", false, err
-			}
-			for _, trigger := range triggers {
-				if trigger.IsInternal() && trigger.Enabled && trigger.Caller.matchesAnyPresented(caller.Stamp) {
-					return trigger.ID, false, nil
-				}
-			}
+		triggers, err := api.productSchedules.projectWebhookConfigs(ctx, target.ownerOr(userID), target.CrewProfile, target.CrewID)
+		if err != nil {
+			return "", false, err
 		}
-		message := crewTargetMessage(caller)
-		if custom {
-			message = strings.TrimSpace(instructions) + "\n\n" + message
+		for _, trigger := range triggers {
+			if trigger.IsInternal() && trigger.Enabled && trigger.Caller.matchesAnyPresented(caller.Stamp) {
+				return trigger.ID, false, nil
+			}
 		}
 		stamp := caller.Stamp
 		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, target.ownerOr(userID), productWebhookRequest{
 			ProfileID: target.CrewProfile, ProjectID: target.CrewID,
-			Name: firstNonEmptyTrimmed(name, "Called by "+caller.Label), Message: message,
-			Enabled: true, RunDestination: firstNonEmptyTrimmed(destination, runDestinationCrewChat), Kind: triggerKindInternal, Caller: &stamp,
+			Name: "Called by " + caller.Label, Message: crewTargetMessage(caller),
+			Enabled: true, RunDestination: runDestinationIsolated, Kind: triggerKindInternal, Caller: &stamp,
 		}, "")
 		if err != nil {
 			return "", false, err
@@ -239,35 +217,6 @@ func (api *StreamingAPI) connectTriggerTargetWith(ctx context.Context, userID st
 	default:
 		return "", false, fmt.Errorf("unknown target kind %q", target.Kind)
 	}
-}
-
-// callableTargetTriggers lists the target's enabled internal triggers bound
-// to this caller.
-func (api *StreamingAPI) callableTargetTriggers(ctx context.Context, userID string, caller triggerLinkCaller, target triggerTarget) ([]map[string]interface{}, error) {
-	out := []map[string]interface{}{}
-	switch target.Kind {
-	case triggerCallerCrew:
-		triggers, err := api.productSchedules.projectWebhookConfigs(ctx, target.ownerOr(userID), target.CrewProfile, target.CrewID)
-		if err != nil {
-			return nil, err
-		}
-		for _, trigger := range triggers {
-			if trigger.IsInternal() && trigger.Enabled && trigger.Caller.matchesAnyPresented(caller.Stamp) {
-				out = append(out, map[string]interface{}{"trigger_id": trigger.ID, "name": trigger.Name, "message": trigger.Message})
-			}
-		}
-	case triggerCallerWorkflow:
-		manifest, exists, err := ReadWorkflowManifest(ctx, target.Path)
-		if err != nil || !exists || manifest == nil {
-			return nil, fmt.Errorf("workflow is unavailable")
-		}
-		for _, sched := range manifest.Schedules {
-			if sched.ScheduleType == "webhook" && sched.IsInternalTrigger() && sched.Enabled && sched.Caller.matchesAnyPresented(caller.Stamp) {
-				out = append(out, map[string]interface{}{"trigger_id": sched.ID, "name": sched.Name})
-			}
-		}
-	}
-	return out, nil
 }
 
 // triggerTargetRunState is one poll of a target run.
@@ -345,342 +294,36 @@ func triggerTargetTimeout(value interface{}) (time.Duration, error) {
 	return time.Duration(minutes) * time.Minute, nil
 }
 
-// startTriggerTargetWatch registers a background execution in the caller's
-// chat and polls the target run until it ends, fails, or times out; the
-// existing auto-notification pipeline then resumes the caller's chat with the
-// result. Like trigger_and_auto_notify, the watch does not survive a server
-// restart; get_target_run still works afterwards.
-func (api *StreamingAPI) startTriggerTargetWatch(parentReq QueryRequest, sessionID, userID string, caller triggerLinkCaller, target triggerTarget, triggerID, runID string, timeout time.Duration) (string, error) {
-	if api == nil || api.bgAgentRegistry == nil {
-		return "", fmt.Errorf("auto-notification is unavailable in this chat")
-	}
-	name := "Call " + target.Kind + " " + target.Label
-	executionID := "target-run-" + api.bgAgentRegistry.NextID(name)
-	runCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	parentExecutionID := api.currentConversationTurnExecutionID(sessionID)
-	if strings.TrimSpace(parentExecutionID) == "" {
-		parentExecutionID = "session:" + sessionID
-	}
-	notifier := &workshopExecutionBgNotifier{
-		api: api, sessionID: sessionID, workspacePath: parentReq.SelectedFolder,
-		presetQueryID: parentReq.PresetQueryID, userID: userID,
-	}
-	notifier.OnExecutionStart(todo_creation_human.WorkshopExecutionStart{
-		ID: executionID, ParentExecutionID: parentExecutionID, Name: name,
-		Kind: "trigger_auto_notify", Cancel: cancel,
-		Metadata: map[string]string{
-			"execution_type": "trigger-auto-notify",
-			"timeout":        timeout.String(),
-			"target_kind":    target.Kind,
-			"target_path":    target.Path,
-			"run_id":         runID,
-		},
-	})
-	registered := api.bgAgentRegistry.Get(sessionID, executionID)
-	if registered == nil || registered.GetStatus() == BGAgentCanceled {
-		cancel()
-		return "", fmt.Errorf("auto-notification could not be registered")
-	}
-	claims := &UserClaims{UserID: userID}
-	go func() {
-		defer cancel()
-		pollCtx := context.WithValue(runCtx, UserContextKey, claims)
-		header := fmt.Sprintf("%s %q run %s (trigger %s)", target.Kind, target.Label, runID, triggerID)
-		ticker := time.NewTicker(triggerTargetPollInterval)
-		defer ticker.Stop()
-		lastErr := error(nil)
-		for {
-			state, err := api.readTriggerTargetRun(pollCtx, userID, caller, target, triggerID, runID)
-			if err == nil && state.Terminal {
-				result := truncateTriggerTargetResult(state.Result)
-				if state.Failed {
-					notifier.OnExecutionComplete(executionID, name, result, nil, fmt.Errorf("%s ended %s: %s", header, state.Status, result))
-					return
-				}
-				if result == "" {
-					result = "(no final response recorded)"
-				}
-				notifier.OnExecutionComplete(executionID, name, header+" finished ("+state.Status+").\n\nFinal result:\n"+result, nil, nil)
-				return
-			}
-			lastErr = err
-			select {
-			case <-runCtx.Done():
-				detail := "it was still running"
-				if lastErr != nil {
-					detail = "last poll error: " + lastErr.Error()
-				}
-				if runCtx.Err() == context.DeadlineExceeded {
-					notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("%s did not finish within %s (%s); check it later with get_target_run", header, timeout, detail))
-				} else {
-					notifier.OnExecutionComplete(executionID, name, "", nil, context.Canceled)
-				}
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return executionID, nil
-}
-
-// registerTriggerLinkTools registers connect_to_target, call_target and
-// get_target_run for one calling Crew or workflow Builder chat.
-func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegistrar, userID, sessionID string, parentReq QueryRequest, resolveCaller func(context.Context) (triggerLinkCaller, error)) error {
-	if api == nil || api.scheduler == nil || api.productSchedules == nil {
-		return nil
-	}
-	claims := &UserClaims{UserID: strings.TrimSpace(userID)}
-	if record := directoryUserFor(userID, "", ""); record != nil {
-		claims.Username = record.Username
-		claims.Email = record.Email
-	}
-	withClaims := func(ctx context.Context) context.Context {
-		copy := *claims
-		return context.WithValue(ctx, UserContextKey, &copy)
-	}
-	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
-		return registrar.RegisterCustomTool(name, description, parameters, execute, "trigger_link_tools")
-	}
-	setup := func(ctx context.Context, args map[string]interface{}) (context.Context, triggerLinkCaller, triggerTarget, error) {
-		ctx = withClaims(ctx)
-		caller, err := resolveCaller(ctx)
-		if err != nil {
-			return ctx, triggerLinkCaller{}, triggerTarget{}, err
-		}
-		raw, _ := args["target"].(string)
-		target, err := resolveTriggerTarget(ctx, claims, raw)
-		if err != nil {
-			return ctx, caller, triggerTarget{}, err
-		}
-		if caller.isTarget(target) {
-			return ctx, caller, target, fmt.Errorf("a %s cannot call itself", target.Kind)
-		}
-		return ctx, caller, target, nil
-	}
-	targetSchema := map[string]interface{}{"type": "string", "description": "The Crew or workflow to call: its name, a #crew:<name> / #workflow:<name> tag from the user's message, or its exact workspace_path."}
-
-	if err := register("connect_to_target", "Connect this chat's Crew or workflow to another Crew or workflow so it can call it: reuses the target's internal trigger bound to this caller, or creates a standard one (no public URL or secret). To create a purpose-specific trigger on a target Crew, pass name and instructions (what that Crew should do whenever it is called); it appears in that Crew's own trigger list, named for and bound to this caller. Targets are any Crew on the server and workflows you own or can edit; creating new triggers on a Crew or reusing its existing ones is always allowed. Returns the trigger_id and the target's triggers this caller may use. Use when the user tags #crew:<name> or #workflow:<name> and asks to connect, link, or be able to call it.", map[string]interface{}{
-		"type": "object", "required": []string{"target"}, "properties": map[string]interface{}{
-			"target":          targetSchema,
-			"name":            map[string]interface{}{"type": "string", "description": "Crew targets only: name for a new purpose-specific trigger."},
-			"instructions":    map[string]interface{}{"type": "string", "description": "Crew targets only: standing instructions the target Crew follows on every call through this new trigger."},
-			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}, "description": "Crew targets only: crew_chat (default, the Crew's main chat) or isolated (a fresh chat per call)."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, caller, target, err := setup(ctx, args)
-		if err != nil {
-			return "", err
-		}
-		name, _ := args["name"].(string)
-		instructions, _ := args["instructions"].(string)
-		destination, _ := args["run_destination"].(string)
-		if target.Kind != triggerCallerCrew && (strings.TrimSpace(instructions) != "" || strings.TrimSpace(destination) != "") {
-			return "", fmt.Errorf("instructions and run_destination apply to Crew targets only; a workflow runs its own plan with the payload")
-		}
-		triggerID, created, err := api.connectTriggerTargetWith(ctx, userID, caller, target, name, instructions, destination)
-		if err != nil {
-			return "", err
-		}
-		callable, err := api.callableTargetTriggers(ctx, userID, caller, target)
-		if err != nil {
-			return "", err
-		}
-		encoded, err := json.MarshalIndent(map[string]interface{}{
-			"target": target.describe(), "trigger_id": triggerID, "created": created,
-			"callable_triggers": callable,
-			"next":              "Call it with call_target; the result comes back to this chat automatically.",
-		}, "", "  ")
-		return string(encoded), err
-	}); err != nil {
-		return err
-	}
-
-	if err := register("call_target", "Send a task to another Crew or workflow and return immediately with its run_id. Connects first when needed (see connect_to_target). A Crew target runs the task as a turn in its own Crew chat (queued if it is busy); a workflow target runs the workflow with the payload. Unless notify=false, this chat is resumed with an [AUTO-NOTIFICATION] carrying the target's final result, failure, or timeout: after calling, tell the user what was sent and end your turn instead of waiting. Poll early with get_target_run. Reuse delivery_id only when retrying the same request.", map[string]interface{}{
-		"type": "object", "required": []string{"target", "task"}, "properties": map[string]interface{}{
-			"target":          targetSchema,
-			"task":            map[string]interface{}{"type": "string", "description": "What the target should do, self-contained: it does not see this conversation."},
-			"payload":         map[string]interface{}{"type": "object", "description": "Optional extra JSON input (within 1 MiB)."},
-			"trigger_id":      map[string]interface{}{"type": "string", "description": "A trigger from connect_to_target's callable_triggers; omit to use the standard binding."},
-			"delivery_id":     map[string]interface{}{"type": "string", "description": "Idempotency key; reuse only to retry the same request."},
-			"notify":          map[string]interface{}{"type": "boolean", "description": "Resume this chat with the final result (default true)."},
-			"timeout_minutes": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": int(triggerTargetMaxTimeout / time.Minute), "description": "How long to wait for the result before notifying a timeout (default 60)."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, caller, target, err := setup(ctx, args)
-		if err != nil {
-			return "", err
-		}
-		task, _ := args["task"].(string)
-		if strings.TrimSpace(task) == "" {
-			return "", fmt.Errorf("task is required")
-		}
-		timeout, err := triggerTargetTimeout(args["timeout_minutes"])
-		if err != nil {
-			return "", err
-		}
-		notify := true
-		if value, ok := args["notify"].(bool); ok {
-			notify = value
-		}
-		triggerID, _ := args["trigger_id"].(string)
-		triggerID = strings.TrimSpace(triggerID)
-		if triggerID == "" {
-			triggerID, _, err = api.connectTriggerTarget(ctx, userID, caller, target)
-			if err != nil {
-				return "", err
-			}
-		}
-		body := map[string]interface{}{
-			"task": strings.TrimSpace(task),
-			"from": map[string]interface{}{"kind": caller.Stamp.Type, "name": caller.Label, "workspace_path": caller.Path},
-		}
-		if raw, ok := args["payload"]; ok && raw != nil {
-			typed, ok := raw.(map[string]interface{})
-			if !ok {
-				return "", fmt.Errorf("payload must be a JSON object")
-			}
-			body["payload"] = typed
-		}
-		data, err := json.Marshal(body)
-		if err != nil {
-			return "", fmt.Errorf("invalid payload")
-		}
-		deliveryID, _ := args["delivery_id"].(string)
-		if strings.TrimSpace(deliveryID) == "" {
-			deliveryID = "call-" + uuid.NewString()
-		}
-		var delivery internalTriggerDeliveryResult
-		switch target.Kind {
-		case triggerCallerCrew:
-			delivery, err = api.productSchedules.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
-				UserID: userID, ProfileID: target.CrewProfile, ProjectID: target.CrewID, TriggerID: triggerID,
-				Caller: caller.Stamp, DeliveryID: deliveryID, Event: triggerTargetEvent, Payload: data, CallerLabel: caller.Label,
-			})
-		case triggerCallerWorkflow:
-			delivery, err = api.scheduler.dispatchInternalWorkflowTrigger(ctx, internalWorkflowTriggerCall{
-				WorkflowID: target.Manifest.ID, TriggerID: triggerID, Caller: caller.Stamp,
-				DeliveryID: deliveryID, Event: triggerTargetEvent, Payload: data,
-			})
-		}
-		if err != nil {
-			return "", crewWorkflowRunError(err)
-		}
-		response := map[string]interface{}{
-			"target": target.describe(), "status": delivery.Status, "run_id": delivery.RunID,
-			"trigger_id": triggerID, "delivery_id": delivery.DeliveryID, "duplicate": delivery.Duplicate,
-		}
-		if notify {
-			executionID, watchErr := api.startTriggerTargetWatch(parentReq, sessionID, userID, caller, target, triggerID, delivery.RunID, timeout)
-			if watchErr != nil {
-				response["auto_notification"] = "unavailable: " + watchErr.Error() + "; poll with get_target_run"
-			} else {
-				response["auto_notification"] = map[string]interface{}{"execution_id": executionID, "timeout_minutes": int(timeout / time.Minute)}
-				response["next"] = "Tell the user what was sent and end your turn; the result arrives as an [AUTO-NOTIFICATION] in this chat."
-			}
-		}
-		encoded, err := json.MarshalIndent(response, "", "  ")
-		return string(encoded), err
-	}); err != nil {
-		return err
-	}
-
-	if err := register("send_to_target_run", "Send a follow-up message into a Crew run you started with call_target while it is still running, for extra details or a correction. The Crew receives it in its running chat: a live coding CLI takes it immediately, otherwise it runs right after the current turn. Workflow runs do not accept mid-run messages; start a new call_target instead.", map[string]interface{}{
-		"type": "object", "required": []string{"target", "trigger_id", "run_id", "message"}, "properties": map[string]interface{}{
-			"target":     targetSchema,
-			"trigger_id": map[string]interface{}{"type": "string", "description": "trigger_id from call_target."},
-			"run_id":     map[string]interface{}{"type": "string", "description": "run_id from call_target."},
-			"message":    map[string]interface{}{"type": "string", "description": "The follow-up message, self-contained."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, caller, target, err := setup(ctx, args)
-		if err != nil {
-			return "", err
-		}
-		triggerID, _ := args["trigger_id"].(string)
-		runID, _ := args["run_id"].(string)
-		message, _ := args["message"].(string)
-		if strings.TrimSpace(triggerID) == "" || strings.TrimSpace(runID) == "" || strings.TrimSpace(message) == "" {
-			return "", fmt.Errorf("trigger_id, run_id and message are required")
-		}
-		if target.Kind != triggerCallerCrew {
-			return "", fmt.Errorf("workflow runs do not accept mid-run messages; start a new call_target with the extra details")
-		}
-		result, err := api.sendToCrewTriggerRun(ctx, userID, caller, target, strings.TrimSpace(triggerID), strings.TrimSpace(runID), message)
-		if err != nil {
-			return "", err
-		}
-		encoded, err := json.MarshalIndent(result, "", "  ")
-		return string(encoded), err
-	}); err != nil {
-		return err
-	}
-
-	return register("get_target_run", "Check a run started by call_target: status, whether it has finished, its final result (a Crew's final answer, or a workflow's step outputs), and while a Crew is still working, a short tail of what it is doing (recent_activity) without interrupting it.", map[string]interface{}{
-		"type": "object", "required": []string{"target", "trigger_id", "run_id"}, "properties": map[string]interface{}{
-			"target":     targetSchema,
-			"trigger_id": map[string]interface{}{"type": "string", "description": "trigger_id from call_target."},
-			"run_id":     map[string]interface{}{"type": "string", "description": "run_id from call_target."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, caller, target, err := setup(ctx, args)
-		if err != nil {
-			return "", err
-		}
-		triggerID, _ := args["trigger_id"].(string)
-		runID, _ := args["run_id"].(string)
-		if strings.TrimSpace(triggerID) == "" || strings.TrimSpace(runID) == "" {
-			return "", fmt.Errorf("trigger_id and run_id are required")
-		}
-		state, err := api.readTriggerTargetRun(ctx, userID, caller, target, strings.TrimSpace(triggerID), strings.TrimSpace(runID))
-		if err != nil {
-			return "", err
-		}
-		out := map[string]interface{}{
-			"target": target.describe(), "run_id": strings.TrimSpace(runID), "status": state.Status,
-			"terminal": state.Terminal, "failed": state.Failed, "result": truncateTriggerTargetResult(state.Result),
-		}
-		// What the Crew is doing right now, read from its session events
-		// without interrupting it.
-		if !state.Terminal && target.Kind == triggerCallerCrew {
-			if activity := api.crewFunctionActivity(crewTargetRunSessionID(state)); activity != nil {
-				out["recent_activity"] = activity
-			}
-		}
-		encoded, err := json.MarshalIndent(out, "", "  ")
-		return string(encoded), err
-	})
-}
-
 // sendToCrewTriggerRun delivers a follow-up message from the caller into the
-// Crew conversation running the caller's triggered task. It goes through the
-// same /api/query handling as a person typing into that chat: a live coding
-// CLI takes it as steering input, otherwise it waits in the durable turn queue
-// and runs right after the current turn. Only crew_chat triggers qualify (an
-// isolated trigger has no shared conversation to address), and only while the
-// run is still running.
+// Crew conversation running the caller's call. It goes through the same
+// /api/query handling as a person typing into that chat: a live coding CLI
+// takes it as steering input, otherwise it waits in the durable turn queue and
+// runs right after the current turn. Only while the run is still running.
 func (api *StreamingAPI) sendToCrewTriggerRun(ctx context.Context, userID string, caller triggerLinkCaller, target triggerTarget, triggerID, runID, message string) (map[string]interface{}, error) {
 	status, err := api.productSchedules.getInternalProductTriggerRun(ctx, userID, target.CrewProfile, target.CrewID, triggerID, runID, caller.Stamp)
 	if err != nil {
 		return nil, crewWorkflowRunError(err)
 	}
 	if status.Terminal {
-		return nil, fmt.Errorf("run %s already finished (%s); send a new task with call_target", runID, status.Status)
+		return nil, fmt.Errorf("run %s already finished (%s); make a new call_function call", runID, status.Status)
 	}
 	if strings.TrimSpace(status.SessionID) == "" || !strings.EqualFold(status.Status, "running") {
-		return nil, fmt.Errorf("run %s has not started yet (%s); wait for it to start or put the details in a new call_target task", runID, status.Status)
+		return nil, fmt.Errorf("run %s has not started yet (%s); wait for it to start or put the details in a new call", runID, status.Status)
 	}
-	profile, binding, _, trigger, err := api.productSchedules.findInternalProductTrigger(ctx, userID, target.CrewProfile, target.CrewID, triggerID)
+	profile, binding, manifest, trigger, err := api.productSchedules.findInternalProductTrigger(ctx, userID, target.CrewProfile, target.CrewID, triggerID)
 	if err != nil {
 		return nil, crewWorkflowRunError(err)
-	}
-	if strings.EqualFold(strings.TrimSpace(trigger.RunDestination), runDestinationIsolated) {
-		return nil, fmt.Errorf("this trigger runs each call in its own isolated chat; mid-run messages need a crew_chat trigger")
 	}
 	ownerID := userID
 	if owner, ok := crewProjectOwnerID(binding.WorkspacePath); ok {
 		ownerID = owner
 	}
-	conversationBinding, err := resolveProductConversationBinding(ctx, ownerID, profile, target.CrewID)
+	var conversationBinding productConversationBinding
+	if trigger.ownConversation() {
+		conversationBinding, err = resolveIsolatedProjectAutomationBinding(ctx, ownerID, profile, target.CrewID, "trigger", trigger.ID, manifest.Title+" · "+trigger.Name)
+	} else {
+		conversationBinding, err = resolveProductConversationBinding(ctx, ownerID, profile, target.CrewID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("Crew conversation is unavailable: %w", err)
 	}
@@ -689,7 +332,7 @@ func (api *StreamingAPI) sendToCrewTriggerRun(ctx context.Context, userID string
 		return nil, fmt.Errorf("Crew conversation is unavailable: %w", err)
 	}
 	if conversation.SessionID != status.SessionID {
-		return nil, fmt.Errorf("the Crew's chat has moved to a new conversation since run %s started; send a new task with call_target", runID)
+		return nil, fmt.Errorf("the Crew's conversation has moved to a new session since run %s started; make a new call", runID)
 	}
 	framed := fmt.Sprintf("[Follow-up from %s %q about its task in run %s]\n\n%s", caller.Stamp.Type, caller.Label, runID, strings.TrimSpace(message))
 	req, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{Message: framed}, conversation)
@@ -724,7 +367,7 @@ func (api *StreamingAPI) sendToCrewTriggerRun(ctx context.Context, userID string
 	delivery := firstNonEmptyTrimmed(response.DeliveryStatus, response.Status, "accepted")
 	return map[string]interface{}{
 		"target": target.describe(), "run_id": runID, "delivery_status": delivery,
-		"note": "Delivered into the Crew's running conversation. If it was queued, it runs right after the current turn and its answer appears in that Crew's chat; the auto-notification reports the triggered task's own final answer.",
+		"note": "Delivered into the Crew's running conversation with you. If it was queued, it runs right after the current turn; the call's own result still arrives as usual.",
 	}, nil
 }
 

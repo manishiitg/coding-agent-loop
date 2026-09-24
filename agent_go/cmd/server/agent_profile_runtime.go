@@ -681,9 +681,6 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		}
 		// Crew Run-mode readers never trigger other Crews or workflows.
 		if !readOnly {
-			if err := api.registerTriggerLinkTools(registrar, userID, sessionID, QueryRequest{SelectedFolder: workspacePath}, crewTriggerLinkCaller(workspacePath)); err != nil {
-				return err
-			}
 			// Typed functions (PLAT-357): generated per-function tools for the
 			// Crews/workflows tagged in this message or attached to the Crew.
 			functionReq := QueryRequest{SelectedFolder: workspacePath}

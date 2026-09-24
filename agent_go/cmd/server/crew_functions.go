@@ -21,7 +21,7 @@ import (
 // call_function (or a generated per-function tool). Arguments and results
 // are validated against the declared schemas. A call rides the existing
 // internal-trigger binding (see trigger_link_tools.go), so it gets the same
-// durable run, turn queue, and auto-notification path as call_target.
+// durable run, turn queue, and auto-notification path as any internal trigger.
 
 const (
 	crewFunctionsFileName          = "functions.json"

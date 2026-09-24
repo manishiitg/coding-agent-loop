@@ -73,9 +73,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	// workflow→workflow) under the same interactive authoring gate as
 	// trigger management.
 	if policy.Mode == "builder" && policy.Origin == "interactive" && policy.allows("plan_authoring") {
-		if err := api.registerTriggerLinkTools(definitionAgent, userID, sessionID, syntheticReq, workflowTriggerLinkCaller(phaseWorkspacePath)); err != nil {
-			return err
-		}
 		if err := api.registerCrewFunctionTools(definitionAgent, userID, sessionID, syntheticReq, workflowTriggerLinkCaller(phaseWorkspacePath), nil); err != nil {
 			return err
 		}

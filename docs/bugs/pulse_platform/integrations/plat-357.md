@@ -5,10 +5,41 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `vertical slice on main; not deployed; live RTS check pending` |
+| Ticket state | `one call model (functions + per-caller conversations) on main; not deployed; live RTS check pending` |
 | Last synchronized | `2026-09-24` |
 | Priority | `P1 product` |
 | Category | integrations (runner-up: scheduler-runs) |
+
+## 2026-09-24 — one call model
+
+Crew-to-Crew calling had grown five overlapping ideas: `crew_chat` vs
+`isolated` run destinations, fresh-per-call isolated trigger chats, free-form
+`call_target`, typed functions and the default `ask`. They are now one model
+(user doc: [docs/crew-calls.md](../../../crew-calls.md)):
+
+- **One way to call:** functions. `ask` covers free-form tasks; typed
+  functions add validated inputs and results. `connect_to_target`,
+  `call_target`, `get_target_run` and `send_to_target_run` are removed;
+  `ask_function_update` carries mid-run follow-ups.
+- **One place calls run:** each caller's own continuing conversation with the
+  target Crew. An internal trigger (caller binding) always runs there
+  (`productWebhookTrigger.ownConversation`), whatever `run_destination` it
+  was saved with, and it is keyed by trigger ID only. The per-run
+  `triggerID:runID` suffix (`isolatedAutomationID`) is removed, so a caller's
+  follow-up calls remember earlier ones. The Crew's main chat is for people.
+- **External webhooks and schedules** keep the main chat / own conversation
+  choice. A webhook's own conversation now also continues across deliveries
+  instead of starting fresh each time.
+- **UI:** the Triggers tab is now **Webhooks** (external only), and caller
+  bindings are listed under **Functions → Callers** with Disconnect.
+  Destination labels read "Main chat" / "Own conversation".
+- **MCP/CLI:** each AgentWorks user's `ask_crew` calls continue one
+  conversation with that Crew, so an external tool can chat with a Crew.
+
+Migration: none needed. Existing caller bindings saved as `crew_chat` are
+routed to their own conversation at dispatch. Old per-run isolated trigger
+chats stay in history. Deferred: an optional one-line summary of each
+finished call in the Crew's main chat.
 
 ## Problem
 

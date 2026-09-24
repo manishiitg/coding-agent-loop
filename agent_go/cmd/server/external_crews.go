@@ -208,7 +208,8 @@ func (api *StreamingAPI) externalCrewCall(w http.ResponseWriter, r *http.Request
 			externalError(w, 404, "not_found", fmt.Sprintf("Crew %q has no function %q; see list_crew_functions.", label, fnName))
 			return
 		}
-		// The call outlives this request; the Crew works in its own chat.
+		// The call outlives this request; the Crew works in this user's own
+		// conversation with it.
 		callCtx := context.WithoutCancel(ctx)
 		call, err := api.startCrewFunctionCall(callCtx, claims.UserID, externalCrewCaller(claims), target, fn, callArgs, externalCrewCallTimeout)
 		if err != nil {

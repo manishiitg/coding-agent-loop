@@ -59,7 +59,7 @@ To run: call a run-mode tool such as `+"`execute_step`"+` — the reply carries 
 
 ## Crews
 
-Crews are persistent AgentWorks agents. Discover them with `+"`list_crews`"+` (IDs, never paths); `+"`get_crew`"+` shows identity, model, and functions. Read project files with `+"`list_crew_files`"+` / `+"`read_crew_file`"+`. Call a Crew's typed functions with `+"`call_crew_function`"+` (arguments must match `+"`list_crew_functions`"+`), or ask anything with `+"`ask_crew`"+`. Both run as a turn in the Crew's own chat: the result returns within `+"`wait_seconds`"+` (max 25), otherwise poll `+"`get_crew_function_call`"+` with the returned `+"`call_id`"+`.
+Crews are persistent AgentWorks agents. Discover them with `+"`list_crews`"+` (IDs, never paths); `+"`get_crew`"+` shows identity, model, and functions. Read project files with `+"`list_crew_files`"+` / `+"`read_crew_file`"+`. Call a Crew's typed functions with `+"`call_crew_function`"+` (arguments must match `+"`list_crew_functions`"+`), or ask anything with `+"`ask_crew`"+`. Both run in your own continuing conversation with that Crew (one per AgentWorks user; never the Crew's main chat), so repeated `+"`ask_crew`"+` calls are a chat: the Crew remembers your earlier asks. The result returns within `+"`wait_seconds`"+` (max 25), otherwise poll `+"`get_crew_function_call`"+` with the returned `+"`call_id`"+`.
 
 ## Answer from reading
 

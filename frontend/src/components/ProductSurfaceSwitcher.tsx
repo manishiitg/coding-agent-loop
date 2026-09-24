@@ -29,7 +29,7 @@ const products: Array<{
   { id: 'video-studio', label: 'Video Studio', description: 'Projects and video production', icon: VideoStudioMark },
   { id: 'dominion', label: 'Dominion', description: 'Paper-trading watchlist and portfolio', icon: DominionMark },
   { id: 'sparkquill', label: 'SparkQuill', description: 'Family learning with Quill', icon: SparkQuillMark },
-  { id: 'work', label: 'Crew', description: 'Specialist agents with their own memory and skills that talk to each other to do large tasks', icon: WorkMark },
+  { id: 'work', label: 'Crew', description: 'Specialist agents with their own memory and skills, working together', icon: WorkMark },
 ]
 
 export function visibleProductSurfaceIDs(allowedProducts?: string[] | null): ProductSurface[] {

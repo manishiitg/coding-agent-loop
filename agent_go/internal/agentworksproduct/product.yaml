@@ -363,6 +363,12 @@ chat:
       - run_status
       - chat
       - run_reply_input
+      # Crews (crews:read / crews:run, bounded by the token's Crew list).
+      - list_crews
+      - get_crew
+      - list_crew_files
+      - read_crew_file
+      - list_crew_functions
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

@@ -47,6 +47,7 @@ var cliOperationGroups = []struct {
 	{"chat", "Chat with the workflow assistant", []struct{ command, tool string }{{"ask", "chat"}}},
 	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
 	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
+	{"crews", "Discover Crews and read their files and functions", []struct{ command, tool string }{{"list", "list_crews"}, {"get", "get_crew"}, {"files", "list_crew_files"}, {"read", "read_crew_file"}, {"functions", "list_crew_functions"}}},
 }
 
 func main() {
@@ -388,8 +389,12 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	f.String("input", "", "Tool arguments as a JSON object from a file, or - for stdin")
 	// Global guidance topics accept no workflow_id; offering the flag would
 	// only produce an avoidable invalid_arguments response.
-	if tool != "list_workflows" && tool != "list_guidance_topics" && tool != "get_guidance_topic" {
+	crewTool := strings.Contains(tool, "crew")
+	if tool != "list_workflows" && tool != "list_guidance_topics" && tool != "get_guidance_topic" && !crewTool {
 		f.String("workflow", "", "Workflow ID (workflow_id)")
+	}
+	if crewTool && tool != "list_crews" {
+		f.String("crew", "", "Crew ID from crews list (crew_id)")
 	}
 	if tool == "" {
 		f.String("expected-revision", "", "Revision from read_file/get_plan (reserved for a future write-enabled API)")
@@ -414,7 +419,7 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool == "list_step_code" {
 		f.String("step-id", "", "Optional plan step ID to inventory")
 	}
-	if tool == "search_files" || tool == "list_workflows" {
+	if tool == "search_files" || tool == "list_workflows" || tool == "list_crews" {
 		f.String("query", "", "Search query")
 	}
 	if tool == "get_run" || tool == "get_logs" {
@@ -493,7 +498,7 @@ func operationArguments(cmd *cobra.Command, stdin io.Reader) (map[string]any, er
 			return nil, errors.New("--input must contain exactly one JSON object")
 		}
 	}
-	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "glob": "glob", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic", "step-id": "step_id", "execution-id": "execution_id", "schedule-id": "schedule_id", "group": "group_name", "human-input": "human_input", "tier": "tier"} {
+	for flagName, field := range map[string]string{"workflow": "workflow_id", "crew": "crew_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "glob": "glob", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic", "step-id": "step_id", "execution-id": "execution_id", "schedule-id": "schedule_id", "group": "group_name", "human-input": "human_input", "tier": "tier"} {
 		if cmd.Flags().Changed(flagName) {
 			value, _ := cmd.Flags().GetString(flagName)
 			arguments[field] = value

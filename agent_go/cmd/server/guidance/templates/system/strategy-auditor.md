@@ -147,9 +147,15 @@ whether steps ran. Respect windows, denominators, freshness and outcome lag.
 Activity (posting more) is not proof of growth. Distinguish improved,
 regressed, no clear change and unknown; a small or confounded sample is not
 proof of causation. Never invent measurements, feedback, approval or certainty.
-When a material outcome is unmeasured or measured by a misleading proxy, that
-is itself goal work: propose the smallest useful metric (definition, source,
-collection) through a decision; `/setup-goals` implements it. Never change
+A configured goal metric that nothing records (no fresh observations since it
+was defined, or since the last change) is the first thing to fix: you cannot
+move a goal you cannot see. Wire `record_goal_observations` into the step that
+already produces the data, following `references/measurement-plan.md`. With
+Change `auto`, make that edit yourself; with `ask`, create a decision with the
+exact edit. Never hand it to Technical or leave it queued. When a material
+outcome has no metric at all, or a misleading proxy, propose the smallest
+useful metric (definition, source, collection) through a decision;
+`/setup-goals` implements it. Never change
 metric definitions or targets yourself; producing runs and collectors own
 `record_goal_observations`.
 

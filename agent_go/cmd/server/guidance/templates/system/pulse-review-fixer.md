@@ -417,7 +417,16 @@ the active register so they cannot wait silently. If no repair was applied,
 keep the issue open or use `queued_for_engineering` when a safe repair exists.
 `queued_for_engineering` means a safe workflow repair exists but was not chosen
 for this pass. It remains on Gate's active queue and requires `next_check`
-naming the next Engineering/Pulse pass. Never call deferred, deprioritized, or
+naming the next Engineering/Pulse pass. An issue may be queued at most once:
+when the backlog shows `times_deferred` of 1 or more, repair it in this pass,
+or, only if the fix genuinely needs the user's choice, create a decision with
+the exact proposed change so it appears in Needs you. Never queue it again.
+Never queue at all an issue that blinds the goal (goal metrics not recorded,
+measurement dark) or stops the workflow's main output: repair those first in
+this pass, ahead of everything else. A missing recurring step, collector or
+tool call is a workflow-owned repair made with the typed Builder tools (see
+`references/measurement-plan.md` for goal observations), not an ownership
+question to leave open. Never call deferred, deprioritized, or
 unattempted work `blocked`. `blocked` is only for a genuine current condition
 with no safe action at all.
 

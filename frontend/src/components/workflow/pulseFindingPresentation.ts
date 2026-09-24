@@ -184,10 +184,13 @@ export function pulseFindingPresentation(finding: PulseFindingLifecycle): PulseF
     const missingDecisionRequest = finding.events.some((event) => (
       event.event_type === 'decision_request_missing'
     ))
+    // Pulse may defer an issue once; repeated deferral means it is stuck.
+    const timesDeferred = finding.events.filter(event => event.event_type === 'queued_for_engineering').length
+    const stuck = timesDeferred > 1
     return {
-      label: missingDecisionRequest ? 'Decision request missing' : 'Queued for Pulse',
+      label: missingDecisionRequest ? 'Decision request missing' : stuck ? `Deferred ${timesDeferred}×` : 'Queued for Pulse',
       queue: 'queued_repair',
-      tone: missingDecisionRequest ? 'danger' : 'info',
+      tone: missingDecisionRequest || stuck ? 'danger' : 'info',
       nextAction: finding.resolution_note?.trim() || (missingDecisionRequest
         ? 'Pulse must re-review this finding and create a linked, answerable decision only if one is still needed.'
         : finding.details?.next_check?.trim()

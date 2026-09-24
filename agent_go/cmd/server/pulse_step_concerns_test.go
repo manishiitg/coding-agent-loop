@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 func TestParseStepConcernLines(t *testing.T) {
@@ -149,5 +152,19 @@ func TestCollectStepOutputsLinesUpEachStepsLatestRuns(t *testing.T) {
 	}
 	if only := collectStepOutputs("Workflow/example", "collect"); len(only.Steps) != 1 || only.Steps[0].Runs[0].Result != "wrote 4 rows" {
 		t.Fatalf("step filter = %+v", only)
+	}
+}
+
+func TestPulseBacklogShowsHowOftenAnIssueWasDeferred(t *testing.T) {
+	queued := step_based_workflow.PulseFindingEvent{EventType: step_based_workflow.ConcernStatusQueuedForEngineering}
+	fresh := step_based_workflow.PulseFindingLifecycle{Fingerprint: "a", Kind: step_based_workflow.PulseFindingKindIssue, Status: "open"}
+	stuck := step_based_workflow.PulseFindingLifecycle{Fingerprint: "b", Kind: step_based_workflow.PulseFindingKindIssue, Status: "queued_for_engineering",
+		Events: []step_based_workflow.PulseFindingEvent{queued, {EventType: "observed_again"}, queued, queued}}
+	cards := pulseLifecycleAgentProjection([]step_based_workflow.PulseFindingLifecycle{fresh, stuck}, "issue_id")
+	if _, ok := cards[0]["times_deferred"]; ok {
+		t.Fatalf("a never-deferred issue should carry no deferral count: %+v", cards[0])
+	}
+	if cards[1]["times_deferred"] != 3 || !strings.Contains(cards[1]["deferral_note"].(string), "Do not queue it again") {
+		t.Fatalf("deferred issue card = %+v", cards[1])
 	}
 }

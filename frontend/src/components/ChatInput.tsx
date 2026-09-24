@@ -42,7 +42,7 @@ import { captureChatDraft, updateOwnedChatDraft } from '../utils/chatDraftOwners
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import type { ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
-import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
+import { shouldHoldSendInBrowser, chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock, runtimeStatusLLMChoice } from '../utils/effectiveLLM'
 import { normalizeEventViewMode, type ChatTabConfig } from '../stores/useChatStore'
 import { getComposerTrigger, replaceComposerTrigger, formatFileReference, removeFileReferences, reconcileFileReferences, isPlainPickerKey, type ComposerTrigger } from '../utils/composerReferences'
@@ -2212,17 +2212,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    // A retained CLI is explicitly designed to receive input while busy, so it
-    // continues into the live-delivery branch below. Structured workflow-step
-    // turns never satisfy routeLiveInputToCLI and remain queued.
-    if (isStreaming && !routeLiveInputToCLI) {
+    // Once a chat has a session, every send goes to the server: its durable
+    // conversation-turn dispatcher (PLAT-178) decides whether to deliver into
+    // the running CLI, queue for the next turn, or start one. Holding a message
+    // in this browser because the tab *believes* a turn is streaming stranded
+    // sends whenever that belief went stale (e.g. the event stream dropped
+    // during a server restart). The local queue is only for a chat that has no
+    // session yet.
+    const sendToServer = routeLiveInputToCLI || Boolean(tabSessionId)
+    if (shouldHoldSendInBrowser({ isStreaming, routeLiveInputToCLI, hasSession: Boolean(tabSessionId) })) {
       clearInputState()
       queueStreamingMessage(query)
       addToast('Agent is busy — message queued for the next turn', 'info')
       return
     }
 
-    if (routeLiveInputToCLI) {
+    if (sendToServer) {
       if (hasSubmitTarget) {
         const submittedTabId = activeTabId || undefined
         const submittedDraft = {
@@ -2291,7 +2296,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, onSubmit, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
+  }, [routeLiveInputToCLI, tabSessionId, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, onSubmit, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
 
   // SparkQuill's voice auto-send: handleVoiceText already merged the
   // transcript into localInputText, but queryToSubmit (which also layers in

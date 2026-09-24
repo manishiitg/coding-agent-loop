@@ -218,6 +218,8 @@ const ROOT_FOLDER_CACHE_KEY = '__root__'
 const FILE_TREE_CACHE_LIMIT = 2
 const fileTreeCache = new Map<string, FileTreeCacheEntry>()
 
+const ROOT_FILE_TREE_MAX_DEPTH = 2
+
 function getFileTreeCacheKey(folder: string | undefined, maxDepth?: number): string {
   return `${folder ?? ROOT_FOLDER_CACHE_KEY}::${maxDepth ?? 'full'}`
 }
@@ -600,6 +602,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         // When an explicit folder IS passed (including undefined from Workspace.tsx chat mode),
         // callers who want to update the scope should call setActiveFolder() separately.
         const effectiveFolder = folder ?? get().activeFolder ?? undefined
+        // Never walk the whole workspace root: on a shared server it holds
+        // every user's files (RTS: 652k files, 11-36 s per request, slowing
+        // every other request on page open). A root request is capped at two
+        // levels; deeper folders load when opened.
+        if (!effectiveFolder && options?.maxDepth === undefined) {
+          options = { ...options, maxDepth: ROOT_FILE_TREE_MAX_DEPTH }
+        }
         const requestKey = getFileTreeCacheKey(effectiveFolder, options?.maxDepth)
 
         const applyProcessedFiles = (processedFiles: PlannerFile[]) => {

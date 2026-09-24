@@ -16,6 +16,7 @@ These docs describe platform subsystems that cut across workflow and multi-agent
 - `bot_connector_system.md`
 - [Combined bot connector guide and review](bot_connectors_combined.md): current architecture, configuration, Slack setup, lifecycle, and verified documentation gaps.
 - `browser.md`
+- [Coding CLI turn signals](coding_cli_turn_signals.md): where each CLI's intake, completion and final answer come from; steering; background subagents.
 - [Coding CLI updates](coding-cli-updates.md): daily checks, persisted status, and per-chat release selection.
 - `coding_agent_builder_e2e_contract.md`
 - [Coding CLI onboarding contract review](coding_cli_onboarding_contract_review.md): implementation map, P0/P1 enforcement findings, new-provider checklist, and proposed registration consolidation.

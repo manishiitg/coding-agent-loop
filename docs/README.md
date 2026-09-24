@@ -78,6 +78,8 @@ this is the complete map.
 - [Bot Connector System](core/bot_connector_system.md)
 - [Bot Connectors: Architecture, Configuration, and Review](core/bot_connectors_combined.md)
 - [Browser Automation](core/browser.md)
+- [Coding CLI turn signals](core/coding_cli_turn_signals.md)
+- [Native agent tools](design/native_agent_tools.md)
 - [Coding CLI updates](core/coding-cli-updates.md)
 - [Coding Agent Builder E2E Contract](core/coding_agent_builder_e2e_contract.md)
 - [Coding Agent Continuation Architecture](core/coding_agent_continuation_architecture.md)

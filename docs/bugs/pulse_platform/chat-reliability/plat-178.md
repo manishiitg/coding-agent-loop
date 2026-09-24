@@ -855,3 +855,19 @@ check before this recurrence can be closed.
   timestamped after `13:51:26` local (36 user, 63 assistant, 37 attachment,
   16 queue-operation, 3 system), ending `15:19:59` local, proving the
   "lost" conversation was fully intact and just unread by the restore path.
+
+## 2026-09-24 — a Claude live input that never reached the CLI
+
+RTS 13:20 UTC, Work project chat: the server pasted a three-line message into
+Claude's tmux pane, but Claude never submitted it. The text vanished and the
+composer was left holding two blank lines. The draft check reads only the `❯`
+line, so it saw nothing; the durable watch correctly marked the message failed
+60 s later (red "!"). The re-send was recorded with two leading newlines.
+
+Fixes:
+- **multi-llm 89a7c49:** when the submit check runs out of retries, Claude's
+  transcript decides. If there is no user or queue row for the send within
+  6 s, the composer is emptied and the message sent once more in the same
+  input slot. Blank lines are also cleared before every paste.
+- **Frontend:** a failed message now shows "Not delivered · Resend" next to
+  it; Resend sends the same text through the chat's normal send path.

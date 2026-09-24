@@ -216,6 +216,18 @@ in shared AgentWorks code. A feature correction made for chat, browser,
 automation, files, database, Dashboard, costs, bots, skills, secrets, MCP, or
 split-pane behavior should normally fix AgentWorks and Crew together.
 
+**Split pane preview devices** (shared by AgentWorks and Crew). The divider
+between chat and the workspace panel has three preview buttons:
+
+- **Mobile:** the workspace panel is a phone-width column (the 480px report
+  frame plus padding) and chat takes the rest. The divider does not drag.
+- **Tablet:** an even split by default; drag to resize.
+- **Laptop:** a compact chat beside the full-width workspace; drag to resize.
+
+Tablet and Laptop remember the dragged width per workflow and device. Mobile
+ignores any saved width so the phone frame never floats in a wide panel
+(`workspaceLayoutResolver.ts`, `workSurfaceLayoutResolver.ts`).
+
 Before adding Work-specific code, check whether AgentWorks already provides the capability. Prefer configuration, composition, small adapters, and additional props over copied components or forked services. If a reusable primitive is missing, extract it into the shared platform rather than placing a generic implementation under `products/work`.
 
 Reuse existing AgentWorks infrastructure wherever its data model fits Work:

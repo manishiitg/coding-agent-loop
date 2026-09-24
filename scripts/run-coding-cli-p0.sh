@@ -102,6 +102,17 @@ if [[ -z "${MCP_API_TOKEN:-}" ]]; then
   exit 1
 fi
 
+# The workflow contract runs the orchestrator in this process, and its shell
+# tool calls the workspace server's execution routes, which require the
+# server's WORKSPACE_API_TOKEN. run_server_with_logging.sh generates a random
+# one unless it is already set, so without the same value here every workflow
+# step's shell call fails with "workspace execution authorization required".
+if [[ -z "${WORKSPACE_API_TOKEN:-}" ]]; then
+  echo "Live P0 requires WORKSPACE_API_TOKEN to match the live workspace server's." >&2
+  echo "Start the isolated server with WORKSPACE_API_TOKEN set (run_server_with_logging.sh keeps a preset value), then run this command with the same value." >&2
+  exit 1
+fi
+
 # Resolve the release matrix once from the SDK registry: provider set and test
 # packages both derive from registered P0 proofs, so onboarding a provider
 # cannot silently skip it. A resolution failure aborts the run loudly.

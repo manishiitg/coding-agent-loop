@@ -6,7 +6,8 @@ labels: qa
 ---
 
 QA sign-off for <one line: what shipped and who it affects>.
-Commits: <hash> (<short what>), <hash> (<short what>)
+Read the docs below first: they describe how the feature should behave.
+Docs: [<doc title>](https://github.com/manishiitg/coding-agent-loop/blob/main/docs/<path>.md) — <what it covers>
 Needs: <server restart / browser refresh / a workflow with X>, or "nothing".
 Check boxes as you verify; post failures as comments with repro steps.
 

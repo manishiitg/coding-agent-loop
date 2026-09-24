@@ -50,6 +50,7 @@ func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) 
 		"codex-cli":   "gpt-6-luna",
 		"cursor-cli":  "auto",
 		"claude-code": "claude-sonnet-5",
+		"muse-cli":    "muse-spark-1.3-contributor",
 	}
 
 	for provider, want := range tests {

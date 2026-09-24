@@ -299,7 +299,7 @@ func TestCrewFunctionRunWithoutResultRetriesThenFails(t *testing.T) {
 		t.Fatal("call did not fail after the retry")
 	}
 	snapshot := call.snapshot()
-	if snapshot["status"] != "failed" || !strings.Contains(snapshot["error"].(string), "without returning a valid result") || !strings.Contains(snapshot["error"].(string), "Still no result") {
+	if snapshot["status"] != "failed" || !strings.Contains(snapshot["error"].(string), "without returning a valid result") || snapshot["final_reply"] != "Still no result, sorry." {
 		t.Fatalf("snapshot = %v", snapshot)
 	}
 }
@@ -478,5 +478,31 @@ func TestCrewFunctionsHTTPListAndDelete(t *testing.T) {
 		if recorder.Code != tc.code {
 			t.Fatalf("delete %s = %d, want %d: %s", tc.name, recorder.Code, tc.code, recorder.Body.String())
 		}
+	}
+}
+
+func TestCrewFunctionFreeTextAnswerNeverRejectsStructuredAnswers(t *testing.T) {
+	schema := map[string]interface{}{"type": "object", "required": []interface{}{"answer"}, "properties": map[string]interface{}{"answer": map[string]interface{}{"type": "string"}}}
+	for _, in := range []interface{}{
+		map[string]interface{}{"answer": "plain"},
+		map[string]interface{}{"answer": map[string]interface{}{"WEB-1764": "PASS", "video": "https://x/v.mp4"}},
+		map[string]interface{}{"tickets": []interface{}{"WEB-1764"}},
+		"bare text",
+	} {
+		out := crewFunctionFreeTextAnswer(in)
+		if problems := validateCrewFunctionValue(schema, out); len(problems) > 0 {
+			t.Fatalf("%v -> %v rejected: %v", in, out, problems)
+		}
+	}
+	got := crewFunctionFreeTextAnswer(map[string]interface{}{"answer": map[string]interface{}{"video": "https://x/v.mp4"}}).(map[string]interface{})["answer"].(string)
+	if !strings.Contains(got, "https://x/v.mp4") {
+		t.Fatalf("structured answer lost its content: %q", got)
+	}
+}
+
+func TestCrewFunctionFailureDetailKeepsPartialWork(t *testing.T) {
+	detail := crewFunctionFailureDetail(map[string]interface{}{"partial_result": map[string]interface{}{"video": "https://x/v.mp4"}, "final_reply": "1764 PASS"})
+	if !strings.Contains(detail, "https://x/v.mp4") || !strings.Contains(detail, "1764 PASS") {
+		t.Fatalf("failure detail dropped the target's work: %q", detail)
 	}
 }

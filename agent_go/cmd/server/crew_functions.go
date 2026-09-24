@@ -230,7 +230,12 @@ type crewFunctionCall struct {
 	Error          string                 `json:"error,omitempty"`
 	Progress       []crewFunctionProgress `json:"progress,omitempty"`
 	InvalidResults int                    `json:"invalid_results,omitempty"`
-	Retried        bool                   `json:"retried,omitempty"`
+	// PartialResult / FinalReply keep what the target actually produced when
+	// the call fails on the result contract, so the caller never loses real
+	// work (e.g. test outcomes and video links) to a formatting mistake.
+	PartialResult interface{} `json:"partial_result,omitempty"`
+	FinalReply    string      `json:"final_reply,omitempty"`
+	Retried       bool        `json:"retried,omitempty"`
 	// FreeText marks the implicit ask: the result is the target's final
 	// reply ({"answer": ...}) and return_function_result is optional.
 	FreeText     bool                   `json:"free_text,omitempty"`
@@ -292,7 +297,49 @@ func (c *crewFunctionCall) snapshot() map[string]interface{} {
 	if c.Error != "" {
 		out["error"] = c.Error
 	}
+	if c.PartialResult != nil {
+		out["partial_result"] = c.PartialResult
+	}
+	if c.FinalReply != "" {
+		out["final_reply"] = c.FinalReply
+	}
 	return out
+}
+
+// crewFunctionFreeTextAnswer normalises an ask result to {"answer": text}:
+// a string answer passes through; any other answer (or a bare value) is kept
+// verbatim as indented JSON text.
+func crewFunctionFreeTextAnswer(result interface{}) interface{} {
+	asText := func(value interface{}) string {
+		if text, ok := value.(string); ok {
+			return text
+		}
+		encoded, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			return fmt.Sprint(value)
+		}
+		return string(encoded)
+	}
+	if object, ok := result.(map[string]interface{}); ok {
+		if answer, has := object["answer"]; has && len(object) == 1 {
+			return map[string]interface{}{"answer": asText(answer)}
+		}
+	}
+	return map[string]interface{}{"answer": asText(result)}
+}
+
+// crewFunctionFailureDetail renders what a failed call still produced, for
+// the caller's auto-notification.
+func crewFunctionFailureDetail(snapshot map[string]interface{}) string {
+	var detail strings.Builder
+	if partial, ok := snapshot["partial_result"]; ok && partial != nil {
+		encoded, _ := json.MarshalIndent(partial, "", "  ")
+		detail.WriteString("\n\nThe target's last (non-conforming) result — its work is not lost:\n" + truncateTriggerTargetResult(string(encoded)))
+	}
+	if reply, _ := snapshot["final_reply"].(string); strings.TrimSpace(reply) != "" {
+		detail.WriteString("\n\nThe target's final reply:\n" + truncateTriggerTargetResult(reply))
+	}
+	return detail.String()
 }
 
 // persist keeps a JSON copy next to the target's functions, so
@@ -562,7 +609,10 @@ func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFu
 	if retried {
 		reason := "the target finished without returning a valid result"
 		if final := strings.TrimSpace(state.Result); final != "" {
-			reason += "; its final answer was: " + truncateTriggerTargetResult(final)
+			call.mu.Lock()
+			call.FinalReply = final
+			call.mu.Unlock()
+			reason += "; its final reply is included"
 		}
 		return call.finish("failed", nil, reason)
 	}
@@ -636,7 +686,7 @@ func (api *StreamingAPI) startCrewFunctionWatch(parentReq QueryRequest, sessionI
 		header := fmt.Sprintf("Function call %s (%s %q, %s)", call.ID, call.TargetKind, call.TargetLabel, call.Function)
 		if snapshot["status"] == "failed" {
 			errText, _ := snapshot["error"].(string)
-			notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("%s failed: %s", header, errText))
+			notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("%s failed: %s%s", header, errText, crewFunctionFailureDetail(snapshot)))
 			return
 		}
 		encoded, _ := json.MarshalIndent(snapshot["result"], "", "  ")
@@ -1103,18 +1153,25 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		}
 		call.mu.Lock()
 		schema := call.ResultSchema
+		freeText := call.FreeText
 		call.mu.Unlock()
+		if freeText {
+			// The implicit ask is free text by contract: never reject a real
+			// answer over its shape. Structured answers are kept as JSON text.
+			result = crewFunctionFreeTextAnswer(result)
+		}
 		if problems := validateCrewFunctionValue(schema, result); len(problems) > 0 {
 			call.mu.Lock()
 			call.InvalidResults++
 			invalid := call.InvalidResults
+			call.PartialResult = result
 			call.mu.Unlock()
 			reason := "result does not match the result schema: " + strings.Join(problems, "; ")
 			if invalid >= crewFunctionMaxInvalidResults {
 				call.finish("failed", nil, "the target returned invalid results twice; last: "+reason)
 				return "", fmt.Errorf("%s. The call has now failed", reason)
 			}
-			return "", fmt.Errorf("%s. Fix it and call return_function_result again", reason)
+			return "", fmt.Errorf("%s. Your submission is kept for the caller; fix the shape and call return_function_result again (put anything that doesn't fit, like extra links, into an existing string field or error)", reason)
 		}
 		if !call.finish("completed", result, "") {
 			return "", fmt.Errorf("function call %s already finished", call.ID)

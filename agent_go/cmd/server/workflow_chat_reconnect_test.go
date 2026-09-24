@@ -122,3 +122,19 @@ func TestPrependCodingAgentContinuityNoticeUsesSameVisibleUserTurn(t *testing.T)
 		t.Fatalf("combined user turn contains duplicate continuity notices: %s", got)
 	}
 }
+
+func TestCodingAgentContinuityNoticeCarriesRecentDialogue(t *testing.T) {
+	history := []llmtypes.MessageContent{
+		{Role: llmtypes.ChatMessageTypeHuman, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "fix the login redirect bug"}}},
+		{Role: llmtypes.ChatMessageTypeAI, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "Fixed it in auth.go and opened PR 42."}}},
+	}
+	got := prependCodingAgentContinuityNotice("what did we work on yesterday", "builder/conversation/c.json", "", history...)
+	for _, want := range []string{"fix the login redirect bug", "opened PR 42", "builder/conversation/c.json", "[USER MESSAGE]\nwhat did we work on yesterday"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("notice missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "fix the login") > strings.Index(got, "opened PR 42") {
+		t.Fatal("recent dialogue must be oldest first")
+	}
+}

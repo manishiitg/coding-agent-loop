@@ -114,3 +114,16 @@ it('uses Alt+Right to expand or enter a folder, and Alt+Left to go up', async ()
   await key('ArrowLeft', { altKey: true })
   expect(onNavigate).toHaveBeenCalledWith('')
 })
+it('lists only the supplied project files (Crew chats) and selects their crew-relative path', async () => {
+  const crewFiles = [{ filepath: 'code', type: 'folder' as const, children: [{ filepath: 'code/app.py', type: 'file' as const }] }, { filepath: 'MEMORY.md', type: 'file' as const }]
+  await act(async () => root.render(<FileSelectionDialog isOpen searchQuery="app" inputRef={inputRef} listId="files"
+    onActiveOptionChange={onActive} onClose={onClose} onSelectFile={onSelect} position={{ top: 10, left: 10 }} files={crewFiles} />))
+  expect(host.textContent).toContain('app.py')
+  expect(host.textContent).not.toContain('report.md')
+  await key('Enter')
+  expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ filepath: 'code/app.py' }))
+})
+it('keeps the workspace tree when no project files are supplied (workflow chats)', async () => {
+  await act(async () => files('report'))
+  expect(host.textContent).toContain('report.md')
+})

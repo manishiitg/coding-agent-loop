@@ -85,6 +85,10 @@ profile:
       description: Update project memory and skills from this conversation
       icon: brain
       file: commands/update-memory.md
+    - name: daily-learnings
+      description: End-of-day review of today's conversations — save new learnings to memory and skills
+      icon: brain
+      file: commands/daily-learnings.md
   runtime:
     # Transport is selected by AgentWorks' shared execution policy: interactive
     # chats retain tmux, while background children and steps use structured JSON.

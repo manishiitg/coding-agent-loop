@@ -34,6 +34,9 @@ var (
 // server. Only workflow.json files and folder removals affect the index.
 func noteWorkspaceMutation(filePath string, folder bool) {
 	clean := strings.Trim(path.Clean("/"+strings.TrimSpace(filePath)), "/")
+	if liveFeedReportPath(clean) {
+		publishReportChanged(clean)
+	}
 	switch {
 	case folder:
 		manifestDirtyAll.Store(true)

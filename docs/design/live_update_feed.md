@@ -1,6 +1,9 @@
 # Live update feed: one SSE per tab instead of timers
 
-Status: proposed (2026-09-24). Owner: TBD.
+Status: Phase 1 built (2026-09-24).
+- **Server:** `agent_go/internal/livefeed`, `cmd/server/live_feed.go`.
+- **Client:** `frontend/src/services/liveFeed.ts`,
+  `frontend/src/hooks/useLiveRefetch.ts`.
 
 ## Problem
 
@@ -154,9 +157,9 @@ scheduled run or a step never shows up by itself.
 |---|---|
 | `pulse_state` | About 20 writers in `pulse_worklist.go`, `pulse_final_commands.go`, `pulse_goal_work.go`, `pulse_schedule.go`, `pulse_fast_requests.go`, `pulse_fix_run.go` and `pulse_review_notes.go`. Add one `notePulseStateChanged(ws)` helper and call it after each commit. Also publish on `workflow.json` writes (`noteWorkspaceMutation` already sees them), because the response includes autonomy, focus areas and next pulse. |
 | `sessions` | The `activeSessions` and `trackedWorkflowExecutions` mutators (server.go `trackActiveSession`, `updateSessionStatus`, `handleDismissSession`, `cleanupInactiveSessionsAt`, `handleQuery` start/finish; `workflow_execution_tracker.go` start/finish/cancel). **Not** `updateSessionActivity`, which runs on every event: publish only when a status changes. |
-| `schedules` | `noteScheduleSummaryChange()` (header_summary_cache.go:19). It is already the invalidation point for this data. |
+| `schedules` | A watcher (`watchScheduleSummaryForLiveFeed`) recomputes the cached summary when `scheduleSummaryGeneration` moves, and publishes only when the value actually changes. Summary reads reconcile run state, so publishing straight from `noteScheduleSummaryChange()` could turn a refetch into another notice. It runs only while a stream is open. |
 | `notifications` | `SendUserNotification` and `UpsertPulseResultActivity` (services/org_dashboard_connector.go). |
-| `human_inputs` | `create`/`answer`/`dismiss`/`consumeReportHumanInput` (report_human_inputs.go), plus three outliers: `dismissDuplicateHumanInput`, `consumeLinkedPulseDecisionTx`, `activateApprovedAdvisorSpecialization`. |
+| `human_inputs` | `create`/`answer`/`dismiss`/`consumeReportHumanInput` (report_human_inputs.go), plus `dismissDuplicateHumanInput`. The two `pkg/` outliers (`consumeLinkedPulseDecisionTx`, `activateApprovedAdvisorSpecialization`) run inside agent turns and are covered by the turn-completion publish. |
 | `report` | Session/execution terminal status (the same hook as publish-on-session-completion). Writes under `db/reports/` via `writeFileToWorkspace` and the `/api/wp` proxy. Proxied `/api/mutate` and `/api/report-field`. |
 | `scheduler_config` | `SaveSchedulerConfig` (scheduler_config_store.go:43). |
 | `browser_sessions` | The `browser.SessionTracker` mutators (`Touch` on first sight only, `Remove*`, `Close*`, `Clear`). The client computes `age`/`idle` from timestamps instead of polling for them. |

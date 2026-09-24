@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/livefeed"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	_ "modernc.org/sqlite"
 )
@@ -85,6 +86,7 @@ func (c *OrgDashboardConnector) SendUserNotification(ctx context.Context, messag
 	if err != nil {
 		return "", err
 	}
+	defer livefeed.PublishWorkflow(livefeed.Notifications, workspacePath)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return "", fmt.Errorf("create workflow database folder: %w", err)
 	}
@@ -262,6 +264,7 @@ func UpsertPulseResultActivity(ctx context.Context, rawWorkspacePath, pulseRunID
 	if err != nil {
 		return err
 	}
+	defer livefeed.PublishWorkflow(livefeed.Notifications, workspacePath)
 	pulseRunID = strings.TrimSpace(pulseRunID)
 	if pulseRunID == "" {
 		return fmt.Errorf("pulse result activity requires pulse_run_id")

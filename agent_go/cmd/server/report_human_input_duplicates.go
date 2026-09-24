@@ -11,6 +11,7 @@ import (
 // dismissDuplicateHumanInput never answers a question. Both requests must still
 // be pending, identical in decision semantics, and the discarded ID unlinked.
 func dismissDuplicateHumanInput(ctx context.Context, workspacePath, inputID, keepID, reason, sessionID string) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	inputID, keepID, reason = strings.TrimSpace(inputID), strings.TrimSpace(keepID), strings.TrimSpace(reason)
 	if inputID == "" || keepID == "" || inputID == keepID || reason == "" {
 		return nil, fmt.Errorf("distinct input_id, keep_input_id, and reason are required")

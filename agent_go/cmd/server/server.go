@@ -2478,6 +2478,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/chat-artifacts/{artifact_id}", api.handleGetChatArtifact).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/ui-control", api.handleUIControl).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/events/stream", api.handleSSEStream).Methods("GET")
+	// Header + right-pane live stream (change notices only; chat keeps its own streams).
+	apiRouter.HandleFunc("/live", api.handleLiveFeed).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 	// The product raw view receives only its owning chat's main terminal. All
@@ -2732,6 +2734,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start background cleanup goroutine to mark inactive sessions (10 minute timeout)
 	go api.cleanupInactiveSessions()
+	go api.watchScheduleSummaryForLiveFeed()
 	go api.warmLLMConfigCaches()
 
 	// Initialize and start the cron scheduler
@@ -7942,6 +7945,7 @@ func (api *StreamingAPI) claimAgentWorksChatSession(sessionID, userID, query, tr
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
 
+	defer publishSessionsChanged() // runs after the unlock below
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -7981,6 +7985,7 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
 
+	defer publishSessionsChanged() // runs after the unlock below
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -9208,14 +9213,23 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 
 // updateSessionStatus updates the status of an active session in memory.
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
+	changed, workspacePath := false, ""
 	api.activeSessionsMux.Lock()
 	if session, exists := api.activeSessions[sessionID]; exists {
+		changed = session.Status != status
+		workspacePath = session.WorkspacePath
 		session.Status = status
 		session.LastActivity = time.Now()
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
 	}
 	api.activeSessionsMux.Unlock()
 	api.observeRuntimeSnapshot(sessionID)
+	if changed {
+		publishSessionsChanged()
+		if liveFeedTerminalStatus(status) {
+			publishWorkflowSettled(workspacePath)
+		}
+	}
 }
 
 // removeSessionQueryID removes a completed workflow query from the session ->
@@ -9264,6 +9278,7 @@ func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Req
 		session.LastActivity = time.Now()
 	}
 	api.activeSessionsMux.Unlock()
+	publishSessionsChanged()
 
 	log.Printf("[ACTIVE_SESSION] Dismissed session %s", sessionID)
 	w.WriteHeader(http.StatusOK)
@@ -9651,6 +9666,9 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
+	if len(sessionsMarkedInactive) > 0 || len(sessionsToEvictRuntime) > 0 {
+		publishSessionsChanged()
+	}
 
 	for _, sessionID := range sessionsMarkedInactive {
 		api.observeRuntimeSnapshot(sessionID)

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { agentApi } from "../../../services/api";
+import { useLiveRefetch } from "../../../hooks/useLiveRefetch";
 import {
   WORKFLOW_DECISIONS_REFRESH_EVENT,
   WORKFLOW_LOG_REFRESH_EVENT,
@@ -9,6 +10,14 @@ import {
 // Refresh on saved decisions/chat receipts and periodically for background work.
 export function usePendingDecisionCount(workspacePath?: string | null): number {
   const [snapshot, setSnapshot] = useState({ workspace: "", count: 0 });
+  // Live notices bump this to refetch; 30s polling only if the feed is down.
+  const [liveTick, setLiveTick] = useState(0);
+  useLiveRefetch(() => setLiveTick((tick) => tick + 1), {
+    kinds: ["human_inputs"],
+    workflow: workspacePath ?? null,
+    fallbackMs: 30_000,
+    enabled: !!workspacePath,
+  });
   useEffect(() => {
     if (!workspacePath) return;
     let disposed = false,
@@ -33,31 +42,22 @@ export function usePendingDecisionCount(workspacePath?: string | null): number {
         /* Preserve the last confirmed count during a transient failure. */
       }
     };
-    const refreshVisible = () => {
-      if (document.visibilityState !== "hidden") void refresh();
-    };
     const refreshDecision = (event: Event) => {
       const workspace = (event as CustomEvent<{ workspacePath?: string }>)
         .detail?.workspacePath;
       if (!workspace || workspace === workspacePath) void refresh();
     };
     void refresh();
-    const interval = window.setInterval(refreshVisible, 30_000);
     window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, refreshDecision);
     window.addEventListener(WORKFLOW_DECISIONS_REFRESH_EVENT, refreshDecision);
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
     return () => {
       disposed = true;
-      window.clearInterval(interval);
       window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, refreshDecision);
       window.removeEventListener(
         WORKFLOW_DECISIONS_REFRESH_EVENT,
         refreshDecision,
       );
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
     };
-  }, [workspacePath]);
+  }, [workspacePath, liveTick]);
   return snapshot.workspace === workspacePath ? snapshot.count : 0;
 }

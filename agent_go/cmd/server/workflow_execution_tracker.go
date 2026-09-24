@@ -263,6 +263,7 @@ func (api *StreamingAPI) trackExecutionStart(exec *TrackedWorkflowExecution) {
 	api.pruneTrackedExecutionsLocked(time.Now().UTC())
 	api.trackedWorkflowExecutionsMux.Unlock()
 	api.observeRuntimeSnapshot(exec.SessionID)
+	publishSessionsChanged()
 }
 
 func (api *StreamingAPI) trackWorkflowRunStart(exec *ActiveWorkflowExecution) {
@@ -372,9 +373,12 @@ func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMess
 		}
 		exec.Kind = inferTrackedExecutionKind(exec.Source, exec.PhaseID, exec.Name, exec.Metadata)
 	}
+	workspacePath := exec.WorkspacePath
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
 	api.observeRuntimeSnapshot(sessionID)
+	publishSessionsChanged()
+	publishWorkflowSettled(workspacePath)
 }
 
 func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
@@ -386,6 +390,7 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 
 	now := time.Now().UTC()
 	marked := 0
+	var settled []string
 	for _, exec := range api.trackedWorkflowExecutions {
 		if exec == nil || exec.SessionID != sessionID || exec.Status != trackedExecutionStatusRunning {
 			continue
@@ -393,6 +398,7 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 		exec.Status = trackedExecutionStatusCanceled
 		exec.CompletedAt = &now
 		marked++
+		settled = append(settled, exec.WorkspacePath)
 		// Marking a tracked execution canceled tells watchers to stop watching.
 		// It does not stop the worker — that is cancelBackgroundAgents' job — so
 		// log both and compare the counts when diagnosing a Stop that did not
@@ -404,6 +410,12 @@ func (api *StreamingAPI) cancelTrackedExecutionsForSession(sessionID string) {
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
 	api.observeRuntimeSnapshot(sessionID)
+	if marked > 0 {
+		publishSessionsChanged()
+		for _, workspacePath := range settled {
+			publishWorkflowSettled(workspacePath)
+		}
+	}
 }
 
 func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, errorMessage string) {
@@ -426,8 +438,11 @@ func (api *StreamingAPI) finalizeTrackedExecutionIfRunning(executionID, status, 
 	if strings.TrimSpace(errorMessage) != "" {
 		exec.LastError = errorMessage
 	}
+	workspacePath := exec.WorkspacePath
 	api.pruneTrackedExecutionsLocked(now)
 	api.trackedWorkflowExecutionsMux.Unlock()
+	defer publishWorkflowSettled(workspacePath)
+	defer publishSessionsChanged()
 	api.observeRuntimeSnapshot(sessionID)
 }
 

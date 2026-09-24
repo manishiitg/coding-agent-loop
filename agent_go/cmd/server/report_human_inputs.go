@@ -480,6 +480,7 @@ func ensureReportHumanInputColumn(ctx context.Context, db *sql.DB, column, defin
 }
 
 func createReportHumanInput(ctx context.Context, workspacePath string, req ReportHumanInputCreateRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	if normalizeReportHumanInputSource(req.Source) == "user_suggestion" && req.CreatedVia != "suggestion_tool" {
 		return nil, fmt.Errorf("use submit_workflow_suggestion to leave a user suggestion")
 	}
@@ -632,6 +633,7 @@ func listReportHumanInputs(ctx context.Context, workspacePath, status, source st
 }
 
 func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputAnswerRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -727,6 +729,7 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 }
 
 func dismissReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputAnswerRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -785,6 +788,7 @@ func dismissReportHumanInput(ctx context.Context, workspacePath, inputID string,
 }
 
 func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputConsumeRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 

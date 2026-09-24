@@ -4,6 +4,7 @@ import { agentApi } from '../../services/api'
 import { workflowHasActivity, workflowHasRecentActivity } from '../../utils/workflowActivity'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { whenWorkflowChatSettled } from '../../utils/whenWorkflowChatSettled'
+import { useLiveRefetch } from '../../hooks/useLiveRefetch'
 
 const WORKFLOW_ACTIVITY_REFRESH_MS = 30_000
 
@@ -47,15 +48,13 @@ export function WorkflowActivityButton({ workspacePath, onOpen }: WorkflowActivi
 
     setActivityState({ available: false, recent: false })
     void whenWorkflowChatSettled().then(requestRefresh)
-    const interval = window.setInterval(requestRefresh, WORKFLOW_ACTIVITY_REFRESH_MS)
-    document.addEventListener('visibilitychange', requestRefresh)
     return () => {
       disposed = true
       refreshSequence.current += 1
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', requestRefresh)
     }
   }, [refresh])
+  // Refetch on live notices; polling only if the feed is down.
+  useLiveRefetch(() => { void refresh() }, { kinds: ['notifications', 'human_inputs'], workflow: workspacePath, fallbackMs: WORKFLOW_ACTIVITY_REFRESH_MS })
 
   if (!activityState.available) return null
 

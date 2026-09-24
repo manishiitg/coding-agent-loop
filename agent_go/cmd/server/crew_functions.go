@@ -120,15 +120,15 @@ func defaultAskCrewFunction() crewFunction {
 
 // callableFunctions is what a target offers callers. A Crew offers its
 // declared functions plus the built-in ask. A workflow offers its function
-// triggers only: it is not a conversational agent, so free text has no
-// defined inputs to set and was silently run against saved values.
+// triggers plus ask, which goes to the workflow's assistant (never straight
+// into a run, where free text has no inputs to set).
 func callableFunctions(ctx context.Context, target triggerTarget) ([]crewFunction, error) {
 	if target.Kind == triggerCallerWorkflow {
 		manifest, exists, err := ReadWorkflowManifest(ctx, target.Path)
 		if err != nil || !exists || manifest == nil {
 			return nil, fmt.Errorf("workflow %q is unavailable", target.Label)
 		}
-		return workflowFunctions(manifest), nil
+		return append(workflowFunctions(manifest), workflowAskFunction()), nil
 	}
 	functions, err := readCrewFunctions(ctx, target)
 	if err != nil {
@@ -544,6 +544,18 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	crewFunctionCalls.Lock()
 	crewFunctionCalls.m[id] = call
 	crewFunctionCalls.Unlock()
+	if isWorkflowAsk(target, fn) {
+		message, _ := args["message"].(string)
+		if strings.TrimSpace(message) == "" {
+			crewFunctionCalls.Lock()
+			delete(crewFunctionCalls.m, id)
+			crewFunctionCalls.Unlock()
+			return nil, fmt.Errorf("ask needs a message")
+		}
+		call.persist()
+		go api.runWorkflowAsk(call, target, caller, message, timeout)
+		return call, nil
+	}
 	var delivery internalTriggerDeliveryResult
 	var err error
 	if target.Kind == triggerCallerWorkflow {

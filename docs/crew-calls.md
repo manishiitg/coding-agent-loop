@@ -35,13 +35,18 @@ returned.
 
 ## Workflow functions
 
-A workflow is not a conversational agent, so it has no `ask`. It offers the
-**functions its Builder exposes**. Each one is a trigger of kind `function`
-with:
+A workflow offers `ask` plus the **functions its Builder exposes**.
 
-- a fixed route and allowed groups, like a webhook;
-- typed inputs, such as `review_pr(GITHUB_OWNER, GITHUB_REPO, PR_NUMBER)`.
-  Each input is a declared workflow variable and is set for that run.
+- **`ask`** goes to the workflow's assistant (the Run-mode chat, the same one
+  MCP `chat` uses). Each caller gets one continuing thread with it, titled
+  "Asked by <caller>" in the workflow's chat history. The assistant answers
+  questions, and when asked to run something it picks the route, sets the
+  variables, waits and reports the outcome. It cannot edit the workflow: a
+  requested change or reported problem becomes a suggestion for the owner.
+- **Functions** are triggers of kind `function` with a fixed route and
+  allowed groups (like a webhook) and typed inputs, such as
+  `review_pr(GITHUB_OWNER, GITHUB_REPO, PR_NUMBER)`. Each input is a declared
+  workflow variable and is set for that run.
 
 A call with a missing, unknown or mistyped input is **refused before anything
 runs**, for example `review_pr: missing required input PR_NUMBER`. It never
@@ -50,7 +55,8 @@ any error, and each step's output (a skipped step says why).
 
 To add one, ask the workflow's Builder, for example "expose the review route
 as review_pr taking GITHUB_OWNER, GITHUB_REPO and PR_NUMBER (all required)".
-The workflow's **Webhooks** tab lists its functions under **Functions**.
+The workflow's **Automation → Functions** tab lists them, with the built-in
+`ask`.
 
 **Who may call:** a function has no URL and no secret. The platform identifies
 the caller, and nothing in the request can change that:

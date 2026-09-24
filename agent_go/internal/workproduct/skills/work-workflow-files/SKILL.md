@@ -107,14 +107,19 @@ schemas, and instructions, stored in its `functions.json`.
 - **`ask`** — every Crew has the built-in `ask(message)` (generated as
   `<crew>__ask`). Its result is `{answer}`, the Crew's final reply. Use it for
   free-form questions and one-off tasks. A declared `ask` replaces it.
-- **Workflow functions** — a workflow offers only the functions its Builder
+- **Workflow functions** — a workflow offers the functions its Builder
   exposed as function triggers: a fixed route plus typed inputs, each set as a
   workflow variable for that run (e.g. `review_pr(GITHUB_OWNER, GITHUB_REPO,
-  PR_NUMBER)`). It has no `ask`, and a call with a missing, unknown or
-  mistyped input is refused before anything runs, so pass every required
-  input. The result is the run's outcome: status, error and each step's
-  output (a "skipped" step says why). If a workflow offers no fitting
-  function, tell the user its Builder must expose one.
+  PR_NUMBER)`). A call with a missing, unknown or mistyped input is refused
+  before anything runs, so pass every required input. The result is the
+  run's outcome: status, error and each step's output (a "skipped" step says
+  why).
+- **Workflow `ask`** — goes to the workflow's assistant in Run mode, one
+  continuing thread per caller. It answers questions about the workflow and
+  its runs, and when asked to run something it picks the route and sets the
+  variables itself, then reports the outcome. Include every value a run
+  needs. It cannot edit the workflow: it records change requests and problem
+  reports as suggestions for the owner (`submit_workflow_suggestion`).
 - **Discover** — `list_functions(target)` shows what a target offers. Generated
   tools named `<crew>__<function>` appear for tagged or attached targets.
 - **Call** — `call_function(target, function, args)` validates `args`, runs the

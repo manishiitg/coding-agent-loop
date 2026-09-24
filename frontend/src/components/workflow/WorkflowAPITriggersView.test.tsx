@@ -131,14 +131,12 @@ it('reloads and reports counts when the hub bumps its refresh token', async () =
   expect(workflowWebhooksApi.list).toHaveBeenCalledTimes(2)
   expect(onCounts).toHaveBeenLastCalledWith({ active: 1, paused: 0 })
 })
-it('lists functions apart from webhooks, with inputs and route', async () => {
+it('keeps functions out of the webhooks list and points to the Functions tab', async () => {
   const fn = { id: 'fn-1', name: 'Review PR', enabled: true, auth_mode: '' as never, path: '', route_selections: { router: 'issues' }, group_names: ['prod'], kind: 'function' as const,
-    function: { name: 'review_pr', description: 'Review one pull request', inputs: [{ name: 'PR_NUMBER', type: 'integer' as const, required: true }, { name: 'REVIEW_DEPTH' }] } }
-  vi.mocked(workflowWebhooksApi.list).mockResolvedValue({ triggers: [trigger, fn], groups: ['prod'], routes: [{ step_id: 'router', step_title: 'Choose work', route_id: 'issues', route_name: 'Process issues' }] })
+    function: { name: 'review_pr', inputs: [{ name: 'PR_NUMBER', type: 'integer' as const, required: true }] } }
+  vi.mocked(workflowWebhooksApi.list).mockResolvedValue({ triggers: [trigger, fn], groups: ['prod'], routes: [] })
   const host = await mount()
-  const functions = host.querySelector('[data-testid="workflow-functions"]')!
-  expect(functions.textContent).toContain('review_pr')
-  expect(functions.textContent).toContain('PR_NUMBER: integer, REVIEW_DEPTH: string?')
-  expect(functions.textContent).toContain('Choose work → Process issues')
-  expect(host.textContent).not.toContain('https://agent.example/api/hooks/workflow/fn-1')
+  expect(host.textContent).toContain('Issues')
+  expect(host.textContent).not.toContain('review_pr')
+  expect(host.textContent).toContain('Automation → Functions')
 })

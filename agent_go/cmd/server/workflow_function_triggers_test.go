@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
@@ -148,20 +149,17 @@ func TestCrewSeesWorkflowFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "review_pr") || strings.Contains(out, `"ask"`) {
-		t.Fatalf("workflow functions = %s, want review_pr and no ask", out)
+	if !strings.Contains(out, "review_pr") || !strings.Contains(out, `"ask"`) {
+		t.Fatalf("workflow functions = %s, want review_pr and the assistant ask", out)
 	}
 	if _, err := env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports", "function": "review_pr", "args": map[string]interface{}{"GITHUB_OWNER": "acme", "GITHUB_REPO": "app"}}); err == nil || !strings.Contains(err.Error(), "PR_NUMBER") {
 		t.Fatalf("missing input must fail before running: err = %v", err)
 	}
-	if _, err := env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports", "function": "ask", "args": map[string]interface{}{"message": "review 149"}}); err == nil || !strings.Contains(err.Error(), "has no function") {
-		t.Fatalf("free-text ask on a workflow: err = %v", err)
-	}
 	if _, err := env.alpha["define_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports", "name": "x", "description": "d", "instructions": "y", "input_schema": map[string]interface{}{"type": "object"}, "result_schema": map[string]interface{}{"type": "object"}}); err == nil || !strings.Contains(err.Error(), "function triggers") {
 		t.Fatalf("define on a workflow: err = %v", err)
 	}
-	if _, err := env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Pipeline", "function": "run"}); err == nil || !strings.Contains(err.Error(), "offers no functions") {
-		t.Fatalf("workflow without functions: err = %v", err)
+	if _, err := env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Pipeline", "function": "run"}); err == nil || !strings.Contains(err.Error(), "has no function") {
+		t.Fatalf("workflow without that function: err = %v", err)
 	}
 }
 
@@ -195,7 +193,7 @@ func TestExternalWorkflowFunctions(t *testing.T) {
 	}
 	code, out := request("list_workflow_functions", map[string]any{}, WorkflowAccessOwner)
 	functions, _ := out["functions"].([]any)
-	if code != 200 || len(functions) != 1 || functions[0].(map[string]any)["name"] != "review_pr" {
+	if code != 200 || len(functions) != 2 || functions[0].(map[string]any)["name"] != "review_pr" || functions[1].(map[string]any)["name"] != "ask" {
 		t.Fatalf("list = %d %v", code, out)
 	}
 	code, out = request("call_workflow_function", map[string]any{"function": "review_pr", "args": map[string]any{"GITHUB_OWNER": "acme", "GITHUB_REPO": "app"}}, WorkflowAccessOwner)
@@ -207,5 +205,49 @@ func TestExternalWorkflowFunctions(t *testing.T) {
 	}
 	if code, _ := request("call_workflow_function", map[string]any{"function": "nope"}, WorkflowAccessOwner); code != 404 {
 		t.Fatalf("unknown function = %d, want 404", code)
+	}
+}
+
+// ask on a workflow goes to its Run-mode assistant in one continuing thread
+// per caller; it never starts a run by itself.
+func TestWorkflowAskUsesCallersAssistantThread(t *testing.T) {
+	env := newCrewFunctionEnv(t)
+	var mu sync.Mutex
+	var turns []map[string]interface{}
+	var sessions []string
+	previous := workflowAskTurn
+	workflowAskTurn = func(_ *StreamingAPI, _ context.Context, reqMap map[string]interface{}, sessionID, _ string) (internalSessionTurnResult, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		turns = append(turns, reqMap)
+		sessions = append(sessions, sessionID)
+		return internalSessionTurnResult{FinalResponse: "It reviews pull requests: review_pr(owner, repo, pr)."}, nil
+	}
+	t.Cleanup(func() { workflowAskTurn = previous })
+
+	out, err := env.alpha["list_functions"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports"})
+	if err != nil || !strings.Contains(out, `"ask"`) || !strings.Contains(out, "assistant") {
+		t.Fatalf("workflow functions = %s err=%v, want the assistant ask", out, err)
+	}
+	for i := 0; i < 2; i++ {
+		out, err = env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports", "function": "ask", "args": map[string]interface{}{"message": "what can you do?"}})
+		if err != nil || !strings.Contains(out, "It reviews pull requests") || !strings.Contains(out, `"completed"`) {
+			t.Fatalf("ask = %s err=%v", out, err)
+		}
+	}
+	if _, err := env.alpha["call_function"].exec(context.Background(), map[string]interface{}{"target": "#workflow:Reports", "function": "ask", "args": map[string]interface{}{"message": " "}}); err == nil {
+		t.Fatal("an empty ask must be refused")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sessions) != 2 || sessions[0] != sessions[1] || !strings.HasPrefix(sessions[0], "wfask-") {
+		t.Fatalf("sessions = %v, want one continuing thread", sessions)
+	}
+	req := turns[0]
+	if req["pin_run_mode"] != true || req["agent_mode"] != "workflow_phase" || !strings.Contains(fmt.Sprint(req["query"]), "Alpha Bot") || !strings.Contains(fmt.Sprint(req["query"]), "submit_workflow_suggestion") {
+		t.Fatalf("assistant request = %v", req)
+	}
+	if other := workflowAskSessionID("reports", triggerCaller{Type: triggerCallerCrew, ID: "beta", ProfileID: "work"}); other == sessions[0] {
+		t.Fatal("another caller must get its own thread")
 	}
 }

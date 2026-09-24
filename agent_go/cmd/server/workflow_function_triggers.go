@@ -78,6 +78,9 @@ func validateWorkflowFunctionSpec(spec *WorkflowFunctionSpec) error {
 	if !workflowFunctionNamePattern.MatchString(spec.Name) {
 		return fmt.Errorf("function name %q must be snake_case (a-z, 0-9, _), starting with a letter", spec.Name)
 	}
+	if spec.Name == crewFunctionAskName {
+		return errors.New(`"ask" is reserved: every workflow's ask goes to its assistant`)
+	}
 	seen := map[string]bool{}
 	for i := range spec.Inputs {
 		input := &spec.Inputs[i]

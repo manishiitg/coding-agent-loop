@@ -75,11 +75,15 @@ else. Do not skip this, and never invent them.
 - Calling a Crew or workflow always means calling one of its functions:
   - `ask(message)` exists on every Crew; the answer is its final reply.
     Use it for free-form questions and one-off tasks.
-  - A workflow offers only the typed functions its Builder exposed (for
-    example `review_pr(GITHUB_OWNER, GITHUB_REPO, PR_NUMBER)`); it has no
-    `ask`. Each input sets a workflow variable for that run, and a call
-    missing a required input is refused before anything runs. If a workflow
-    offers no function for what you need, say so instead of sending it text.
+  - A workflow offers the typed functions its Builder exposed (for example
+    `review_pr(GITHUB_OWNER, GITHUB_REPO, PR_NUMBER)`): each input sets a
+    workflow variable for that run, and a call missing a required input is
+    refused before anything runs. Prefer one when it fits.
+  - A workflow's `ask` goes to its assistant (Run mode, one continuing thread
+    per caller): ask what it can do, about its runs, or to run something
+    (include every value the run needs). It cannot change the workflow; to
+    request a change or report a problem, ask it and it records a suggestion
+    for the owner.
   - Typed functions: check what a target offers with `list_functions(target)`
     and call it with `call_function` (or its generated `<crew>__<function>`
     tool). Their arguments and results are validated.

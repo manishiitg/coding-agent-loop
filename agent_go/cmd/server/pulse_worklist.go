@@ -2630,7 +2630,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"summary":           map[string]interface{}{"type": "string"},
 		"impact":            map[string]interface{}{"type": "string"},
 		"evidence":          map[string]interface{}{"type": "array", "minItems": 1, "items": map[string]interface{}{"type": "string"}},
-		"recommended_route": map[string]interface{}{"type": "string", "enum": []string{"decision_required", "evidence_wait", "fixer_handoff"}},
+		"recommended_route": map[string]interface{}{"type": "string", "enum": []string{"decision_required", "fixer_handoff"}},
 		"human_input_id":    map[string]interface{}{"type": "string", "description": "Required with recommended_route=decision_required. Create the pending reviewer-owned decision first and pass its exact id so the finding is atomically linked as awaiting_user."},
 		"next_check":        map[string]interface{}{"type": "string"},
 		"workaround":        map[string]interface{}{"type": "string"},
@@ -3456,6 +3456,12 @@ func pulseLifecycleAgentProjection(findings []step_based_workflow.PulseFindingLi
 			card["target_key"] = finding.Details.TargetKey
 			card["next_check"] = finding.Details.NextCheck
 		}
+		// A deferred issue must not wait silently: after one deferral the next
+		// pass repairs it or asks the user (pulse-review-fixer.md).
+		if deferred := pulseFindingTimesDeferred(finding); deferred > 0 {
+			card["times_deferred"] = deferred
+			card["deferral_note"] = fmt.Sprintf("Already deferred %d time(s). Do not queue it again: repair it in this pass, or create a decision if only the user can choose.", deferred)
+		}
 		if len(finding.Verification) > 0 {
 			latest := finding.Verification[0]
 			card["latest_verification"] = map[string]interface{}{
@@ -3465,6 +3471,18 @@ func pulseLifecycleAgentProjection(findings []step_based_workflow.PulseFindingLi
 		projected = append(projected, card)
 	}
 	return projected
+}
+
+// pulseFindingTimesDeferred counts how often a finding was queued for a later
+// pass instead of being repaired.
+func pulseFindingTimesDeferred(finding step_based_workflow.PulseFindingLifecycle) int {
+	count := 0
+	for _, event := range finding.Events {
+		if event.EventType == step_based_workflow.ConcernStatusQueuedForEngineering {
+			count++
+		}
+	}
+	return count
 }
 
 // pulseConcernAgentProjection keeps the Gate's issue feed on the same public

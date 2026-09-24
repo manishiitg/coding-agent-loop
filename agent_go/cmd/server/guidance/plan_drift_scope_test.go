@@ -16,7 +16,7 @@ func TestPlanDriftReviewsCompatibilityAndCanonicalPromptQuality(t *testing.T) {
 		"preferred alternative architecture is not itself drift",
 		"An artifact created before a prompt/schema change is baseline evidence",
 		"Treat applied fixes as fixed unless new evidence reproduces the defect",
-		"no repair has been applied", "no step prompt to score",
+		"never parks an issue waiting for future evidence", "no step prompt to score",
 	} {
 		if !containsNormalizedText(rendered, want) {
 			t.Errorf("plan drift missing %q", want)

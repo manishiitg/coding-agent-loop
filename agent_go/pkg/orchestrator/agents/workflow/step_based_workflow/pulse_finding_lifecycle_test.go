@@ -1603,3 +1603,53 @@ func TestCountActionableWorkflowIssuesForPassIgnoresOldUnroutedBacklog(t *testin
 		t.Fatalf("count since before both were seen = %d (%v), want both", n, err)
 	}
 }
+
+// Pulse finds an issue and closes it by fixing it; it never waits for
+// evidence. New waits are refused, a legacy wait whose review found no
+// problem closes, and every other legacy wait goes back to the fixer.
+func TestEvidenceWaitsAreRefusedAndRetired(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := concernsWorkspace(t)
+	wait := testReviewFinding(pulsemodules.TechnicalReviewID, "parked until a connection request is accepted")
+	wait.RecommendedRoute = pulseFindingRouteEvidenceWait
+	wait.NextCheck = "after the request is accepted"
+	if _, err := RecordPulseReviewFinding(ctx, workspacePath, "pulse-1", "pulse-1", wait); err == nil || !strings.Contains(err.Error(), "does not wait for evidence") {
+		t.Fatalf("filing an evidence wait should be refused, got %v", err)
+	}
+
+	noProblem := recordTestReviewFinding(t, workspacePath, "pulse-1", testReviewFinding(pulsemodules.TechnicalReviewID, "cadence works; nothing wrong"))
+	realGap := recordTestReviewFinding(t, workspacePath, "pulse-1", testReviewFinding(pulsemodules.TechnicalReviewID, "goal metric never recorded"))
+	db, err := openRunConcernsDB(ctx, workspacePath, false)
+	if err != nil || db == nil {
+		t.Fatalf("open db: %v", err)
+	}
+	park := func(fingerprint, classification string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `UPDATE pulse_finding_details SET detail_json=json_set(detail_json, '$.recommended_route', 'evidence_wait', '$.classification', ?) WHERE fingerprint=?`, classification, fingerprint); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE run_concerns SET status='acknowledged' WHERE fingerprint=?`, fingerprint); err != nil {
+			t.Fatal(err)
+		}
+	}
+	park(noProblem.Fingerprint, "no_material_problem")
+	park(realGap.Fingerprint, "measurement_gap")
+	db.Close()
+
+	result, err := ReconcilePulseActionableBacklog(ctx, workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ClosedEvidenceWaits != 1 || result.ReroutedEvidenceWaits != 1 || result.EvidenceWaits != 0 {
+		t.Fatalf("reconciliation = %+v, want one closed, one rerouted, none left waiting", result)
+	}
+	db, _ = openRunConcernsDB(ctx, workspacePath, true)
+	defer db.Close()
+	var status, route string
+	if err := db.QueryRowContext(ctx, `SELECT status FROM run_concerns WHERE fingerprint=?`, noProblem.Fingerprint).Scan(&status); err != nil || status != ConcernStatusResolved {
+		t.Fatalf("no-problem wait status = %q (%v), want resolved", status, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT c.status, json_extract(d.detail_json, '$.recommended_route') FROM run_concerns c JOIN pulse_finding_details d ON d.fingerprint=c.fingerprint WHERE c.fingerprint=?`, realGap.Fingerprint).Scan(&status, &route); err != nil || status != ConcernStatusOpen || route != pulseFindingRouteFixerHandoff {
+		t.Fatalf("real wait = %q/%q (%v), want open and routed to the fixer", status, route, err)
+	}
+}

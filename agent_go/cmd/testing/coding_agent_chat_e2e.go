@@ -342,6 +342,8 @@ func defaultCodingAgentE2EModel(provider string) string {
 		return "claude-sonnet-5"
 	case "pi-cli":
 		return "google/gemini-3.8-flash"
+	case "muse-cli":
+		return "muse-spark-1.3-contributor"
 	default:
 		return ""
 	}

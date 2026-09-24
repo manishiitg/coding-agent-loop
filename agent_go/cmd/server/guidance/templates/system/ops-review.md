@@ -47,8 +47,9 @@ goals, outcomes, measurement and experiments to Strategic Review.
    harness/runtime/bridge/tool-API defect is `issue_kind=harness_issue`. Wrong
    workflow arguments, paths, credentials, IDs or data remain workflow issues.
 5. Use `recommended_route="fixer_handoff"` for safe correctness repairs,
-   `external_action_required` for platform-owned defects, and `evidence_wait`
-   only for a named missing fact. Before `decision_required`, prove the goal
+   and `external_action_required` for platform-owned defects. Never park an
+   issue waiting for evidence: investigate now, fix it, ask the user for a
+   missing fact through a decision, or do not file it when nothing is wrong. Before `decision_required`, prove the goal
    does not already settle the choice and create or refresh one stable
    `create_human_input_request(source="technical_review",
    input_id="technical-decision-...", options=[approve,reject,defer])`. Pass

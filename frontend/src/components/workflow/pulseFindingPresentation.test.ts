@@ -58,6 +58,16 @@ describe('pulse finding action lanes', () => {
     })
   })
 
+  it('flags an issue Pulse keeps deferring instead of calling it queued', () => {
+    const queued = { event_type: 'queued_for_engineering', summary: 'Queued for a later pass.', recorded_at: '2026-09-21T09:39:08Z' }
+    expect(pulseFindingPresentation(finding({ status: 'queued_for_engineering', events: [queued] }))).toMatchObject({
+      queue: 'queued_repair', label: 'Queued for Pulse', tone: 'info',
+    })
+    expect(pulseFindingPresentation(finding({ status: 'queued_for_engineering', events: [queued, queued, queued] }))).toMatchObject({
+      queue: 'queued_repair', label: 'Deferred 3×', tone: 'danger',
+    })
+  })
+
   it('labels a migrated missing decision request as Pulse-owned repair work', () => {
     expect(pulseFindingPresentation(finding({
       status: 'queued_for_engineering',

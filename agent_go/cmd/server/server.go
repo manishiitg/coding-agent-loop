@@ -9080,9 +9080,13 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	api.conversationMux.RLock()
 	currentProfileKey, profileKeyKnown := api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
+	// A changed profile definition (system prompt, tool allowlist, MCP servers,
+	// Crew identity) must never cost the conversation its memory: the CLI is
+	// relaunched with the current definition and resumes the same native
+	// session. Retained live input is still refused for a stale process (see
+	// agentProfileAllowsRetainedLiveInput), which is what forces that relaunch.
 	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
-		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: agent profile definition changed", sessionID)
-		return false
+		log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; resuming the same native coding-agent session with the current definition", sessionID)
 	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
 	projectDirID := strings.TrimSpace(runtime.ProjectDirID)

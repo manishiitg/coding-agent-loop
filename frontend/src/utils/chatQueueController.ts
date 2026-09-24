@@ -21,6 +21,18 @@ function matchesReceipt(queue: string[], receipt: QueueReceipt): boolean {
   return prefix.every((message, index) => queue[index] === message)
 }
 
+// withoutDelivered removes one occurrence of each delivered message, so other
+// entries added, edited or reordered meanwhile stay queued and nothing the
+// server accepted is ever shown again as pending.
+export function withoutDelivered(queue: string[], delivered: string[]): string[] {
+  const remaining = [...queue]
+  for (const message of delivered) {
+    const index = remaining.indexOf(message)
+    if (index >= 0) remaining.splice(index, 1)
+  }
+  return remaining
+}
+
 function receiptKey(identity: number, sessionId: string, receipt: QueueReceipt): string {
   return `${identity}:${sessionId}:${JSON.stringify(receipt.messages)}`
 }
@@ -53,9 +65,15 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
     const fresh = useChatStore.getState().getTab(tabId)
     if (!fresh || (verifyIdle && fresh.isStreaming)) return false
     if (!matchesReceipt(fresh.config.queuedMessages || [], receipt)) {
-      throw new Error(receipt.accepted
-        ? 'This message was accepted, but the queue changed. Review the remaining queue; it will not be resent.'
-        : 'The queue changed while delivery was pending. Review it before retrying.')
+      if (receipt.accepted) {
+        // Already delivered: drop exactly what was sent, keep everything else.
+        store.setTabConfig(tabId, { queuedMessages: withoutDelivered(fresh.config.queuedMessages || [], receipt.messages), queuedSubmission: undefined, queueError: undefined })
+        return true
+      }
+      // Not sent yet and the queue changed: discard this snapshot; the next
+      // drain takes a fresh one.
+      store.setTabConfig(tabId, { queuedSubmission: undefined })
+      return false
     }
     const built = build(receipt.messages)
     const alreadyAccepted = receipt.accepted || wasRecentlyAccepted(acceptedKey)
@@ -75,12 +93,11 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
     const acknowledged = { ...receipt, accepted: true }
     store.setTabConfig(tabId, { queuedSubmission: acknowledged })
     const current = useChatStore.getState().getTabConfig(tabId)?.queuedMessages || []
-    if (!matchesReceipt(current, receipt)) {
-      throw new Error('This message was accepted, but the queue changed. Review the remaining queue; it will not be resent.')
-    }
-    const remaining = receipt.queueIndex === undefined
-      ? current.slice(receipt.messages.length)
-      : current.filter((_message, index) => index !== receipt.queueIndex)
+    const remaining = !matchesReceipt(current, receipt)
+      ? withoutDelivered(current, receipt.messages)
+      : receipt.queueIndex === undefined
+        ? current.slice(receipt.messages.length)
+        : current.filter((_message, index) => index !== receipt.queueIndex)
     store.setTabConfig(tabId, { queuedMessages: remaining, queuedSubmission: undefined, queueError: undefined })
     return true
   } catch (error) {
@@ -103,12 +120,15 @@ export function resetChatQueueDeliveryReceiptsForTests(): void {
 /** Selection is presentation only. The snapshot owns its session and receipt. */
 export async function drainChatQueue(tabId: string, send: Submit, build: Prepare): Promise<void> {
   const tab = useChatStore.getState().getTab(tabId)
-  if (!tab?.sessionId || tab.isStreaming || tab.config?.queueError || !tab.config?.queuedMessages?.length) return
+  // With a session, the server's durable conversation-turn dispatcher orders
+  // queued input behind a running turn, so delivery never waits on this tab's
+  // own (possibly stale) streaming state.
+  if (!tab?.sessionId || tab.config?.queueError || !tab.config?.queuedMessages?.length) return
   const saved = tab.config.queuedSubmission
   const receipt = saved?.sessionId === tab.sessionId ? saved : {
     id: crypto.randomUUID(), sessionId: tab.sessionId, messages: [...tab.config.queuedMessages],
   }
-  await deliverQueueReceipt(tabId, receipt, send, build, true)
+  await deliverQueueReceipt(tabId, receipt, send, build, false)
 }
 
 /** Manual Send now/Steer uses the same receipt and lock as background delivery. */
@@ -133,7 +153,7 @@ function schedule() {
     const auth = useAuthStore.getState()
     if (!auth.isMultiUserModeChecked || auth.isLoading || (auth.isMultiUserMode && !auth.isAuthenticated)) return
     for (const tab of Object.values(useChatStore.getState().chatTabs)) {
-      if (tab.config?.queuedMessages?.length && !tab.isStreaming && !tab.config.queueError) {
+      if (tab.sessionId && tab.config?.queuedMessages?.length && !tab.config.queueError) {
         void drainChatQueue(tab.tabId, submit, prepare)
       }
     }

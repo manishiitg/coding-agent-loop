@@ -5781,6 +5781,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, guardBlocked)
 					}
 					if resolvedProfile.Definition.ID == "work" {
+						// Other Crews' files are shared, their chats are not: deny
+						// every referenced Crew's builder/ (transcripts and other
+						// users' mirrored chats). This Crew's own chats stay open.
+						workspace.SetSessionFolderGuardBlockedPaths(sessionID, foreignCrewChatBlockedPaths(profileRoot, workflowReadOnlyFolders))
+					}
+					if resolvedProfile.Definition.ID == "work" {
 						// Work uses the shared managed database boundary: migrations and
 						// row tools are allowed, while raw SQLite/WAL/SHM access is denied.
 						// Readers get the read side of that boundary.
@@ -7597,6 +7603,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// conversations are persisted below in their workspace Builder folder.
 		if !isWorkflowPhase {
 			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath, botHistoryMeta)
+			if isCrewReaderTurn(req, currentUserID) {
+				mirrorCrewReaderConversation(currentUserID, req.SelectedFolder, persistSessionID, persistConversationPath, time.Now())
+			}
 		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations

@@ -148,6 +148,53 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 	crewWrites, _ := splitCrewReferenceFolders(add)
 	writes = appendUniqueStrings(writes, crewWrites...)
 	common.SetSessionFolderGuard(sessionID, reads, writes)
+	// Another Crew's files are shared, its chats are not.
+	blocked := make([]string, 0, len(cfg.BlockedPaths)+len(add))
+	removedChats := map[string]bool{}
+	for _, chats := range foreignCrewChatBlockedPaths("", remove) {
+		removedChats[chats] = true
+	}
+	for _, path := range cfg.BlockedPaths {
+		if !removedChats[path] {
+			blocked = append(blocked, path)
+		}
+	}
+	blocked = appendUniqueStrings(blocked, foreignCrewChatBlockedPaths("", add)...)
+	common.SetSessionFolderGuardBlockedPaths(sessionID, blocked)
+}
+
+// foreignCrewChatBlockedPaths returns, for every Crew root in folders other
+// than ownRoot, the part of that Crew holding its chats (builder/: the
+// conversation transcripts, other users' mirrored chats with it, and the
+// builder chat state). Crews share their files server-wide, but a Crew's
+// conversations stay inside that Crew; these prefixes are hard-denied for
+// reads and writes.
+func foreignCrewChatBlockedPaths(ownRoot string, folders []string) []string {
+	own := strings.Trim(normalizeConversationWorkspace(ownRoot), "/")
+	var blocked []string
+	for _, folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if !isCrewProjectPath(folder) {
+			continue
+		}
+		if own != "" && strings.Trim(normalizeConversationWorkspace(folder), "/") == own && crewPathOwnerMatches(ownRoot, folder) {
+			continue
+		}
+		blocked = append(blocked, strings.TrimSuffix(folder, "/")+"/builder/")
+	}
+	return blocked
+}
+
+// crewPathOwnerMatches reports whether two Crew paths name the same owner:
+// a physical _users/<owner>/ prefix must agree when both carry one, so a
+// same-named Crew of another owner is never treated as this Crew.
+func crewPathOwnerMatches(a, b string) bool {
+	ownerA, okA := crewProjectOwnerID(strings.Trim(a, "/"))
+	ownerB, okB := crewProjectOwnerID(strings.Trim(b, "/"))
+	if okA && okB {
+		return ownerA == ownerB
+	}
+	return true
 }
 
 // splitCrewReferenceFolders separates Crew project roots (any owner) from

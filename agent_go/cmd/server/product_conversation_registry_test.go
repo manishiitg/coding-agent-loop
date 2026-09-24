@@ -527,3 +527,37 @@ func TestIsolatedTriggerRunsResolveDistinctConversations(t *testing.T) {
 		t.Fatalf("two trigger runs shared session %q; want a fresh chat per run", first.SessionID)
 	}
 }
+
+// The crew's "Native agent tools" switch lives in workflow.json capabilities
+// and must reach the binding that resolveAgentProfileForQuery reads.
+func TestWorkProjectBindingLoadsNativeAgentTools(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Workspace = agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"}
+	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
+	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	runtimePath := "_users/user-1/Chats/Work/projects/site/workflow.json"
+	for _, tc := range []struct {
+		capabilities string
+		want         bool
+	}{
+		{`{"native_agent_tools":true}`, true},
+		{`{}`, false},
+	} {
+		store := productProjectStore{
+			listPaths: func(context.Context, string) ([]string, bool, error) { return []string{manifestPath}, true, nil },
+			read: func(_ context.Context, path string) (string, bool, error) {
+				if path == runtimePath {
+					return `{"schema_version":1,"id":"task-1","capabilities":` + tc.capabilities + `}`, true, nil
+				}
+				return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1"}`, true, nil
+			},
+		}
+		binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1", store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if binding.ProjectNativeAgentTools != tc.want {
+			t.Fatalf("capabilities %s: ProjectNativeAgentTools = %v, want %v", tc.capabilities, binding.ProjectNativeAgentTools, tc.want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import { SecretSelectionSection } from '../../components/secrets/SecretSelection
 import { Button } from '../../components/ui/Button'
 import { IconUploadField } from '../../components/ui/IconUploadField'
 import { SettingsCard } from '../../components/ui/SettingsCard'
+import { ToggleRow } from '../../components/ui/ToggleRow'
 import { Input } from '../../components/ui/Input'
 import { Label } from '../../components/ui/label'
 import { Textarea } from '../../components/ui/Textarea'
@@ -257,7 +258,7 @@ function WorkFoldersBody({ workspacePath, workflowContextPaths, onWorkflowContex
   )
 }
 
-export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescription, projectIdentity, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
+export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescription, projectIdentity, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, nativeAgentTools, onNativeAgentToolsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
   workspacePath: string
   projectTitle: string
   projectDescription: string
@@ -270,6 +271,9 @@ export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescript
   enabledPanels?: Set<string>
   onAsk: (message: string) => Promise<void>
   onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>
+  nativeAgentTools?: boolean
+  /** Omitted for readers: only the Crew owner can change it. */
+  onNativeAgentToolsChange?: (enabled: boolean) => Promise<unknown>
   onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>
   onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>
   onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>
@@ -341,14 +345,52 @@ export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescript
             onWorkflowContextPathsChange={onWorkflowContextPathsChange}
           />
         </div>}
-        {activeTab === 'models' && <WorkModelsPanel
-          tabId={tabId}
-          workspacePath={workspacePath}
-          projectLLMConfig={projectLLMConfig}
-          onRuntimeChange={onRuntimeChange}
-          hideHeader
-        />}
+        {activeTab === 'models' && <div className="space-y-4">
+          <WorkModelsPanel
+            tabId={tabId}
+            workspacePath={workspacePath}
+            projectLLMConfig={projectLLMConfig}
+            onRuntimeChange={onRuntimeChange}
+            hideHeader
+          />
+          <NativeAgentToolsSetting enabled={!!nativeAgentTools} onChange={onNativeAgentToolsChange} />
+        </div>}
       </div>
     </div>
+  )
+}
+
+/**
+ * Crew "Native agent tools" switch (workflow.json capabilities.native_agent_tools).
+ * On: the coding agent (Claude Code, Codex, Muse) may use its own file reading,
+ * search, skills, todo list and subagents. Shell commands and file changes
+ * always go through AgentWorks. Other coding CLIs keep AgentWorks tools only.
+ */
+function NativeAgentToolsSetting({ enabled, onChange }: { enabled: boolean; onChange?: (enabled: boolean) => Promise<unknown> }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  return (
+    <SettingsCard title="Agent tools" ariaLabel="Native agent tools">
+      <ToggleRow
+        label="Native agent tools"
+        description="Let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Applies to Claude Code, Codex and Muse."
+        checked={enabled}
+        disabled={!onChange || saving}
+        disabledTitle={onChange ? 'Saving…' : 'Only the Crew owner can change this.'}
+        onCheckedChange={async checked => {
+          if (!onChange) return
+          setSaving(true)
+          setError('')
+          try {
+            await onChange(checked)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not save this setting.')
+          } finally {
+            setSaving(false)
+          }
+        }}
+      />
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </SettingsCard>
   )
 }

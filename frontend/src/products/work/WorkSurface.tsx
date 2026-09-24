@@ -29,7 +29,7 @@ import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopTool
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
 import { belongsToWorkProject, findCanonicalWorkProjectTab, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
-import { updateProductProjectLLMConfig, updateProductProjectSelections, type ProductIdentityPatch } from '../../platform/chat/productProjects'
+import { updateProductProjectLLMConfig, updateProductProjectNativeAgentTools, updateProductProjectSelections, type ProductIdentityPatch } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
@@ -226,6 +226,15 @@ function useWorkSessions() {
     return updated
   }, [sessions])
 
+  const updateNativeAgentTools = useCallback(async (projectId: string, enabled: boolean) => {
+    const project = sessions.find(item => item.id === projectId)
+    if (!project) throw new Error('This Crew project is no longer available.')
+    if (project.shared) throw new Error('Only the Crew owner can change this.')
+    const updated = await updateProductProjectNativeAgentTools(project, enabled, `${enabled ? 'Enable' : 'Disable'} native agent tools for Crew project ${project.title}`, 'workflow.json')
+    setSessions(current => current.map(item => item.id === projectId ? updated : item))
+    return updated
+  }, [sessions])
+
   const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; selectedGlobalSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
@@ -250,6 +259,7 @@ function useWorkSessions() {
     create,
     remove,
     updateLLMConfig,
+    updateNativeAgentTools,
     updateSelections,
     updateIdentity,
     refresh,
@@ -616,7 +626,7 @@ function WorkTopBarControl({
 }
 
 export function WorkSurface() {
-  const { sessions, selected, select, create, remove, updateLLMConfig, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const { sessions, selected, select, create, remove, updateLLMConfig, updateNativeAgentTools, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
   const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected || selected.shared) return
@@ -1097,6 +1107,11 @@ export function WorkSurface() {
                         selectedGlobalSecrets={selected.selectedGlobalSecrets}
                         workflowContextPaths={selected.workflowContextPaths}
                         onRuntimeChange={changeWorkRuntime}
+                        nativeAgentTools={!!selected.nativeAgentTools}
+                        onNativeAgentToolsChange={async enabled => {
+                          await updateNativeAgentTools(selected.id, enabled)
+                          markWorkProjectRuntimeDirty(selected.id)
+                        }}
                         onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                         onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
                         onSelectedSecretsChange={secrets => updateSelections(selected.id, { selectedSecrets: secrets })}

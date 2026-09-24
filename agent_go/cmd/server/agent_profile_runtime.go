@@ -304,6 +304,13 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		}
 		crewOwned = crew.OwnedByCaller
 		crewRoot = crew.Binding.WorkspacePath
+		// The crew's "Native agent tools" switch. Resolve returned a copy, so
+		// this changes only this request's profile; the session key hashes the
+		// definition, so toggling relaunches the coding CLI. Owners only:
+		// readers keep AgentWorks-only tools.
+		if crewOwned && crew.Binding.ProjectNativeAgentTools {
+			profile.Runtime.AgentTools.Mode = "hybrid"
+		}
 		if !crewOwned {
 			if canonicalCrewWorkspaceRoot(selectedFolder) != canonicalCrewWorkspaceRoot(crewRoot) {
 				return nil, fmt.Errorf("Work conversation does not match the selected session")

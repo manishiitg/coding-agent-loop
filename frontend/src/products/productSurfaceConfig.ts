@@ -5,6 +5,7 @@ export type ProductSurface = (typeof PRODUCT_SURFACES)[number]
 type ProductRuntimeConfig = {
   defaultProductSurface?: unknown
   enabledProductSurfaces?: unknown
+  gatewaySso?: unknown
 }
 
 function runtimeConfig(): ProductRuntimeConfig | undefined {
@@ -44,6 +45,10 @@ export function isEnabledProductSurface(surface: ProductSurface): boolean {
 
 export function isSingleProductDeployment(): boolean {
   return enabledProductSurfaces().length === 1
+}
+
+export function hasGatewaySSO(): boolean {
+  return runtimeConfig()?.gatewaySso === true
 }
 
 /**

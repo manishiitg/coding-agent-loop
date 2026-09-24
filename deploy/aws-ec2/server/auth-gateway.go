@@ -26,6 +26,8 @@ import (
 const (
 	sessionDuration      = 12 * time.Hour
 	sessionRefreshWindow = 6 * time.Hour
+	ssoSessionDuration   = 30 * 24 * time.Hour
+	ssoFlowDuration      = 10 * time.Minute
 	authRequiredHeader   = "X-AgentWorks-Login"
 	requestIDHeader      = "X-Request-ID"
 	slowRequestThreshold = time.Second
@@ -125,6 +127,14 @@ type gateway struct {
 	// tests) already depends on -- this is opt-in per deployment via
 	// GATEWAY_DISABLE_PASSWORD_GATE, never a default.
 	disablePasswordGate bool
+	// ssoOnly replaces the shared password with Google sign-in via Supabase,
+	// while keeping this product's existing single family workspace.
+	ssoOnly         bool
+	ssoURL          string
+	ssoAnonKey      string
+	ssoRedirectURL  string
+	ssoAllowedEmail map[string]bool
+	ssoClient       *http.Client
 }
 
 // sessionCookieName derives a product-namespaced cookie name from the
@@ -231,8 +241,28 @@ func gatewayClientIP(r *http.Request) string {
 func newGateway() *gateway {
 	secret := os.Getenv("AUTH_SECRET")
 	password := os.Getenv("ACCESS_PASSWORD")
-	if len(secret) < 32 || password == "" {
-		log.Fatal("AUTH_SECRET (32+ chars) and ACCESS_PASSWORD are required")
+	ssoOnly := gatewayBoolEnv("GATEWAY_SSO_ONLY")
+	if len(secret) < 32 || (!ssoOnly && password == "") {
+		log.Fatal("AUTH_SECRET (32+ chars) and ACCESS_PASSWORD (unless GATEWAY_SSO_ONLY=true) are required")
+	}
+	allowed := make(map[string]bool)
+	for _, email := range strings.Split(os.Getenv("GATEWAY_SSO_ALLOWED_EMAILS"), ",") {
+		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+			allowed[email] = true
+		}
+	}
+	ssoURL := strings.TrimRight(os.Getenv("GATEWAY_SSO_SUPABASE_URL"), "/")
+	ssoRedirectURL := os.Getenv("GATEWAY_SSO_REDIRECT_URL")
+	if ssoOnly && (gatewayBoolEnv("GATEWAY_DISABLE_PASSWORD_GATE") || len(allowed) == 0 || ssoURL == "" || os.Getenv("GATEWAY_SSO_SUPABASE_ANON_KEY") == "" || ssoRedirectURL == "") {
+		log.Fatal("GATEWAY_SSO_ONLY needs its Supabase URL, anon key, redirect URL and allowed emails, and cannot use GATEWAY_DISABLE_PASSWORD_GATE")
+	}
+	if ssoOnly {
+		providerURL, providerErr := url.Parse(ssoURL)
+		callbackURL, callbackErr := url.Parse(ssoRedirectURL)
+		if providerErr != nil || callbackErr != nil || providerURL.Scheme != "https" || providerURL.Host == "" || providerURL.User != nil || providerURL.Path != "" || providerURL.RawQuery != "" || providerURL.Fragment != "" || callbackURL.Scheme != "https" || callbackURL.Host == "" || callbackURL.User != nil || callbackURL.Path != "/auth/google/callback" || callbackURL.RawQuery != "" || callbackURL.Fragment != "" {
+			log.Fatal("GATEWAY_SSO_SUPABASE_URL and GATEWAY_SSO_REDIRECT_URL must be valid HTTPS URLs, with the callback ending at /auth/google/callback")
+		}
+		password = ""
 	}
 	userID := gatewayEnv("GATEWAY_USER_ID", "video-studio")
 	return &gateway{
@@ -246,6 +276,12 @@ func newGateway() *gateway {
 		agent:               proxyFor(gatewayEnv("AGENT_API_URL", "http://127.0.0.1:8000")),
 		workspace:           proxyFor(gatewayEnv("WORKSPACE_API_URL", "http://127.0.0.1:8080")),
 		disablePasswordGate: gatewayBoolEnv("GATEWAY_DISABLE_PASSWORD_GATE"),
+		ssoOnly:             ssoOnly,
+		ssoURL:              ssoURL,
+		ssoAnonKey:          os.Getenv("GATEWAY_SSO_SUPABASE_ANON_KEY"),
+		ssoRedirectURL:      ssoRedirectURL,
+		ssoAllowedEmail:     allowed,
+		ssoClient:           &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -268,9 +304,17 @@ func (g *gateway) serveFrontend(w http.ResponseWriter, r *http.Request) {
 
 func (g *gateway) signedSession(expires time.Time) string {
 	payload := strconv.FormatInt(expires.Unix(), 10)
+	return g.signCookiePayload(payload)
+}
+
+func (g *gateway) signCookiePayload(payload string) string {
 	mac := hmac.New(sha256.New, g.secret)
 	_, _ = mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (g *gateway) signedSSOSession(expires time.Time, email string) string {
+	return g.signCookiePayload("s." + base64.RawURLEncoding.EncodeToString([]byte(strings.ToLower(email))) + "." + strconv.FormatInt(expires.Unix(), 10))
 }
 
 func (g *gateway) sessionExpiry(r *http.Request) (time.Time, bool) {
@@ -279,6 +323,22 @@ func (g *gateway) sessionExpiry(r *http.Request) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	parts := strings.Split(cookie.Value, ".")
+	if g.ssoOnly {
+		if len(parts) != 4 || parts[0] != "s" {
+			return time.Time{}, false
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil || !g.ssoAllowedEmail[strings.ToLower(string(decoded))] {
+			return time.Time{}, false
+		}
+		expires, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || !time.Now().Before(time.Unix(expires, 0)) {
+			return time.Time{}, false
+		}
+		expiresAt := time.Unix(expires, 0)
+		want := g.signedSSOSession(expiresAt, string(decoded))
+		return expiresAt, subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(want)) == 1
+	}
 	if len(parts) != 2 {
 		return time.Time{}, false
 	}
@@ -292,6 +352,18 @@ func (g *gateway) sessionExpiry(r *http.Request) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return expiresAt, true
+}
+
+func (g *gateway) setSSOSessionCookie(w http.ResponseWriter, expires time.Time, email string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     g.sessionCookie,
+		Value:    g.signedSSOSession(expires, email),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expires,
+	})
 }
 
 func (g *gateway) setSessionCookie(w http.ResponseWriter, expires time.Time) {
@@ -513,7 +585,7 @@ func (g *gateway) serveAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func safeNext(next string) string {
-	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
+	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") && !strings.ContainsAny(next, "\\\r\n") {
 		return next
 	}
 	return "/"
@@ -521,6 +593,16 @@ func safeNext(next string) string {
 
 func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 	next := safeNext(r.URL.Query().Get("next"))
+	if g.ssoOnly {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Password login is unavailable", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		fmt.Fprintf(w, "<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>%s</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101827;color:#eef2ff;font:16px system-ui}main{width:min(360px,calc(100%% - 48px));padding:32px;border:1px solid #334155;border-radius:16px;background:#172033}a{display:block;text-align:center;padding:12px;border-radius:8px;background:#38bdf8;color:#082f49;font-weight:700;text-decoration:none}a:hover{background:#7dd3fc}p{color:#cbd5e1}</style></head><body><main><h1>%s</h1><p>Sign in with an approved Google account.</p><a href='/auth/google/start?next=%s'>Continue with Google</a></main></body></html>", g.appName, g.appName, url.QueryEscape(next))
+		return
+	}
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err == nil && subtle.ConstantTimeCompare([]byte(r.Form.Get("password")), g.password) == 1 {
 			expires := time.Now().Add(sessionDuration)
@@ -536,6 +618,116 @@ func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "<p class=error>Incorrect password. Try again.</p>")
 	}
 	fmt.Fprintf(w, "<form method=post><input type=hidden name=next value=%q><input type=password name=password autofocus required><button type=submit>Continue</button></form></main></body></html>", next)
+}
+
+type gatewaySSOFlow struct {
+	Verifier string `json:"verifier"`
+	Next     string `json:"next"`
+	Expires  int64  `json:"expires"`
+}
+
+func randomGatewayToken(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func (g *gateway) ssoFlowCookieName() string { return g.sessionCookie + "_oauth" }
+
+func (g *gateway) startGoogleSSO(w http.ResponseWriter, r *http.Request) {
+	if !g.ssoOnly || r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	verifier, err := randomGatewayToken(32)
+	if err != nil {
+		http.Error(w, "Unable to start sign-in", http.StatusInternalServerError)
+		return
+	}
+	flow := gatewaySSOFlow{Verifier: verifier, Next: safeNext(r.URL.Query().Get("next")), Expires: time.Now().Add(ssoFlowDuration).Unix()}
+	data, err := json.Marshal(flow)
+	if err != nil {
+		http.Error(w, "Unable to start sign-in", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: g.ssoFlowCookieName(), Value: g.signCookiePayload(base64.RawURLEncoding.EncodeToString(data)), Path: "/auth/google/callback", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: int(ssoFlowDuration.Seconds())})
+	challenge := sha256.Sum256([]byte(verifier))
+	authURL, _ := url.Parse(g.ssoURL + "/auth/v1/authorize")
+	params := authURL.Query()
+	params.Set("provider", "google")
+	params.Set("redirect_to", g.ssoRedirectURL)
+	params.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
+	params.Set("code_challenge_method", "s256")
+	authURL.RawQuery = params.Encode()
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, authURL.String(), http.StatusFound)
+}
+
+func (g *gateway) googleSSOCallback(w http.ResponseWriter, r *http.Request) {
+	if !g.ssoOnly || r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	cookie, err := r.Cookie(g.ssoFlowCookieName())
+	http.SetCookie(w, &http.Cookie{Name: g.ssoFlowCookieName(), Path: "/auth/google/callback", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	if err != nil || r.URL.Query().Get("code") == "" {
+		http.Error(w, "Sign-in was cancelled or expired", http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(cookie.Value, ".")
+	if len(parts) != 2 || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(g.signCookiePayload(parts[0]))) != 1 {
+		http.Error(w, "Sign-in state is invalid", http.StatusBadRequest)
+		return
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var flow gatewaySSOFlow
+	if err != nil || json.Unmarshal(data, &flow) != nil || flow.Verifier == "" || !time.Now().Before(time.Unix(flow.Expires, 0)) {
+		http.Error(w, "Sign-in state has expired", http.StatusBadRequest)
+		return
+	}
+	requestBody, _ := json.Marshal(map[string]string{"auth_code": r.URL.Query().Get("code"), "code_verifier": flow.Verifier})
+	tokenURL := g.ssoURL + "/auth/v1/token?grant_type=pkce"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, tokenURL, strings.NewReader(string(requestBody)))
+	if err != nil {
+		http.Error(w, "Unable to complete sign-in", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", g.ssoAnonKey)
+	client := g.ssoClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Unable to complete sign-in", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "Google sign-in failed", http.StatusUnauthorized)
+		return
+	}
+	var result struct {
+		User struct {
+			Email            string `json:"email"`
+			EmailConfirmedAt string `json:"email_confirmed_at"`
+		} `json:"user"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result) != nil || result.User.EmailConfirmedAt == "" {
+		http.Error(w, "Google did not provide a verified email", http.StatusForbidden)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(result.User.Email))
+	if !g.ssoAllowedEmail[email] {
+		http.Error(w, "This account is not approved for SparkQuill", http.StatusForbidden)
+		return
+	}
+	g.setSSOSessionCookie(w, time.Now().Add(ssoSessionDuration), email)
+	http.Redirect(w, r, safeNext(flow.Next), http.StatusSeeOther)
 }
 
 // Webhook receivers authenticate the original request with their own secret.
@@ -634,6 +826,14 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		g.route(w, r)
 		return
 	}
+	if r.URL.Path == "/auth/google/start" {
+		g.startGoogleSSO(w, r)
+		return
+	}
+	if r.URL.Path == "/auth/google/callback" {
+		g.googleSSOCallback(w, r)
+		return
+	}
 	if r.URL.Path == "/login" {
 		g.login(w, r)
 		return
@@ -677,7 +877,7 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// Renew an active browser session before it expires. This prevents regular
 	// users from being asked for the shared password repeatedly while still
 	// allowing an idle browser to expire normally.
-	if time.Until(expiresAt) < sessionRefreshWindow {
+	if !g.ssoOnly && time.Until(expiresAt) < sessionRefreshWindow {
 		g.setSessionCookie(w, time.Now().Add(sessionDuration))
 	}
 	g.route(w, r)

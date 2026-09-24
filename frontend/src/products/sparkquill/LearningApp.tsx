@@ -74,7 +74,7 @@ import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend
 import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs, withViewerLinkBridge } from './sqOps'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
-import { isSingleProductDeployment } from '../productSurfaceConfig'
+import { hasGatewaySSO, isSingleProductDeployment } from '../productSurfaceConfig'
 import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
 import WorkflowLiveBrowser from '../../components/workflow/WorkflowLiveBrowser'
 import { llmConfigService, type ProviderSetupSession } from '../../services/llm-config-api'
@@ -3513,6 +3513,14 @@ export default function LearningApp() {
                   >
                     {savingSecret ? 'Saving…' : 'Save secret'}
                   </button>
+                  {hasGatewaySSO() && (
+                    <div style={{ marginTop: '24px' }}>
+                      <p className="fl-drawer-label">Account</p>
+                      <button className="fl-ghost-btn" type="button" onClick={() => window.location.assign('/logout')}>
+                        Sign out
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

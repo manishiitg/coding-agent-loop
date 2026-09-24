@@ -4,6 +4,7 @@ import {
   enabledProductSurfaces,
   intersectAllowedProductSurfaces,
   isEnabledProductSurface,
+  hasGatewaySSO,
   isSingleProductDeployment,
 } from './productSurfaceConfig'
 
@@ -16,6 +17,7 @@ describe('product surface deployment configuration', () => {
     expect(enabledProductSurfaces()).toEqual(['agentworks', 'work'])
     expect(deploymentDefaultProductSurface()).toBe('agentworks')
     expect(isSingleProductDeployment()).toBe(false)
+    expect(hasGatewaySSO()).toBe(false)
   })
 
   it('constrains the dedicated host to AgentWorks and Video Studio', () => {
@@ -38,6 +40,7 @@ describe('product surface deployment configuration', () => {
       __APP_RUNTIME_CONFIG__: {
         defaultProductSurface: 'sparkquill',
         enabledProductSurfaces: ['sparkquill'],
+        gatewaySso: true,
       },
     })
 
@@ -45,6 +48,7 @@ describe('product surface deployment configuration', () => {
     expect(deploymentDefaultProductSurface()).toBe('sparkquill')
     expect(isEnabledProductSurface('agentworks')).toBe(false)
     expect(isSingleProductDeployment()).toBe(true)
+    expect(hasGatewaySSO()).toBe(true)
   })
 
   it('exposes the Work surface when the deployment allowlists it', () => {

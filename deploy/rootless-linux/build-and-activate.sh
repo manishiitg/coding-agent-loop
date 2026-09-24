@@ -25,6 +25,24 @@ test -f "$PRODUCT_DIR/product.env" || { echo "No such product: $PRODUCT_DIR/prod
 source "$PRODUCT_DIR/product.env"
 [[ "$PRODUCT" == "$(basename "$PRODUCT_DIR")" ]] || { echo "product.env PRODUCT=$PRODUCT does not match directory $(basename "$PRODUCT_DIR")" >&2; exit 1; }
 
+python3 - "$REMOTE_APP/.env" "${REQUIRED_PERSISTED_ENV_KEYS[@]:-}" <<'PY'
+from pathlib import Path
+import sys
+
+required = [key for key in sys.argv[2:] if key]
+if required:
+    path = Path(sys.argv[1])
+    values = {}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            key, separator, value = line.partition('=')
+            if separator:
+                values[key] = value.strip().strip('"')
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        raise SystemExit('Missing required persisted deployment settings: ' + ', '.join(missing))
+PY
+
 for snippet in "${RUNTIME_CONFIG_REQUIRED_SNIPPETS[@]:-}"; do
   [[ -z "$snippet" ]] || grep -Fq "$snippet" "$PRODUCT_DIR/runtime-config.js" || {
     echo "$PRODUCT runtime config is missing required setting: $snippet" >&2

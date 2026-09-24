@@ -12,8 +12,9 @@ import { isInternalChildSession } from './workflowSessionKinds'
 // made a newly-started schedule look idle for an entire turn of attention even
 // though the backend had already marked it busy. Keep this bounded and explicit;
 // the monitor force-refreshes on this cadence while other consumers may retain
-// the broader active-session cache for cheaper background checks.
-export const GLOBAL_ACTIVITY_REFRESH_MS = 5_000
+// the broader active-session cache for cheaper background checks. 10s (not
+// 5s): at 5s this one poll was the app's single largest request source.
+export const GLOBAL_ACTIVITY_REFRESH_MS = 10_000
 
 function isWorkflowSession(session: ActiveSessionInfo): boolean {
   return session.agent_mode?.toLowerCase().includes('workflow') ?? false

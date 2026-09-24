@@ -777,7 +777,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     if (!workspacePath) return
     let disposed = false
     void whenWorkflowChatSettled().then(() => { if (!disposed) void checkForExternalPlanChanges() })
-    const timer = setInterval(() => { void checkForExternalPlanChanges() }, 15000)
+    const timer = setInterval(() => { void checkForExternalPlanChanges() }, 30000)
     const onFocus = () => { void checkForExternalPlanChanges() }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)

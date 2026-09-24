@@ -3,10 +3,9 @@
 > Activity pages are Quill's own design now (see the parent prompt); this
 > guide is for the progress page.
 
-Every HTML file the app generates (the progress page, study material,
-tests, and anything else) shares this look so they feel like one product. Build a
-**complete standalone document** — inline the CSS, no web fonts, no remote
-images, no network calls at load time.
+Use this visual system for the progress page. Activity pages, including games,
+can have their own design. All pages should work without remote fonts, images,
+or network calls at load time.
 
 The one thing that may live beside the page rather than inside it is a picture —
 fetched by `find_image` or made with `image_gen`/`image_edit` (see "Real pictures"
@@ -34,8 +33,9 @@ mistake, not a harmless leftover.
 
 ## Rules
 
-- Inline the CSS below in a `<style>` tag; adjust only where a skill asks.
-- **The file must contain ONLY the page's own HTML and CSS.** Never paste
+- For the progress page, inline the CSS below in a `<style>` tag. For activities,
+  use any design that makes the learning clear and engaging.
+- **The file must contain only its own HTML, CSS and self-contained JavaScript.** Never paste
   instructions, guide text, or markdown into it — no ``` fences, no GOOD:/BAD:
   notes, no backticked tool names, no sentences about what to do. Prose left
   inside `<style>` silently invalidates the stylesheet: the `:root` theme
@@ -51,9 +51,10 @@ mistake, not a harmless leftover.
   richness the moment deserves. Judge tastefully — quality over quantity, and
   never at the cost of the content being clear and correct — but don't hold back
   on capability you actually have.
-- **Wire every answer control to Quill.** A text box or selection must have a
-  submit button that calls `SQ.answer(qid, value, this)`; a standalone control
-  leaves the child expecting a response that never comes. The activity finisher
+- **Give every answer control a response.** For tutor-reviewed questions, a text
+  box or selection needs a submit button that calls `SQ.answer(qid, value, this)`.
+  A self-contained learning game can use JavaScript to give immediate feedback.
+  The activity finisher
   keeps `<input>`, `<textarea>`, and `<select>` but unwraps `<form>`. Write
   "try it yourself" questions as plain text when the answer belongs on paper.
   - BAD: `<input type="text" placeholder="Type your answer...">` with no
@@ -77,7 +78,7 @@ mistake, not a harmless leftover.
   viewer and blanks the page.
   - GOOD: `<nav><a href="#s1">Right now</a><a href="#subjects">Subjects</a></nav>` with matching `id="s1"`, `id="subjects"` sections
   - BAD: `<a href="subjects.html">Subjects</a>`
-- **Wrap every question in `<div class="q" id="q1">`**, the id's number matching the
+- **Wrap tutor-tracked questions in `<div class="q" id="q1">`**, the id's number matching the
   question's own. This is load-bearing beyond ordinary addressability: `open_file`
   with NO `focus` lands the page at the first `.q` that has no answer recorded inside
   it, so the child lands on the question she's up to instead of back at the top every
@@ -94,29 +95,21 @@ mistake, not a harmless leftover.
   question only.** When the tutor records an answer it replaces that question's
   `.answer-space` with the `.answered-note`. Leaving both makes a finished question
   look unfinished and invites her to answer it twice.
-- **No click-to-REVEAL** — no `<details>/<summary>`, no tap-to-flip cards. They
-  silently show hidden content with no record it happened, so Quill never learns she
-  looked or what she guessed. Write the "guess before you peek" moment as plain text
-  and let Quill ask for the guess and reveal the answer in chat.
-  - BAD: `<details><summary>Reveal the answer</summary><p>Three hearts!</p></details>`
-- **Click-to-CHOOSE is welcome — via SQ.choose only.** A button representing a real
-  choice (which path, which answer, what next) sends its text to Quill exactly as if
-  the child typed it, making the choice a real turn Quill responds to. A button that
-  does anything else — toggling visibility, revealing something, nothing at all — is
-  as invisible to Quill as a `<details>` reveal, and just as wrong.
-  Always through `SQ.choose(text, this)` (defined once in the base template's own
+- **Formal tests keep answers out of the page.** The finisher unwraps
+  `<details>/<summary>`, so they cannot hide a solution. Put test solutions in
+  the parent-only key. A learning game can use its own JavaScript for immediate
+  feedback, scene changes and local choices; it need not call the tutor on every tap.
+- **Use SQ.choose when a choice needs the tutor.** It sends the child's choice as
+  a real turn Quill can respond to. Call `SQ.choose(text, this)` (defined once in the base template's own
   `<script>`, below) — never a raw inline `postMessage` — because it also disables
   the button the instant it's clicked, so a slow reply can't be mistaken for a
   missed tap and answered twice.
   - GOOD: `<button onclick="SQ.choose('Investigate Saturn', this)">Investigate Saturn</button>`
   - BAD: `<button onclick="parent.postMessage({__sq:1,op:'choose',text:'Investigate Saturn'},'*')">Investigate Saturn</button>` — sends correctly, but the button stays clickable
-  - BAD: `<button onclick="document.getElementById('a').style.display='block'">Show answer</button>`
-- For content that should change turn by turn as the conversation unfolds — rather
-  than being fixed at creation time — use `show_scene` instead of this file: a small
-  snippet rendered inline in a reply, generated fresh, using the same SQ.choose
-  pattern. Everything below about pictures — relative `<img src>`, never base64,
-  `.fig`/`figcaption` — applies to a scene's HTML exactly the same as a page's; a
-  scene resolves a picture from the activity folder the same way.
+- Use `show_scene` for a short visual moment that responds to something she said
+  in chat. Durable game levels belong in the activity page so they are ready to
+  play again when she returns. Relative `<img src>` and `.fig`/`figcaption`
+  work in both places.
 
 ## Base template
 
@@ -209,7 +202,7 @@ mistake, not a harmless leftover.
     // depending on it being hand-written correctly every time.
     // SQ.answer / SQ.startTimers / SQ.cancelTimer ride the same bridge — see
     // "Answer widgets" and "Timers" below.
-    window.SQ = {
+    window.SQ = Object.assign(window.SQ || {}, {
       choose: function (text, el) {
         if (el && el.disabled) return
         if (el) el.disabled = true
@@ -226,7 +219,7 @@ mistake, not a harmless leftover.
       cancelTimer: function (qid) {
         parent.postMessage({ __sq: 1, op: 'timer-cancel', qid: qid }, '*')
       }
-    }
+    })
     // Page errors are invisible inside a sandboxed frame; report them out so
     // a broken widget shows up in the app console instead of failing silently.
     window.addEventListener('error', function (e) {

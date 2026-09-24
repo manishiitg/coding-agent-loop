@@ -7,6 +7,7 @@
 export const SQ_MAX_TEXT = 2000
 export const SQ_MAX_ID = 32
 export const SQ_MAX_TIMERS = 40
+export const SQ_MAX_GAME_STATE_BYTES = 65536
 // 5 seconds to 6 hours: shorter is a misclick vector, longer is not a test.
 export const SQ_MIN_TIMER_SECONDS = 5
 export const SQ_MAX_TIMER_SECONDS = 21600
@@ -44,6 +45,17 @@ export function buildSqTimerText(qid: unknown): string {
   return id
     ? `[Timer] Time expired on ${id} with no answer.`
     : '[Timer] Time expired on this test.'
+}
+
+/** Keep a game's saved progress inside its own activity, never a shared key. */
+export function sqGameStateKey(filePath: string | null | undefined, key: unknown): string | null {
+  if (typeof key !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(key)) return null
+  const parts = String(filePath ?? '').split('/').filter(Boolean)
+  if (parts.length < 3 || parts[parts.length - 3] !== 'activities') return null
+  const activity = parts[parts.length - 2]
+  if (!/^[a-z0-9][a-z0-9._-]{0,99}$/.test(activity)) return null
+  const stateKey = `game-${activity.length}-${activity}-${key}`
+  return stateKey.length <= 120 ? stateKey : null
 }
 
 export interface SqTimerConfig {

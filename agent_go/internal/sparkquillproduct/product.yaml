@@ -37,7 +37,6 @@ profile:
     - process-file
     - recall-conversations
     - teach-coding
-    - discover-something-new
     - create-progress-report
     - publish
     - notify
@@ -79,7 +78,7 @@ profile:
       prompt: "Create a practice test for my child \u2014 a short refresher, then a proper check with real tiers, plus the answer key for me."
     - name: surprise-her
       description: "Surprise her with something new"
-      prompt: "Surprise her with something fun and off-syllabus - something new for her to discover this week."
+      prompt: "Surprise her with a complete, playable learning game about something fun and new to discover this week. Choose a topic that fits her age and interests, and make the game ready for me to give to her."
     - name: update-progress-report
       description: "Update progress report"
       prompt: "Build an updated progress report \u2014 follow your create-progress-report skill, make it a designed HTML page, and give me a short coach-style read of the evidence here in chat too."

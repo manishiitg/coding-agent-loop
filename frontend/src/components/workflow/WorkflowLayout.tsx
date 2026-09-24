@@ -2213,7 +2213,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       <div className={`flex flex-col h-full ${className}`}>
 
         <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="flex flex-col items-center gap-4 text-center max-w-md">
+        <div data-tour="automation-empty-state" className="flex flex-col items-center gap-4 text-center max-w-md">
             <div className="w-20 h-20 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
             <span className="text-4xl">🚀</span>
           </div>
@@ -2222,8 +2222,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               Select an Automation
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Choose an automation preset from the sidebar to get started.
-              The automation canvas will visualize your plan and let you run it step by step.
+              Choose an automation from the top bar, or use the plus button to create one.
+              Build it in chat and inspect its plan and dashboard beside the conversation.
             </p>
             </div>
           </div>

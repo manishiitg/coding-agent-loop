@@ -528,6 +528,7 @@ function WorkTopBarControl({
 
   return (
     <TopBarEntitySelector
+      dataTour="crew-selector"
       label={selected?.identity?.name || selected?.title}
       leading={selected ? <EntityIdentityIcon icon={selected.identity?.icon} label={selected.identity?.name || selected.title} /> : undefined}
       compactOnNarrow
@@ -920,7 +921,13 @@ export function WorkSurface() {
     <div className="flex h-screen min-h-0 flex-col bg-background">
       <UpdateProgressToast />
       <GlobalHumanFeedbackPrompt />
-      <ModePresetBar productControl={topBarControl} reduced />
+      <ModePresetBar
+        productControl={topBarControl}
+        reduced
+        walkthroughSurface={selected ? 'crew' : 'empty-crew'}
+        walkthroughReady={!sessionsLoading && !creating && !error}
+        walkthroughPaused={createOpen || deleteCandidate !== null}
+      />
       {createOpen ? (
         <CreateWorkProjectDialog
           onClose={() => { if (!creating) setCreateOpen(false) }}
@@ -957,7 +964,7 @@ export function WorkSurface() {
               {sessionsLoading || creating ? (
                 <span className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening Crew…</span>
               ) : (
-                <div className="flex max-w-xl flex-col items-center px-6 text-center">
+                <div data-tour="crew-empty-state" className="flex max-w-xl flex-col items-center px-6 text-center">
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
                     <span className="font-mono text-3xl font-semibold text-gray-600 dark:text-gray-200">&lt;&gt;</span>
                   </div>
@@ -982,6 +989,7 @@ export function WorkSurface() {
                       </div>
                     </div>
                     <button
+                      data-tour="crew-create"
                       type="button"
                       onClick={openCreateProject}
                       className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
@@ -1027,7 +1035,7 @@ export function WorkSurface() {
                   {tabId && canonicalTabId && selected ? <WorkChatTabs projectId={selected.id} canonicalTabId={canonicalTabId} /> : <div className="min-w-0 flex-1" />}
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={workspacePanels} readOnly={Boolean(selected.shared)} /> : null}
                 </WorkspaceTopToolbar>
-                {layout.showChat ? <main className={layout.chatClassName}>
+                {layout.showChat ? <main data-tour="crew-chat" className={layout.chatClassName}>
                   {selected.shared ? (
                     <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
                       <span className="min-w-0 flex-1 text-muted-foreground">
@@ -1085,6 +1093,7 @@ export function WorkSurface() {
                 ) : null}
                 {layout.showPanel ? (
                   <aside
+                    data-tour="crew-workspace"
                     data-ui-workspace={selected.workspacePath}
                     data-ui-view={workPresentationView(workspaceView)}
                     className={layout.panelClassName}

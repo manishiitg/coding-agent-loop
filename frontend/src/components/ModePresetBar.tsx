@@ -35,6 +35,7 @@ import {
   dismissWorkflowWalkthrough,
   getLLMDiscoveryOnboardingState,
   isWorkflowWalkthroughDismissed,
+  type WalkthroughSurface,
 } from '../utils/onboarding'
 import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
 import { currentActiveSession, currentSessionId, headerStatusLabel } from '../utils/globalActivityMonitorStatus'
@@ -76,9 +77,13 @@ interface ModePresetBarProps {
   productControl?: React.ReactNode
   /** Keep the AgentWorks bar and shared controls while omitting automation-only actions. */
   reduced?: boolean
+  /** Product surface and readiness for its context-specific walkthrough. */
+  walkthroughSurface?: WalkthroughSurface
+  walkthroughReady?: boolean
+  walkthroughPaused?: boolean
 }
 
-export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, reduced = false }) => {
+export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, reduced = false, walkthroughSurface: productWalkthroughSurface, walkthroughReady = true, walkthroughPaused = false }) => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
     selectedModeCategory: state.selectedModeCategory,
     setModeCategory: state.setModeCategory,
@@ -144,11 +149,13 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
+  const [walkthroughSurface, setWalkthroughSurface] = useState<WalkthroughSurface>('overview')
   const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
   const [pendingDuplicatePreset, setPendingDuplicatePreset] = useState<{ id: string; label: string } | null>(null)
   const [duplicatingPreset, setDuplicatingPreset] = useState(false)
-  const pendingAutoWalkthroughAfterLLMDiscoveryRef = useRef(false)
-  const evaluatedAutoWalkthroughRef = useRef(false)
+  const [llmDiscoveryReady, setLLMDiscoveryReady] = useState(() => getLLMDiscoveryOnboardingState() !== 'open')
+  const evaluatedAutoWalkthroughRef = useRef<Partial<Record<WalkthroughSurface, boolean>>>({})
+  const pausedWalkthroughForPresetRef = useRef<WalkthroughSurface | null>(null)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const showSchedulesOverview = useAppStore(s => s.showSchedulesOverview)
@@ -159,6 +166,10 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   const showProviders = useLLMStore(state => state.showLLMModal)
   const isOrganizationView = showWorkflowsOverview
   const isGlobalPage = showWorkflowsOverview || showProviders || showSchedulesOverview
+  const currentWalkthroughSurface: WalkthroughSurface = productWalkthroughSurface
+    ?? (showWorkflowsOverview || showSchedulesOverview || selectedModeCategory !== 'workflow'
+      ? 'overview'
+      : activePreset ? 'automation' : 'empty-automation')
 
   // GlobalActivityMonitor excludes only the current session from its pills.
   // A simultaneous scheduled run for the same workflow remains a separate
@@ -176,35 +187,36 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   const currentTriggerLabel = currentSession ? workflowTriggerLabel({ sessionId: currentSession.session_id, triggeredBy: currentSession.triggered_by }) : undefined
   const currentSessionStatusLabel = currentSession ? headerStatusLabel(currentSession) : null
 
-  const openWorkflowWalkthrough = useCallback(() => {
+  const openWorkflowWalkthrough = useCallback((surface: WalkthroughSurface = currentWalkthroughSurface) => {
+    if (showProviders) useLLMStore.getState().setShowLLMModal(false)
+    evaluatedAutoWalkthroughRef.current[surface] = true
+    setWalkthroughSurface(surface)
     setWorkflowWalkthroughOpenToken(token => token + 1)
     setShowWorkflowWalkthrough(true)
-  }, [])
+  }, [currentWalkthroughSurface, showProviders])
 
   const closeWorkflowWalkthrough = useCallback(() => {
     setShowWorkflowWalkthrough(false)
-    dismissWorkflowWalkthrough()
-  }, [])
+    dismissWorkflowWalkthrough(walkthroughSurface)
+  }, [walkthroughSurface])
 
   useEffect(() => {
-    if (reduced) return
     const handleOpenWalkthrough = () => openWorkflowWalkthrough()
     window.addEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
     return () => window.removeEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
-  }, [openWorkflowWalkthrough, reduced])
+  }, [openWorkflowWalkthrough])
 
   useEffect(() => {
-    if (reduced) return
     const handleLLMDiscoveryOpened = () => {
+      setLLMDiscoveryReady(false)
       setShowWorkflowWalkthrough(false)
+      if (!isWorkflowWalkthroughDismissed(currentWalkthroughSurface)) {
+        evaluatedAutoWalkthroughRef.current[currentWalkthroughSurface] = false
+      }
     }
 
     const handleLLMDiscoveryCleared = () => {
-      if (!pendingAutoWalkthroughAfterLLMDiscoveryRef.current) return
-      pendingAutoWalkthroughAfterLLMDiscoveryRef.current = false
-      if (!isWorkflowWalkthroughDismissed()) {
-        openWorkflowWalkthrough()
-      }
+      setLLMDiscoveryReady(true)
     }
 
     window.addEventListener(LLM_DISCOVERY_ONBOARDING_OPENED_EVENT, handleLLMDiscoveryOpened)
@@ -213,22 +225,45 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
       window.removeEventListener(LLM_DISCOVERY_ONBOARDING_OPENED_EVENT, handleLLMDiscoveryOpened)
       window.removeEventListener(LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT, handleLLMDiscoveryCleared)
     }
-  }, [openWorkflowWalkthrough, reduced])
+  }, [currentWalkthroughSurface])
 
   useEffect(() => {
-    if (reduced) return
-    if (evaluatedAutoWalkthroughRef.current) return
-    evaluatedAutoWalkthroughRef.current = true
-    if (isWorkflowWalkthroughDismissed()) return
-
-    const llmDiscoveryState = getLLMDiscoveryOnboardingState()
-    if (llmDiscoveryState === 'cleared') {
-      openWorkflowWalkthrough()
+    if (showWorkflowWalkthrough && walkthroughSurface !== currentWalkthroughSurface) {
+      setShowWorkflowWalkthrough(false)
+      if (!isWorkflowWalkthroughDismissed(walkthroughSurface)) {
+        evaluatedAutoWalkthroughRef.current[walkthroughSurface] = false
+      }
+    }
+    if (showPresetModal || walkthroughPaused || !walkthroughReady) return
+    if (showProviders) {
+      setShowWorkflowWalkthrough(false)
+      if (!isWorkflowWalkthroughDismissed(currentWalkthroughSurface)) {
+        evaluatedAutoWalkthroughRef.current[currentWalkthroughSurface] = false
+      }
       return
     }
+    if (!llmDiscoveryReady) return
+    if (evaluatedAutoWalkthroughRef.current[currentWalkthroughSurface]) return
+    evaluatedAutoWalkthroughRef.current[currentWalkthroughSurface] = true
+    if (!isWorkflowWalkthroughDismissed(currentWalkthroughSurface)) {
+      openWorkflowWalkthrough(currentWalkthroughSurface)
+    }
+  }, [currentWalkthroughSurface, llmDiscoveryReady, openWorkflowWalkthrough, showPresetModal, showProviders, showWorkflowWalkthrough, walkthroughPaused, walkthroughReady, walkthroughSurface])
 
-    pendingAutoWalkthroughAfterLLMDiscoveryRef.current = true
-  }, [openWorkflowWalkthrough, reduced])
+  useEffect(() => {
+    if (showPresetModal || walkthroughPaused) {
+      if (showWorkflowWalkthrough) {
+        pausedWalkthroughForPresetRef.current = walkthroughSurface
+        setShowWorkflowWalkthrough(false)
+      }
+      return
+    }
+    const pausedSurface = pausedWalkthroughForPresetRef.current
+    pausedWalkthroughForPresetRef.current = null
+    if (pausedSurface === currentWalkthroughSurface && !isWorkflowWalkthroughDismissed(pausedSurface)) {
+      openWorkflowWalkthrough(pausedSurface)
+    }
+  }, [currentWalkthroughSurface, openWorkflowWalkthrough, showPresetModal, showWorkflowWalkthrough, walkthroughPaused, walkthroughSurface])
 
   const returnToWorkspace = useCallback(() => {
     useLLMStore.getState().setShowLLMModal(false)
@@ -750,7 +785,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
               <WorkspaceTopBarControls
-                onOpenWalkthrough={reduced ? undefined : openWorkflowWalkthrough}
+                onOpenWalkthrough={openWorkflowWalkthrough}
                 onOpenShortcuts={reduced ? undefined : () => setShowShortcuts(true)}
               />
 
@@ -878,6 +913,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
         isOpen={showWorkflowWalkthrough}
         onClose={closeWorkflowWalkthrough}
         openToken={workflowWalkthroughOpenToken}
+        surface={walkthroughSurface}
       />
 
       <ConfirmationDialog

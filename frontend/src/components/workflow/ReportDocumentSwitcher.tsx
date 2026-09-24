@@ -81,6 +81,7 @@ export function ReportDocumentSwitcher({ workspacePath, active, onOpen }: {
       <button
         type="button"
         onClick={toggle}
+        data-tour="workflow-dashboard"
         className={`inline-flex h-8 max-w-48 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium shadow-sm transition-colors ${active ? 'bg-muted text-foreground' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         aria-label={`Dashboard${selectedDocument ? `: ${selectedDocument.title}` : ''}`}
         aria-haspopup={documents.length > 1 ? 'menu' : undefined}

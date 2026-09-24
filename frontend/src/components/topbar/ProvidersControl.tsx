@@ -12,6 +12,7 @@ export default function ProvidersControl() {
         <button
           type="button"
           onClick={() => open(true)}
+          data-tour="global-providers"
           aria-label="Providers"
           aria-pressed={isOpen}
           className={`rounded-md p-1 transition-colors ${

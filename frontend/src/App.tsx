@@ -32,7 +32,6 @@ declare global {
   }
 }
 
-import LazyModalFallback from './components/ui/LazyModalFallback'
 import { apiLogEntries, summarizeApiTimings } from './utils/apiTiming'
 import ToastHost from './components/ui/ToastHost'
 import QuickSwitcher from './components/QuickSwitcher'
@@ -117,12 +116,7 @@ function App() {
     setModeCategory: state.setModeCategory,
     completeInitialSetup: state.completeInitialSetup,
   })))
-  const defaultsLoaded = useLLMStore(state => state.defaultsLoaded)
-  const savedLLMs = useLLMStore(state => state.savedLLMs)
-  const llmConfigLocked = useLLMStore(state => state.llmConfigLocked)
-  const isConfigValid = useLLMStore(state => state.isConfigValid)
   const showProviders = useLLMStore(state => state.showLLMModal)
-  const setShowLLMModal = useLLMStore(state => state.setShowLLMModal)
   
   // Load LLM defaults from backend
   useLLMDefaults()
@@ -569,7 +563,6 @@ function App() {
 
 
   const hasInitializedRef = useRef(false)
-  const hasCheckedInitialLLMConfigRef = useRef(false)
 
   // Initialize stores on mount
   useEffect(() => {
@@ -603,17 +596,6 @@ function App() {
     }
   }, [completeInitialSetup, hasCompletedInitialSetup, productSurface, selectedModeCategory, setModeCategory, setShowWorkflowsOverview])
 
-  useEffect(() => {
-    if (hasCheckedInitialLLMConfigRef.current) return
-    if (!defaultsLoaded) return
-
-    hasCheckedInitialLLMConfigRef.current = true
-    const hasConfiguredLLM = isConfigValid() || savedLLMs.length > 0 || llmConfigLocked
-    if (!hasConfiguredLLM) {
-      setShowLLMModal(true)
-    }
-  }, [defaultsLoaded, isConfigValid, llmConfigLocked, savedLLMs.length, setShowLLMModal])
-  
   // Ensure a chat tab is selected after restore (fix for page reload issue)
   // This ensures that when tabs are restored from localStorage, we select the first tab of the current mode
   // if activeTabId is null or invalid or belongs to a different mode

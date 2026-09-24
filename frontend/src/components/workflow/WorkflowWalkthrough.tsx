@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
+import type { WalkthroughSurface } from '../../utils/onboarding'
 
 type WalkthroughStep = {
   selector: string
@@ -8,108 +9,191 @@ type WalkthroughStep = {
   body: string
 }
 
-const STEPS: WalkthroughStep[] = [
+const OVERVIEW_STEPS: WalkthroughStep[] = [
+  {
+    selector: '[data-tour="workflow-add-edit"]',
+    title: 'Open or create an automation',
+    body: 'Choose an automation from the name menu, or use the plus button to create one. Its workspace walkthrough will start when you open it.',
+  },
   {
     selector: '[data-tour="global-activity"]',
     title: 'Activity',
-    body: 'Open Activity for updates, pending decisions, and schedules across automations. Ctrl+3 opens Activity; Ctrl+1 returns to your automation.',
+    body: 'Use this button to get back to updates and pending decisions from anywhere in AgentWorks.',
   },
   {
-    selector: '[data-tour="workflow-add-edit"]',
-    title: 'Add or edit automations',
-    body: 'Click the automation name to switch or add an automation. Use the gear beside it to edit the selected automation.',
+    selector: '[data-tour="activity-feed"]',
+    title: 'Your Activity home',
+    body: 'Find updates and decisions from all your automations here.',
   },
   {
-    selector: '[data-tour="bot-connector"]',
-    title: 'Integrations',
-    body: 'Connect apps, skills, Gmail, and bots here. The Slack and WhatsApp tabs hold the slugs this automation answers on — connect those bots if they are not set up yet.',
+    selector: '[data-tour="global-schedules"]',
+    title: 'Schedules',
+    body: 'Review and manage scheduled runs across all your automations.',
   },
   {
-    selector: '[data-tour="workspace-open"]',
-    title: 'Workspace files',
-    body: 'Open the workspace to inspect files, reports, run outputs, and automation artifacts. Ctrl+6 toggles it.',
-  },
-  {
-    selector: '[data-tour="chat-input-area"]',
-    title: 'Chat input',
-    body: 'This is the main control surface in Chat mode. Type a request, attach context, choose tools, then send or queue the message.',
-  },
-  {
-    selector: '[data-tour="chat-input-box"]',
-    title: 'Prompt box',
-    body: 'Use @ for files, / for commands, # for automations, ! for skills, and $ for MCP servers.',
-  },
-  {
-    selector: '[data-tour="chat-input-tools"]',
-    title: 'Chat tools',
-    body: 'Pick servers, skills, browser access, secrets, and other tool access before sending.',
-  },
-  {
-    selector: '[data-tour="chat-browser-tools"]',
-    title: 'Browser access',
-    body: 'Enable automatic browser routing, headless Chromium, or Chrome CDP when the agent needs to inspect or operate web pages.',
-  },
-  {
-    selector: '[data-tour="chat-send-controls"]',
-    title: 'Send and attachments',
-    body: 'Upload files with the paperclip. Send starts a turn; while a turn is running, new messages are queued or can be steered into the active agent.',
-  },
-  {
-    selector: '[data-tour="workflow-view-switcher"]',
-    title: 'Automation views',
-    body: 'Chat is the main place to build and change an automation. Plan shows the step structure. Dashboard shows the output view.',
-  },
-  {
-    selector: '[data-tour="workflow-chat-pane"]',
-    title: 'Chat',
-    body: 'Use chat for builder and optimizer work. You can type normally, use slash commands, and continue a running automation conversation.',
-  },
-  {
-    selector: '[data-tour="workflow-canvas-pane"]',
-    title: 'Plan and report',
-    body: 'This area shows the plan graph or dashboard preview, so you can inspect the automation without leaving chat.',
-  },
-  {
-    selector: '[data-tour="workflow-status"]',
-    title: 'Status',
-    body: 'This tells you whether the current automation session is idle, busy, stopped, or waiting. Stop only affects this active session.',
+    selector: '[data-tour="global-providers"]',
+    title: 'Providers',
+    body: 'Set up the models and coding agents your automations can use.',
   },
   {
     selector: '[data-tour="active-work-switcher"]',
     title: 'Running work',
-    body: 'The top activity widget opens active sessions. Ctrl+K opens the full switcher for automations, chats, active work, and retained events.',
-  },
-  {
-    selector: '[data-tour="workflow-tools"]',
-    title: 'Automation tools',
-    body: 'These icons open automation details such as logs, costs, learnings, database sources, versions, access, and settings.',
-  },
-  {
-    selector: '[data-tour="left-sidebar"]',
-    title: 'Left menu',
-    body: 'The left menu holds global setup for the app: model configuration, MCP servers, skills, and secrets.',
-  },
-  {
-    selector: '[data-tour="sidebar-llm-settings"]',
-    title: 'Model settings',
-    body: 'Configure the default LLMs and delegation tiers used by chat, workflow builder, and background agents.',
-  },
-  {
-    selector: '[data-tour="sidebar-mcp-servers"]',
-    title: 'MCP servers',
-    body: 'Manage connected tool servers. These are the external tools agents can use when a chat or automation enables them.',
-  },
-  {
-    selector: '[data-tour="sidebar-skills"]',
-    title: 'Skills',
-    body: 'Skills are reusable instructions that guide agents for specific domains, automations, or tools.',
-  },
-  {
-    selector: '[data-tour="sidebar-secrets"]',
-    title: 'Secrets',
-    body: 'Store credentials here, then select only the secrets a chat or automation should be allowed to use.',
+    body: 'When work is active, this button shows what is running or waiting for input and lets you jump to it.',
   },
 ]
+
+const AUTOMATION_STEPS: WalkthroughStep[] = [
+  {
+    selector: '[data-tour="workflow-add-edit"]',
+    title: 'Current automation',
+    body: 'This name tells you which automation is open. Use it to switch automations, create another one, or edit the selected one.',
+  },
+  {
+    selector: '[data-tour="workflow-chat-pane"]',
+    title: 'Build in chat',
+    body: 'Ask the builder to create or change the automation here. The conversation stays with this automation.',
+  },
+  {
+    selector: '[data-tour="chat-input-box"]',
+    title: 'Describe the work',
+    body: 'Type your request here. Use @ to refer to files and / to browse commands when you need them.',
+  },
+  {
+    selector: '[data-tour="chat-browser-tools"]',
+    title: 'Browser access',
+    body: 'Turn on browser access when the agent needs to inspect or operate a website.',
+  },
+  {
+    selector: '[data-tour="chat-send-controls"]',
+    title: 'Attach and send',
+    body: 'Attach files and send your request here. You can also send a follow-up while work is running.',
+  },
+  {
+    selector: '[data-tour="workflow-dashboard"]',
+    title: 'Dashboard',
+    body: 'Open the automation’s report or dashboard. The agent can update these documents as it works.',
+  },
+  {
+    selector: '[data-tour="workflow-views"]',
+    title: 'Views',
+    body: 'Switch between Pulse, the plan, browser, and automation views from this group.',
+  },
+  {
+    selector: '[data-tour="workflow-operations"]',
+    title: 'Operations',
+    body: 'Find files, costs, execution logs, backup, publishing, and notifications here.',
+  },
+  {
+    selector: '[data-tour="workflow-setup"]',
+    title: 'Setup',
+    body: 'Manage the automation’s identity, integrations, playbooks, and access here.',
+  },
+  {
+    selector: '[data-tour="workflow-canvas-pane"]',
+    title: 'Workspace pane',
+    body: 'The selected plan, report, file browser, or settings view appears beside chat.',
+  },
+]
+
+const EMPTY_AUTOMATION_STEPS: WalkthroughStep[] = [
+  {
+    selector: '[data-tour="automation-empty-state"]',
+    title: 'Start with an automation',
+    body: 'No automation is open yet. Choose one from the top bar or create a new one to start building.',
+  },
+  {
+    selector: '[data-tour="workflow-add-edit"]',
+    title: 'Choose or create',
+    body: 'Open the name menu to choose an automation. Use the plus button beside it to create one. Its own workspace guide will start when you open it.',
+  },
+  {
+    selector: '[data-tour="global-activity"]',
+    title: 'Activity',
+    body: 'Check updates and pending decisions from all your automations here.',
+  },
+  {
+    selector: '[data-tour="global-providers"]',
+    title: 'Providers',
+    body: 'Connect the models and coding agents your automations can use.',
+  },
+]
+
+const EMPTY_CREW_STEPS: WalkthroughStep[] = [
+  {
+    selector: '[data-tour="crew-empty-state"]',
+    title: 'Your Crew starts here',
+    body: 'Create a Crew member to keep a project’s chat, files, memory, and tools together.',
+  },
+  {
+    selector: '[data-tour="crew-create"]',
+    title: 'Create a Crew member',
+    body: 'Give it a name and purpose. Once it opens, a separate guide will show you its workspace.',
+  },
+  {
+    selector: '[data-tour="crew-selector"]',
+    title: 'Switch Crew members',
+    body: 'Use this menu to open another Crew member or add a new one later.',
+  },
+  {
+    selector: '[data-tour="global-providers"]',
+    title: 'Providers',
+    body: 'Connect a model or coding agent for your Crew to use.',
+  },
+]
+
+const CREW_STEPS: WalkthroughStep[] = [
+  {
+    selector: '[data-tour="crew-selector"]',
+    title: 'Current Crew member',
+    body: 'Switch Crew members or create another one from this menu.',
+  },
+  {
+    selector: '[data-tour="crew-chat"]',
+    title: 'Work together in chat',
+    body: 'Ask this Crew member to research, write, build, or continue project work. Its conversations stay with this Crew.',
+  },
+  {
+    selector: '[data-tour="chat-input-box"]',
+    title: 'Describe the work',
+    body: 'Type your request here. Use @ to refer to project files and / to browse commands.',
+  },
+  {
+    selector: '[data-tour="chat-send-controls"]',
+    title: 'Attach and send',
+    body: 'Add files or context, then send your request. You can follow up while work is running.',
+  },
+  {
+    selector: '[data-tour="workflow-dashboard"]',
+    title: 'Dashboard',
+    body: 'Open this Crew member’s dashboard and reports beside chat.',
+  },
+  {
+    selector: '[data-tour="work-tools"]',
+    title: 'Workspace tools',
+    body: 'Open memory, files, browser, automation, and other available views from this toolbar.',
+  },
+  {
+    selector: '[data-tour="crew-workspace"]',
+    title: 'Workspace pane',
+    body: 'The selected dashboard, file, memory, or setup view appears here.',
+  },
+]
+
+const STEPS_BY_SURFACE: Record<WalkthroughSurface, WalkthroughStep[]> = {
+  overview: OVERVIEW_STEPS,
+  'empty-automation': EMPTY_AUTOMATION_STEPS,
+  automation: AUTOMATION_STEPS,
+  'empty-crew': EMPTY_CREW_STEPS,
+  crew: CREW_STEPS,
+}
+
+const SURFACE_LABELS: Record<WalkthroughSurface, { product: string; section: string; aria: string }> = {
+  overview: { product: 'AgentWorks', section: 'Getting started', aria: 'AgentWorks getting started walkthrough' },
+  'empty-automation': { product: 'AgentWorks', section: 'Choose an automation', aria: 'Empty automation walkthrough' },
+  automation: { product: 'AgentWorks', section: 'Automation', aria: 'Automation workspace walkthrough' },
+  'empty-crew': { product: 'Crew', section: 'Getting started', aria: 'Empty Crew walkthrough' },
+  crew: { product: 'Crew', section: 'Workspace', aria: 'Crew workspace walkthrough' },
+}
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 const visibleTargetForSelector = (selector: string): Element | null => {
@@ -117,14 +201,20 @@ const visibleTargetForSelector = (selector: string): Element | null => {
   return candidates.find(element => {
     const rect = element.getBoundingClientRect()
     const styles = window.getComputedStyle(element)
+    const crewChat = element.closest('[data-tour="crew-chat"]')
+    // On narrow layouts the workspace can leave chat as a thin, unusable strip.
+    // Skip its descendants until the pane is wide enough to interact with.
+    if (crewChat && crewChat.getBoundingClientRect().width < 120) return false
     return rect.width > 0 &&
       rect.height > 0 &&
+      rect.right > 0 && rect.left < window.innerWidth &&
+      rect.bottom > 0 && rect.top < window.innerHeight &&
       styles.display !== 'none' &&
       styles.visibility !== 'hidden' &&
       styles.opacity !== '0'
   }) ?? null
 }
-const visibleStepIndices = () => STEPS
+const visibleStepIndices = (steps: WalkthroughStep[]) => steps
   .map((step, index) => visibleTargetForSelector(step.selector) ? index : -1)
   .filter(index => index >= 0)
 
@@ -132,27 +222,29 @@ interface WorkflowWalkthroughProps {
   isOpen: boolean
   onClose: () => void
   openToken?: number
+  surface: WalkthroughSurface
 }
 
-export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen, onClose, openToken = 0 }) => {
+export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen, onClose, openToken = 0, surface }) => {
+  const steps = STEPS_BY_SURFACE[surface]
+  const surfaceLabel = SURFACE_LABELS[surface]
   const [stepIndex, setStepIndex] = useState(0)
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null)
-  const wasOpenRef = useRef(false)
 
   const findStep = useCallback((startIndex: number, direction: 1 | -1) => {
     if (direction === 1) {
-      for (let index = Math.max(0, startIndex); index < STEPS.length; index += 1) {
-        if (visibleTargetForSelector(STEPS[index].selector)) return index
+      for (let index = Math.max(0, startIndex); index < steps.length; index += 1) {
+        if (visibleTargetForSelector(steps[index].selector)) return index
       }
       return -1
     }
-    for (let index = Math.min(STEPS.length - 1, startIndex); index >= 0; index -= 1) {
-      if (visibleTargetForSelector(STEPS[index].selector)) {
+    for (let index = Math.min(steps.length - 1, startIndex); index >= 0; index -= 1) {
+      if (visibleTargetForSelector(steps[index].selector)) {
         return index
       }
     }
     return -1
-  }, [])
+  }, [steps])
 
   const goToStep = useCallback((direction: 1 | -1) => {
     const nextIndex = findStep(stepIndex + direction, direction)
@@ -160,23 +252,20 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
   }, [findStep, stepIndex])
 
   useEffect(() => {
-    if (isOpen && !wasOpenRef.current) {
-      const firstIndex = findStep(0, 1)
-      if (firstIndex >= 0) setStepIndex(firstIndex)
-    }
-    wasOpenRef.current = isOpen
-  }, [findStep, isOpen])
-
-  useEffect(() => {
     if (!isOpen) return
     const firstIndex = findStep(0, 1)
-    if (firstIndex >= 0) setStepIndex(firstIndex)
-  }, [findStep, isOpen, openToken])
+    setStepIndex(firstIndex >= 0 ? firstIndex : 0)
+    setTargetRect(null)
+  }, [findStep, isOpen, openToken, surface])
 
   const updateTarget = useCallback(() => {
-    const target = visibleTargetForSelector(STEPS[stepIndex].selector)
+    const target = visibleTargetForSelector(steps[stepIndex].selector)
     if (target) {
-      setTargetRect(target.getBoundingClientRect())
+      const rect = target.getBoundingClientRect()
+      setTargetRect(previous => previous &&
+        previous.left === rect.left && previous.top === rect.top &&
+        previous.width === rect.width && previous.height === rect.height
+        ? previous : rect)
       return
     }
     const nextIndex = findStep(stepIndex + 1, 1)
@@ -195,26 +284,30 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
       }
       setTargetRect(null)
     }
-  }, [findStep, stepIndex])
+  }, [findStep, stepIndex, steps])
 
   useEffect(() => {
     if (!isOpen) return
-    if (!visibleTargetForSelector(STEPS[stepIndex].selector)) {
+    if (!visibleTargetForSelector(steps[stepIndex].selector)) {
       const firstIndex = findStep(0, 1)
       if (firstIndex >= 0) {
         setStepIndex(firstIndex)
       }
     }
-  }, [findStep, isOpen, stepIndex])
+  }, [findStep, isOpen, stepIndex, steps])
 
   useEffect(() => {
     if (!isOpen) return
     updateTarget()
     window.addEventListener('resize', updateTarget)
     window.addEventListener('scroll', updateTarget, true)
+    // Changing pages or opening an automation can replace tour targets without
+    // causing a resize or scroll event.
+    const interval = window.setInterval(updateTarget, 300)
     return () => {
       window.removeEventListener('resize', updateTarget)
       window.removeEventListener('scroll', updateTarget, true)
+      window.clearInterval(interval)
     }
   }, [isOpen, updateTarget])
 
@@ -231,19 +324,33 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
 
   if (!isOpen) return null
 
-  const step = STEPS[stepIndex]
-  const visibleIndices = visibleStepIndices()
+  const visibleIndices = visibleStepIndices(steps)
   const visiblePosition = visibleIndices.indexOf(stepIndex)
-  const stepNumber = visiblePosition >= 0 ? visiblePosition + 1 : stepIndex + 1
-  const stepTotal = visibleIndices.length || STEPS.length
-  const isFirstVisibleStep = visiblePosition <= 0
-  const isLastVisibleStep = visiblePosition >= 0 && visiblePosition === visibleIndices.length - 1
-  const panelWidth = Math.min(360, Math.max(288, window.innerWidth - 24))
-  const panelHeight = 188
-  const panelLeft = targetRect
+  const displayedPosition = visiblePosition >= 0 ? visiblePosition : 0
+  const step = steps[visibleIndices[displayedPosition]]
+  const stepNumber = step ? displayedPosition + 1 : 0
+  const stepTotal = visibleIndices.length
+  const isFirstVisibleStep = displayedPosition === 0
+  const isLastVisibleStep = stepTotal === 0 || displayedPosition === stepTotal - 1
+  const panelWidth = Math.min(380, window.innerWidth - 24)
+  const panelHeight = Math.min(228, window.innerHeight - 24)
+  // Top-bar menus open below their triggers. Keep the guide beside them so
+  // people can open the automation picker while its step is highlighted.
+  const topBarTarget = targetRect && targetRect.top < 80 && targetRect.height < 80
+  const panelBesideTarget = topBarTarget && (
+    targetRect.right + panelWidth + 64 <= window.innerWidth - 12 ||
+    targetRect.left - panelWidth - 24 >= 12
+  )
+  const panelLeft = panelBesideTarget && targetRect
+    ? targetRect.right + panelWidth + 64 <= window.innerWidth - 12
+      ? targetRect.right + 64
+      : targetRect.left - panelWidth - 24
+    : targetRect
     ? clamp(targetRect.left, 12, window.innerWidth - panelWidth - 12)
     : clamp((window.innerWidth - panelWidth) / 2, 12, window.innerWidth - panelWidth - 12)
-  const panelTop = targetRect
+  const panelTop = panelBesideTarget && targetRect
+    ? clamp(targetRect.bottom + 10, 12, window.innerHeight - panelHeight - 12)
+    : targetRect
     ? targetRect.bottom + panelHeight + 16 > window.innerHeight
       ? clamp(targetRect.top - panelHeight - 14, 12, window.innerHeight - panelHeight - 12)
       : clamp(targetRect.bottom + 14, 12, window.innerHeight - panelHeight - 12)
@@ -254,42 +361,56 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
       <div className="fixed inset-0 z-[10000] pointer-events-none">
         {targetRect && (
           <div
-            className="fixed rounded-lg border-2 border-sky-400 transition-all duration-150"
+            className="fixed rounded-xl border-2 border-primary transition-all duration-150"
             style={{
               left: targetRect.left - 6,
               top: targetRect.top - 6,
               width: targetRect.width + 12,
               height: targetRect.height + 12,
-              boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(14, 165, 233, 0.35)',
+              boxShadow: '0 0 0 9999px rgba(8, 13, 24, 0.56)',
             }}
           />
         )}
         <div
-          className="fixed pointer-events-auto rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
-          style={{ left: panelLeft, top: panelTop, width: panelWidth }}
+          className="fixed pointer-events-auto overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl"
+          style={{ left: panelLeft, top: panelTop, width: panelWidth, maxHeight: window.innerHeight - 24 }}
           role="dialog"
-          aria-modal="true"
-          aria-label="Automation walkthrough"
+          aria-label={surfaceLabel.aria}
+          aria-describedby="workflow-walkthrough-description"
           data-testid="workflow-walkthrough-dialog"
         >
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Walkthrough {stepNumber} / {stepTotal}
-              </div>
-              <h3 className="mt-1 text-sm font-semibold text-foreground">{step.title}</h3>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              {surfaceLabel.product} <span className="mx-1 text-border">/</span> {surfaceLabel.section}
             </div>
             <button
               onClick={onClose}
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="-mr-1 -mt-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               aria-label="Close walkthrough"
               data-testid="workflow-walkthrough-close"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <p className="mt-2 text-sm leading-5 text-muted-foreground">{step.body}</p>
-          <div className="mt-4 flex items-center justify-end gap-2">
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <h3 className="text-base font-semibold leading-6 text-foreground">{step?.title ?? 'Explore AgentWorks'}</h3>
+            {stepTotal > 0 && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{stepNumber} of {stepTotal}</span>}
+          </div>
+          <p id="workflow-walkthrough-description" className="mt-2 text-sm leading-5 text-muted-foreground">
+            {step?.body ?? 'This part of the interface is still loading. You can reopen the walkthrough from your account menu.'}
+          </p>
+          {stepTotal > 0 && (
+            <div className="mt-4 flex gap-1" aria-hidden="true">
+              {visibleIndices.map((index, position) => (
+                <span key={index} className={`h-1 flex-1 rounded-full ${position <= displayedPosition ? 'bg-primary' : 'bg-muted'}`} />
+              ))}
+            </div>
+          )}
+          <div className="mt-5 flex items-center justify-between gap-2">
+            <button type="button" onClick={onClose} className="rounded-md px-1 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+              Skip tour
+            </button>
+            <div className="flex items-center gap-2">
             <button
               onClick={() => goToStep(-1)}
               disabled={isFirstVisibleStep}
@@ -305,7 +426,7 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
                 data-testid="workflow-walkthrough-done"
                 className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
               >
-                Done
+                Finish
               </button>
             ) : (
               <button
@@ -317,6 +438,7 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             )}
+            </div>
           </div>
         </div>
       </div>

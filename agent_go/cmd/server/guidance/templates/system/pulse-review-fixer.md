@@ -122,8 +122,8 @@ coverage record or report.
 
 1. **Recurrence + Technical Review** — an applied repair is closed
    immediately; a later run may rediscover and reopen the same root, but is not
-   a closure gate. If no repair was applied, keep the issue active or queue it
-   for Engineering with its next action; do not leave it in `awaiting_run`.
+   a closure gate. Every issue ends the pass closed: fixed, not a problem, the
+   user's decision, or platform-owned. None is left waiting.
    Then inspect runtime correctness,
    plan/artifact drift, and report/evaluation implementation selected by Gate.
    Start from compact typed backlog/attempt state and relevant saved review notes.
@@ -223,16 +223,15 @@ review or repair, but it cannot close, reopen, or disposition an issue; reconcil
 it with typed SQLite state and current evidence first. Preserve applied fixes
 as closed; `changed_unverified` is an honest proof label, not pending work.
 For the due module, inventory the complete active retained backlog **before**
-new discovery, then choose a bounded repair batch for this pass. Start with the
-highest-value coherent bundle, which may cover many findings when they share one
-root cause, compatible targets, and one proof boundary. Add further independent
-bundles only when each is low-risk, needs no broad rediscovery, has clear
-separate proof, and fits the current context; it must not become an instruction
-to empty every unrelated active root in one agent turn. Do not select closed
-`changed_unverified` issues merely because a next-check date or new run arrived.
-Rank active roots by correctness/safety impact, reproduced failures, ability to
-apply a useful bounded repair, and owner decisions. Keep every unselected issue durable and explicitly
-retain the remaining issues in the existing queue for a future Pulse pass. Also load
+new discovery. Pulse finds an issue and closes it in the same pass, so the goal
+of the pass is an empty active backlog. Work in priority order: issues that
+blind the goal or stop the main output first, then reproduced failures, then
+the rest. Group findings into one bundle when they share a root cause,
+compatible targets and one proof. Do not select closed `changed_unverified`
+issues merely because a next-check date or new run arrived. If the context runs
+out before every issue is closed, stop honestly: the pass ends partial and the
+next fix run continues from the same backlog. Never mark an issue as left for
+later. Also load
 `suppressed_concerns`: an
 unchanged externally owned issue is not a new finding, while materially changed
 evidence/target identity is a reopen candidate. A new finding is justified only
@@ -405,30 +404,31 @@ A tool refusal is not evidence that a finding is unfixable. Check the target's
 actual type before concluding anything: rtslatency recorded two collectors as
 "not editable" after `update_step` was refused, when they were
 message_sequence steps and `update_step` was in the same tool
-surface. Before `blocked` or `external_action_required` on a rejected edit, name
+surface. Before `external_action_required` on a rejected edit, name
 the tool you used, the target's real type, and the tool that type requires.
 
 Use `external_action_required` only when the finding is real but no workflow
 change can address it. Record `external_owner`, a stable `reason_code`, and an
 evidence/capability/user `reopen_condition`. This removes it from Pulse's active
 queue and suppresses unchanged rediscovery while keeping it visible on the
-external-action board. Do not use `awaiting_run`: legacy waits are returned to
-the active register so they cannot wait silently. If no repair was applied,
-keep the issue open or use `queued_for_engineering` when a safe repair exists.
-`queued_for_engineering` means a safe workflow repair exists but was not chosen
-for this pass. It remains on Gate's active queue and requires `next_check`
-naming the next Engineering/Pulse pass. An issue may be queued at most once:
-when the backlog shows `times_deferred` of 1 or more, repair it in this pass,
-or, only if the fix genuinely needs the user's choice, create a decision with
-the exact proposed change so it appears in Needs you. Never queue it again.
-Never queue at all an issue that blinds the goal (goal metrics not recorded,
-measurement dark) or stops the workflow's main output: repair those first in
-this pass, ahead of everything else. A missing recurring step, collector or
-tool call is a workflow-owned repair made with the typed Builder tools (see
-`references/measurement-plan.md` for goal observations), not an ownership
-question to leave open. Never call deferred, deprioritized, or
-unattempted work `blocked`. `blocked` is only for a genuine current condition
-with no safe action at all.
+external-action board.
+
+Every issue ends the pass in one of these ways, and no other:
+- **fixed**: `fixed_verified` or `changed_unverified` after applying the repair;
+- **not a problem**: `verified_no_change` or `rejected`, with the check that
+  showed it;
+- **the user's decision**: `awaiting_user`, only when the fix genuinely needs
+  the user's choice (business meaning, money, real users, or a balanced
+  tradeoff the goal does not settle), with a decision that carries the exact
+  proposed change so it is one approval in Needs you;
+- **platform-owned**: `external_action_required`;
+- **fix failed**: `failed` keeps it open, and you retry it in this pass.
+There is no disposition for later: `queued_for_engineering`, `awaiting_run`,
+`blocked` and `proposal_only` are retired and refused. A missing recurring
+step, collector or tool call is a workflow-owned repair made with the typed
+Builder tools (see `references/measurement-plan.md` for goal observations), not
+an ownership question. `times_deferred` on a backlog card marks an issue an
+older pass left behind: close it first.
 
 Dashboard rendering, backup, publishing, and notification are owned by the
 ordered Pulse finalizer. A reviewer or Engineering/Ops executor being forbidden to perform those
@@ -467,9 +467,8 @@ it when nothing is wrong; `engineering_handoff` must be attempted through the no
 lifecycle rather than parked as a proposal. Use
 `create_human_input_request(source="strategic_review", input_id="strategic-proposal-...")`
 for a strategic decision so the UI preserves who asked. An actionable alternative
-must create an approve/reject/defer decision using that same source and prefix;
-only a thesis explicitly waiting on named future
-evidence may use `proposal_only`, with that boundary in `next_check`. Route any
+must create an approve/reject/defer decision using that same source and prefix.
+Route any
 technical prerequisite to the Engineering/Ops executor and never apply a materially different
 approach before that exact approval. Engineering may reach
 `awaiting_user` only for an exceptional repair that changes business meaning,
@@ -519,9 +518,7 @@ auto-applied by pre-run. The custom tool is an HTTP JSON contract: send
 arrays). Fetch and follow the published tool schema instead of inventing nested
 field shapes.
 For `strategic_review`, the question source must be `strategic_review` and its
-id must start `strategic-proposal-`. The backend rejects a strategic
-`proposal_only` disposition with no `next_check`, so every accepted
-recommendation has a concrete route to action or evidence.
+id must start `strategic-proposal-`.
 
 Deduplicate findings before filing: match stable target/component, behavioral
 claim, and evidence boundary against active and suppressed findings. Reuse the
@@ -538,22 +535,16 @@ The Engineering/Ops executor first calls
 freezes the complete active starting manifest. It does not reload that index to
 filter a handful of IDs; it requests targeted full detail for selected IDs. Due
 reviewer modules decide which reviews ran; they do not hide retained work from
-the inventory. It then builds one compact, priority-ordered Fix queue and
-selects a bounded repair batch that it can carry through mutation and honest
-proof in this pass. Each queue item is a coherent repair bundle. Start with the
-highest-value bundle, then add an independent bundle only if it is low-risk,
-requires no broad rediscovery, has its own clear proof boundary, and fits the
-current context plus targeted evidence. Group findings only when they share the
+the inventory. It then builds one compact, priority-ordered Fix queue and works
+through all of it in this pass, one coherent repair bundle at a time, until the
+active backlog is empty or the context runs out (then the pass ends partial and
+the next fix run continues). Group findings only when they share the
 same root cause, require compatible changes to the same target, and have one
 verification condition. Cross-reviewer grouping is allowed; conflicts remain
 separate. Different public-action risks, user decisions, route contexts, and
-unresolved design investigations stay separate. Waiting-on-run, waiting-on-user,
-proposal-only, and externally owned findings stay visible but do not enter the
-actionable queue. Coherence, impact, and available proof choose the batch—not an
-arbitrary top-N issue count. No finding may disappear: retain in the existing queue the exact
-unselected queue with defer reasons, but do not re-file or manufacture a
-current-pass disposition for issues the executor did not investigate. Process
-and disposition each selected bundle before the next; the backend opens the
+unresolved design investigations stay separate. Findings waiting on the user's
+decision or owned by the platform stay visible but do not enter the Fix queue.
+No finding may disappear. Process and disposition each bundle before the next; the backend opens the
 durable fix-attempt record from the disposition you write, so there is nothing
 to declare before mutating.
 Before mutation capture targets, time, hashes/versions, and baseline. Load
@@ -561,7 +552,7 @@ Before mutation capture targets, time, hashes/versions, and baseline. Load
 then load and apply
 `read_skill(skills=[{"name":"builder-reference","path":"references/fix-verification.md"}])`;
 follow the engineering-practices reference to diagnose and bundle the root cause,
-including its **Bounded backlog progress contract**, then the verification reference
+including its **Backlog close-out contract**, then the verification reference
 to establish proof. Maintain the exact remaining visible issue-ID list
 throughout the pass and reconcile it with a final compact
 `get_pulse_state(view="backlog", detail="compact")` read only when mutation may
@@ -581,15 +572,11 @@ as `issue_id`; the backend resolves its legacy storage row and current attempt.
 IDs address records but never decide semantic sameness. If a finding lacks an issue
 ID, block it as a reviewer-contract failure instead of making an untracked change.
 
-Reconcile every selected issue ID to one disposition or one checked,
-still-unmet waiting/external boundary. Confirm that every unselected starting ID
-remains in the durable backlog or is linked to an independently recorded
-lifecycle transition; do not touch it merely to satisfy accounting. A selected
-issue missing from close-out blocks its module, but a truthful remaining queue
-does not. Strategy or model-routing changes need exact valid approval. Preserve each
-reviewer's conclusion under its owning module. Strategic Review may conclude
-keep, improve, propose an alternative, run an approved bounded experiment, or
-wait for named evidence. Operational observations
+Reconcile every starting issue ID to one disposition: fixed, not a problem,
+the user's decision, platform-owned, or failed and retried. Issues still open
+because the context ran out are reported as the truthful remaining queue, and
+the pass is partial. Strategy or model-routing changes need exact valid
+approval. Preserve each reviewer's conclusion under its owning module. Operational observations
 may be cross-referenced to the matching module during consolidation, but never
 rewritten as a dependency or used to suppress that module's result.
 Strategic operational findings remain out-of-scope observations.

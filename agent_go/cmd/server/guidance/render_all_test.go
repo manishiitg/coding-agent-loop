@@ -238,7 +238,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 			"later Fix message",
 			"Do not rerun Technical Review",
 			"Workflow observations are evidence",
-			"bounded canonical **repair batch**",
+			"Close every active issue in this pass",
 			"Review completion and repair",
 		},
 	}

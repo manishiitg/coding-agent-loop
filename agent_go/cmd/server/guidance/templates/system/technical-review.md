@@ -72,10 +72,10 @@ Builder tools. When `pulse.autonomy.run` is `auto` (the default; see
 `get_pulse_state(view="goal_work")`), resume or re-run the steps a recovery
 needs yourself with `execute_step`/`run_full_workflow` once the duplicate risk
 is ruled out; only `ask` turns that into a decision. Preserve the goal and constraints. Use existing human decisions
-and apply contracts for behavior changes requiring approval. Continue until no
-actionable workflow-owned repair remains; platform handoffs, pending decisions
-and evidence waits are not repair debt. Do not claim completion while an
-available safe repair was merely left for later. Record truthful partial failure
+and apply contracts for behavior changes requiring approval. Continue until
+every workflow issue is closed: fixed, not a problem, the user's decision (with
+the exact change ready to approve), or platform-owned. Nothing is left for a
+later pass; a pass that ends with open issues is partial. Record truthful partial failure
 if a repair cannot be completed. Never launch an additional reviewer or Fixer.
 
 Validate changed contracts through the affected consumers. Record exact changed

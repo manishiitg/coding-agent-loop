@@ -85,22 +85,26 @@ func queuedForEngineering(fingerprint string) PulseFindingDisposition {
 	}
 }
 
-func TestHarnessIssueCannotBeQueuedForEngineering(t *testing.T) {
-	workspacePath := concernsWorkspace(t)
+// Pulse no longer parks issues for a later pass: queued_for_engineering is
+// refused for every issue kind (it was 75 events in upwork alone), and the
+// rejection names the ways to close the issue instead.
+func TestQueuedForEngineeringIsRefusedForEveryIssueKind(t *testing.T) {
 	module := "workflow_review"
-	concern := filedKindedConcern(t, workspacePath, "pulse-1", module,
-		"agent_browser snapshot results overflow with no pagination recipe", IssueKindHarness)
-
-	err := recordFindingDispositionsErr(t, workspacePath, module, "pulse-1",
-		[]PulseFindingDisposition{queuedForEngineering(concern.Fingerprint)})
-	if err == nil {
-		t.Fatal("harness_issue was accepted as queued_for_engineering; the contradiction is still writable")
-	}
-	// Both exits must be named, or the reviewer has to guess which correction is
-	// wanted and burns a round trip finding out.
-	for _, want := range []string{"external_action_required", "external_owner", IssueKindWorkflow} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("rejection does not name %q, so the fix is not stated: %v", want, err)
+	for kind, text := range map[string]string{
+		IssueKindHarness:  "agent_browser snapshot results overflow with no pagination recipe",
+		IssueKindWorkflow: "shortlist depth is not enforced in the step contract",
+	} {
+		workspacePath := concernsWorkspace(t)
+		concern := filedKindedConcern(t, workspacePath, "pulse-1", module, text, kind)
+		err := recordFindingDispositionsErr(t, workspacePath, module, "pulse-1",
+			[]PulseFindingDisposition{queuedForEngineering(concern.Fingerprint)})
+		if err == nil {
+			t.Fatal("queued_for_engineering was accepted; Pulse can still park an issue")
+		}
+		for _, want := range []string{"retired", "fixed_verified", "awaiting_user", "external_action_required"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("rejection does not name %q: %v", want, err)
+			}
 		}
 	}
 }
@@ -130,54 +134,5 @@ func TestHarnessIssueStillReachesExternalActionRequired(t *testing.T) {
 	}
 	if len(lifecycles) != 1 || lifecycles[0].Status != ConcernStatusExternalActionRequired {
 		t.Fatalf("harness finding did not reach external_action_required: %+v", lifecycles)
-	}
-}
-
-// The guard must not touch the single most common disposition in the system —
-// 75 queued_for_engineering events in upwork alone, essentially all of them
-// workflow_issue.
-func TestWorkflowIssueQueuesForEngineeringUnchanged(t *testing.T) {
-	ctx := context.Background()
-	workspacePath := concernsWorkspace(t)
-	module := "workflow_review"
-	concern := filedKindedConcern(t, workspacePath, "pulse-1", module,
-		"shortlist depth is not enforced in the step contract", IssueKindWorkflow)
-
-	if err := recordFindingDispositionsErr(t, workspacePath, module, "pulse-1",
-		[]PulseFindingDisposition{queuedForEngineering(concern.Fingerprint)}); err != nil {
-		t.Fatalf("workflow_issue was blocked from the normal engineering queue: %v", err)
-	}
-
-	lifecycles, err := LoadPulseFindingLifecycles(ctx, workspacePath, module, 10)
-	if err != nil {
-		t.Fatalf("load lifecycle: %v", err)
-	}
-	if len(lifecycles) != 1 || lifecycles[0].Status != ConcernStatusQueuedForEngineering {
-		t.Fatalf("workflow_issue did not reach queued_for_engineering: %+v", lifecycles)
-	}
-}
-
-// An untyped legacy concern has no pulse_finding_details row at all, so no
-// issue_kind was ever claimed and there is nothing to contradict. These must
-// keep queueing normally — the lookup has to tolerate sql.ErrNoRows rather than
-// treating a missing row as a violation.
-func TestUntypedConcernQueuesForEngineeringUnchanged(t *testing.T) {
-	ctx := context.Background()
-	workspacePath := concernsWorkspace(t)
-	module := "workflow_review"
-	seedRunConcerns(t, workspacePath, "pulse-1", "", module, ConcernPhaseReview, "report widget reads a dropped column")
-	concern := activeRunConcerns(t, workspacePath)[0]
-
-	if err := recordFindingDispositionsErr(t, workspacePath, module, "pulse-1",
-		[]PulseFindingDisposition{queuedForEngineering(concern.Fingerprint)}); err != nil {
-		t.Fatalf("untyped concern was blocked from the engineering queue: %v", err)
-	}
-
-	lifecycles, err := LoadPulseFindingLifecycles(ctx, workspacePath, module, 10)
-	if err != nil {
-		t.Fatalf("load lifecycle: %v", err)
-	}
-	if len(lifecycles) != 1 || lifecycles[0].Status != ConcernStatusQueuedForEngineering {
-		t.Fatalf("untyped concern did not reach queued_for_engineering: %+v", lifecycles)
 	}
 }

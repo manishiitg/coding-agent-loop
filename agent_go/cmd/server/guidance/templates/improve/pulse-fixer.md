@@ -28,23 +28,21 @@ selected issue's proof boundary.{{end}}
    selecting unrelated work.
 3. Read the saved Gate worklist and
    `get_pulse_state(view="backlog", detail="compact")` exactly once. If there
-   was an approved candidate, it is the first repair bundle. Otherwise select a
-   bounded repair batch from this index, then request `detail="full"` only for
-   its exact issue IDs. Read their typed review records, attempts, verification,
+   was an approved candidate, it is the first repair bundle. Otherwise work
+   through the whole index in impact order (goal-blinding and main-output
+   issues first), requesting `detail="full"` only for the issue IDs you are
+   about to work on. Read their typed review records, attempts, verification,
    and the relevant SQLite review notes when this run has one. Manual
    slash-command sequences may have only typed review state and no Markdown
    review note; do not treat that absence as missing review. The compact backlog's `issues` feed
    is the ordinary repair queue. Workflow observations are evidence
    from reviewers and must not be repaired unless a reviewer already promoted them.
-4. Select a bounded canonical **repair batch**. Start with the highest-value
-   coherent repair bundle; it may include several issue IDs when they share one
-   root cause, compatible targets, and one proof boundary. Then add another
-   independent bundle only when it is low-risk, needs no broad rediscovery,
-   has a separately clear proof boundary, and can be completed with the
-   evidence/context already loaded or a targeted read. Do not use a fixed issue
-   count. Defer a bundle that needs a different route, public action, user
-   decision, broad investigation, or a new context window. Preserve every
-   unselected issue unchanged.
+4. Close every active issue in this pass, one coherent bundle at a time (a
+   bundle may include several issue IDs when they share one root cause,
+   compatible targets and one proof). Each issue ends fixed, not a problem,
+   the user's decision (with the exact change ready to approve), or
+   platform-owned; nothing is deferred. If the context runs out first, stop
+   truthfully and the next fix run continues.
 5. Apply each selected bundle and perform only proportional immediate checks
    before starting the next. Use the
    smallest complete safe repair with normal Workflow Builder tools. Record
@@ -60,6 +58,6 @@ selected issue's proof boundary.{{end}}
    the caller-supplied Fix message of a combined manual Review+Fix sequence,
    also call `record_pulse_result` exactly once for `technical_review` with
    `pulse_run_id="current"` and the truthful repair/no-safe-repair outcome.
-7. Finish with a concise statement of the selected repair batch: bundles and
-   issue IDs, changes and proof per bundle, lifecycle outcomes, and the
-   remaining canonical queue with defer reasons.
+7. Finish with a concise statement: issues closed (fixed, not a problem, sent
+   to the user, platform-owned), changes and proof per bundle, and any issue
+   still open because the context ran out.

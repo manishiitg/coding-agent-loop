@@ -140,13 +140,11 @@ func Validate(profile Profile) error {
 	// only path. Requiring hybrid profiles to drop it left Codex with no way to
 	// call any product API at all. See
 	// docs/design/product_api_transport_for_coding_agents.md.
+	// Coding agents never get a native shell (2026-09-24): hybrid grants only
+	// native read/search, skills, todos and subagents, so a native_shell
+	// transport would leave the CLI with no route to product APIs.
 	if strings.EqualFold(strings.TrimSpace(profile.Runtime.APITransport.Mode), "native_shell") {
-		if !strings.EqualFold(strings.TrimSpace(profile.Runtime.AgentTools.Mode), "hybrid") {
-			return fmt.Errorf("runtime api_transport.mode=native_shell requires runtime agent_tools.mode=hybrid")
-		}
-		if _, present := seenEnabled["execute_shell_command"]; present {
-			return fmt.Errorf("runtime api_transport.mode=native_shell cannot also enable %q; the native shell replaces it", "execute_shell_command")
-		}
+		return fmt.Errorf("runtime api_transport.mode=native_shell is unsupported: coding agents never get a native shell; use the bridge transport")
 	}
 	return nil
 }

@@ -5302,16 +5302,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
 		profileAgentToolsMode := ""
 		profileApprovalsMode := ""
+		// Hybrid enables only native read/search, skills, todos and subagents;
+		// shell and file changes still go through the bridge, so mcpagent's
+		// shell/diff routing block stays in every mode.
 		var profileBridgeRoutingInstructions *string
 		if resolvedProfile != nil {
 			profileAgentToolsMode = resolvedProfile.Definition.Runtime.AgentTools.Mode
 			profileApprovalsMode = resolvedProfile.Definition.Runtime.Approvals.Mode
-			if strings.EqualFold(profileAgentToolsMode, "hybrid") {
-				// The product prompt deliberately tells native-tool agents how to
-				// work. Suppress mcpagent's bridge-only shell/diff routing block.
-				empty := ""
-				profileBridgeRoutingInstructions = &empty
-			}
 		}
 		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
 		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, allowPersistentInteractive)

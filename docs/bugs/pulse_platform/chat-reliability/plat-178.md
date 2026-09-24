@@ -6,7 +6,7 @@
 |---|---|
 | Assigned agent | Codex |
 | Ticket state | `2026-09-23 stale-promotion jam fixed on main (evidence gate, 30m fail-after, dead-pane fast-fail); not deployed; live CLI verification pending` |
-| Last synchronized | `2026-09-23` |
+| Last synchronized | `2026-09-24` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
   confusing (the agent appears to "forget" recent work and asks the user to
@@ -468,6 +468,56 @@ reconciliation. Focused Go tests pass; all 31 frontend
 `sessionRestore`/`useTranscriptScroll` tests pass; lint, Go build, workspace
 build, and Electron build pass. Both commits are pushed to `main`; deployment
 and a fresh-client retained-turn check remain pending.
+
+## 2026-09-24 — deploys and config edits silently replaced the native CLI session ("the agent forgot yesterday")
+
+**Symptom (RTS, SDE crew `gptlive1`, claude-code):** "what did we work on
+yesterday" — the crew did not know. Its native Claude session changed from
+`3ccd4ab5…` to `c7f928e6…` at 2026-09-23 18:32 UTC, the first turn after the
+18:06 deploy. The new session only received a one-shot "read the archive"
+notice; with 1,509 archived messages it skimmed `chat_history/chat-index.json`
+previews instead.
+
+**Root cause — two fingerprints treated config drift as a new conversation:**
+
+| Where | Fingerprint | What changed it |
+|---|---|---|
+| Crew / product chats | `agentProfileSessionKey` (profile Definition + selected MCP servers + identity); `seedCodingAgentRuntimeFromRestoredConversation` skipped native resume on mismatch | any deploy touching the Work system prompt or tool allowlist; adding an MCP server |
+| Workflow Builder/Run chats | `chatPolicySessionKey` = role (mode, origin, capabilities) **plus** chat definition + MCP config + user config; any difference → `[CHAT_POLICY] Policy refresh … starting a fresh native coding-agent session` | any deploy touching the workflow chat prompt; any MCP/user-config edit |
+
+**Fixes (on main, not yet deployed at time of writing):**
+
+1. `eb18a0e39` — Crew/product chats resume the same native session when the
+   profile definition changes; the stale retained process is still refused
+   live input, which forces a relaunch with the current definition.
+2. `e2e745939` — workflow chats: new `ChatPolicyRoleKey`; only a real role
+   change (Builder↔Run, origin, capabilities) replaces the session.
+   Definition/config drift keeps it. Legacy runtimes without the role key
+   resume (mode still compared).
+3. `5dbe11a83` — when a fresh session is unavoidable, the continuity notice
+   carries the recent user/assistant dialogue (shared `recentDialogueLines`)
+   plus the archive path with "search it"; the Work prompt says where full
+   history lives.
+4. Per-CLI verification that a resumed session actually receives the NEW
+   instructions (rule changed ALPHA→BRAVO between two turns of one session):
+
+   | CLI | How instructions arrive | Follows new rule after resume? |
+   |---|---|---|
+   | claude-code | CLAUDE.md rewritten per launch; recorded as a fresh `instructions` attachment on resume (seen in the SDE transcript at 18:31 and 03:20) | yes |
+   | codex-cli | AGENTS.md | yes (`codex exec resume`, local 0.156.1) |
+   | pi-cli | `--append-system-prompt` every launch | yes (local 0.87.1) |
+   | cursor-cli | `.cursor/rules` (tmux) / first message only (structured) | **no** — fixed in multi-llm `37b0666`: resend a changed prompt inline once per native chat (sha256 marker); verified on RTS, later turns keep following it |
+   | muse-cli | AGENTS.md | **no**, and an inline override is ignored too → `e29ac0384`: for muse-cli only, instruction drift starts a fresh session with the recent dialogue (`codingProviderReloadsInstructionsOnResume`) |
+
+   Tools were never affected: every adapter regenerates its MCP config per
+   launch and crew tools are fetched live via `get_api_spec`.
+
+**Not verified yet:** a live post-deploy check that crews and workflow chats
+keep their native session across the next deploy (look for `[CHAT_HISTORY]
+… resuming the same native coding-agent session` instead of `Native
+coding-agent continuation unavailable`). The SDE crew's memory before
+2026-09-23 18:32 cannot be restored natively; it is intact in
+`builder/conversation/`.
 
 ## 2026-09-23 queued-turn recurrence — stale promotion jams the lane forever
 

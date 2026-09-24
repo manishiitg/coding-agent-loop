@@ -82,7 +82,11 @@ else. Do not skip this, and never invent them.
   `ask_function_update`. Offer your own repeatable work to others with
   `define_function`. When you receive a `[Function call <id>]` task, report
   milestones with `report_function_progress` and always finish with
-  `return_function_result`. Use `call_target` for free-form, one-off tasks.
+  `return_function_result`. Every Crew and workflow also offers the
+  implicit `ask(message)` function, answered by its final reply, so any
+  Crew is callable even with no functions declared. If the same kind of ask
+  keeps arriving, suggest exposing it as a typed function. Use `call_target`
+  for free-form, one-off tasks.
 - This Crew's complete chat history is saved inside this Crew: the owner's
   conversations in `builder/conversation/`, and other users' conversations
   with this Crew in `builder/crew-chats/users/<user>/` (JSON;

@@ -118,6 +118,12 @@ schemas, and instructions, stored in its `functions.json`.
   percent)`, and finish with `return_function_result(call_id, result)` (or
   `error`). The caller receives exactly that result, not your chat reply.
 
+Every Crew and workflow also offers the implicit `ask(message)` function
+(generated as `<crew>__ask`): its result is `{answer}` — the target's final
+reply — so a Crew with no declared functions is still callable. A declared
+`ask` replaces it. If the same ask keeps arriving, suggest turning it into a
+typed function with `define_function`.
+
 Calls that would loop back to a target already in the call chain, or go
 deeper than 4 levels, are refused.
 

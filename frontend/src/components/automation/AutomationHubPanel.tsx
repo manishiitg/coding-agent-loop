@@ -1,5 +1,5 @@
 import { cloneElement, isValidElement, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
-import { Bot, CalendarClock, MessageSquareText, Webhook, Zap } from 'lucide-react'
+import { Bot, Braces, CalendarClock, MessageSquareText, Webhook, Zap } from 'lucide-react'
 import type { ProductTriggerScope } from '../../api/productWebhooks'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { TriggerDeliveryHistoryPanel } from './TriggerDeliveryHistoryPanel'
@@ -14,8 +14,9 @@ import { WorkspaceViewIconButton } from '../workflow/WorkspaceViewIconButton'
 const WorkflowScheduleRunsPanel = lazy(() => import('../scheduler/WorkflowScheduleRunsPanel'))
 const ProductAPITriggersView = lazy(() => import('../workflow/ProductAPITriggersView'))
 const WorkflowAPITriggersView = lazy(() => import('../workflow/WorkflowAPITriggersView'))
+const CrewFunctionsView = lazy(() => import('./CrewFunctionsView'))
 
-export type AutomationHubSection = 'chats' | 'schedules' | 'triggers' | 'bots'
+export type AutomationHubSection = 'chats' | 'schedules' | 'triggers' | 'functions' | 'bots'
 
 type AutomationHubPanelProps = {
   entityType: 'workflow' | 'product'
@@ -40,6 +41,7 @@ type AutomationHubPanelProps = {
 const SECTION_DEFS = [
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
   { id: 'triggers', label: 'Triggers', icon: Webhook },
+  { id: 'functions', label: 'Functions', icon: Braces },
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'chats', label: 'Chats', icon: MessageSquareText },
 ] as const
@@ -47,6 +49,7 @@ const SECTION_DEFS = [
 const WORKFLOW_SECTION_MESSAGES: Record<AutomationHubSection, string> = {
   schedules: getWorkspaceAskAIMessage('schedules'),
   triggers: getWorkspaceAskAIMessage('webhooks'),
+  functions: getWorkspaceAskAIMessage('webhooks'),
   chats: getWorkspaceAskAIMessage('workshop'),
   bots: getWorkspaceAskAIMessage('workshop'),
 }
@@ -73,11 +76,15 @@ export function AutomationHubPanel({
   const [triggersRefreshToken, setTriggersRefreshToken] = useState(0)
   const [triggersCounts, setTriggersCounts] = useState<{ active: number; paused: number } | null>(null)
   const [chatsRefreshToken, setChatsRefreshToken] = useState(0)
+  const [functionsRefreshToken, setFunctionsRefreshToken] = useState(0)
+  const [functionsCounts, setFunctionsCounts] = useState<{ functions: number; running: number } | null>(null)
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
   const availableSections = useMemo(() => new Set<AutomationHubSection>([
     ...(chatContent ? ['chats' as const] : []),
     'schedules',
     ...(entityType === 'workflow' || productTriggerScope ? ['triggers' as const] : []),
+    // Crew functions (PLAT-357) live on the Crew's own project.
+    ...(entityType === 'product' && productTriggerScope ? ['functions' as const] : []),
     ...(botContent ? ['bots' as const] : []),
   ]), [botContent, chatContent, entityType, productTriggerScope])
   const fallbackSection = availableSections.has(initialSection) ? initialSection : 'schedules'
@@ -108,6 +115,8 @@ export function AutomationHubPanel({
     ? { label: 'Refresh schedules', run: () => setSchedulesRefreshToken(token => token + 1), spinning: schedulesStatus?.isLoading }
     : section === 'triggers'
       ? { label: 'Refresh triggers', run: () => setTriggersRefreshToken(token => token + 1), spinning: false }
+      : section === 'functions'
+        ? { label: 'Refresh functions', run: () => setFunctionsRefreshToken(token => token + 1), spinning: false }
       : section === 'chats'
         ? { label: 'Refresh chats', run: () => setChatsRefreshToken(token => token + 1), spinning: false }
         : undefined
@@ -133,6 +142,8 @@ export function AutomationHubPanel({
           section === 'schedules' && schedulesStatus ? <ScheduleStatusPills status={schedulesStatus} />
           : section === 'triggers' && triggersCounts ? (
             <span className="text-xs text-muted-foreground">{triggersCounts.active} active · {triggersCounts.paused} paused</span>
+          ) : section === 'functions' && functionsCounts ? (
+            <span className="text-xs text-muted-foreground">{functionsCounts.functions} functions · {functionsCounts.running} running</span>
           ) : undefined
         }
         tabs={{
@@ -178,6 +189,12 @@ export function AutomationHubPanel({
           hideHeader
           refreshToken={triggersRefreshToken}
           onCounts={setTriggersCounts}
+        />}
+        {section === 'functions' && entityType === 'product' && productTriggerScope && <CrewFunctionsView
+          scope={productTriggerScope}
+          refreshToken={functionsRefreshToken}
+          onCounts={setFunctionsCounts}
+          onEdit={onAskAI}
         />}
         {section === 'bots' && botContent}
         </Suspense>

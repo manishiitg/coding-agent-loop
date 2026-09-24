@@ -65,6 +65,14 @@ not schema-validated in this slice.
   carrying the result, failure or timeout (the same background-execution
   pipeline as `trigger_and_auto_notify` / `call_target`).
 
+**Default `ask`.** Every Crew and workflow implicitly offers
+`ask(message: string) -> {answer: string}` over its standard inbound trigger,
+so a Crew with no declared functions is still callable (listed by
+`list_functions`, callable via `call_function`, generated as `<crew>__ask`).
+Its result is the target's final free-text reply; `return_function_result`
+is optional. A declared `ask` replaces it. Targets are told to suggest a
+typed function when the same ask keeps arriving.
+
 **Generated tools.** For Crews and workflows tagged (`#crew:` /
 `#workflow:`) or attached to the calling Crew, each function is also
 registered as its own tool, e.g. `rts_flow_tester__run_login_flow(build,
@@ -90,11 +98,21 @@ calls: a target already in the chain is refused (cycle), depth is capped at
 4, and one chain may make at most 20 calls. `return_function_result` and
 `report_function_progress` are accepted only from the call's own target.
 
+**UI.** The Crew's Automation panel has a **Functions** tab next to
+Schedules and Triggers (`CrewFunctionsView`): each function with its
+inputs, returns, creator and last update (the built-in `ask` marked "Built
+in"), and **Recent calls** (caller, status, latest progress; expandable to
+the progress log and the result or error). The owner can remove a
+function; "Edit in chat" sends a guided request to the Crew chat. Backed by
+`GET /api/crew-functions` and `DELETE /api/crew-functions/{name}`
+(owner-scoped like `/api/product-webhooks`).
+
 ## Not in this slice
 
 - Call records live in memory (with a JSON copy under
   `<target>/functions/calls/`); the auto-notification watch does not
   survive a server restart (same as `call_target`), `get_function_call`
   falls back to the saved copy.
-- No UI yet for functions; they appear in `functions.json` and through the
-  tools. Workflow results are not schema-validated.
+- Workflow results are not schema-validated, and workflows have no
+  Functions tab yet (the tab and endpoint are Crew-only).
+- "Recent calls" shows calls made since the server started (in-memory).

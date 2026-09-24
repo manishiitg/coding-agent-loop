@@ -3,10 +3,20 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/mux"
 )
+
+func muxRouterForCrewFunctions(svc *ProductScheduleService) *mux.Router {
+	router := mux.NewRouter()
+	ProductWebhookRoutes(router, svc)
+	return router
+}
 
 func TestCrewFunctionSchemaValidation(t *testing.T) {
 	schema := map[string]interface{}{
@@ -102,7 +112,7 @@ func waitForCall(t *testing.T, function string) *crewFunctionCall {
 		crewFunctionCalls.Lock()
 		for _, call := range crewFunctionCalls.m {
 			call.mu.Lock()
-			match := call.Function == function && !call.terminalLocked()
+			match := call.Function == function && !call.terminalLocked() && call.RunID != ""
 			call.mu.Unlock()
 			if match {
 				crewFunctionCalls.Unlock()
@@ -361,4 +371,112 @@ func crewFunctionToolKeys(tools map[string]recordedTool) []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+// A Crew that declares no functions is still callable through the implicit
+// ask function: it is listed, generated as a tool for tagged Crews, and its
+// result is the target's final free-text reply.
+func TestCrewFunctionDefaultAskUsesFinalReply(t *testing.T) {
+	env := newCrewFunctionEnv(t)
+	ctx := context.Background()
+	listed, err := env.alpha["list_functions"].exec(ctx, map[string]interface{}{"target": "Beta"})
+	if err != nil || !strings.Contains(listed, `"name": "ask"`) {
+		t.Fatalf("list = %s, %v", listed, err)
+	}
+	tagged := env.functionTools(t, linkAlphaPath, "sess-caller-ask", []string{linkBetaPath})
+	if _, ok := tagged["beta__ask"]; !ok {
+		t.Fatalf("beta__ask not generated: %v", crewFunctionToolKeys(tagged))
+	}
+	if _, err := env.alpha["call_function"].exec(ctx, map[string]interface{}{"target": "Beta", "function": "ask", "args": map[string]interface{}{}}); err == nil || !strings.Contains(err.Error(), "$.message: required") {
+		t.Fatalf("ask without message: err = %v", err)
+	}
+
+	crewFunctionFastWait = 5 * time.Second
+	go func() {
+		call := waitForCall(t, crewFunctionAskName)
+		call.mu.Lock()
+		runID, freeText := call.RunID, call.FreeText
+		call.mu.Unlock()
+		if !freeText {
+			t.Error("default ask must be a free-text call")
+		}
+		runs := agentProfileRuntimeWorkspace("owner", linkBetaPath)
+		if err := UpdateScheduleRunFinalResponse(ctx, runs, runID, "Three open bugs: A, B, C."); err != nil {
+			t.Error(err)
+		}
+		if err := UpdateScheduleRun(ctx, runs, runID, "success", "", nil, "", "sess-beta"); err != nil {
+			t.Error(err)
+		}
+	}()
+	out, err := tagged["beta__ask"].exec(ctx, map[string]interface{}{"message": "How many open bugs?"})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	result := decodeToolJSON(t, out)
+	answer, _ := result["result"].(map[string]interface{})
+	if result["status"] != "completed" || answer["answer"] != "Three open bugs: A, B, C." {
+		t.Fatalf("ask result = %v", result)
+	}
+	env.mock.mu.Lock()
+	found := false
+	for path, content := range env.mock.files {
+		if strings.HasPrefix(path, linkBetaPath+"/triggers/deliveries/") && strings.Contains(content, "How many open bugs?") && strings.Contains(content, "exposed as a typed function") {
+			found = true
+		}
+	}
+	env.mock.mu.Unlock()
+	if !found {
+		t.Fatal("ask delivery did not carry the message and the offer-a-function hint")
+	}
+}
+
+// The Automation panel's Functions tab lists declared functions plus the
+// implicit ask and the Crew's recent calls; the owner can delete a function
+// but not the built-in ask.
+func TestCrewFunctionsHTTPListAndDelete(t *testing.T) {
+	env := newCrewFunctionEnv(t)
+	ctx := context.Background()
+	if _, err := env.alpha["define_function"].exec(ctx, loginFlowArgs); err != nil {
+		t.Fatal(err)
+	}
+	router := muxRouterForCrewFunctions(env.svc)
+	get := httptest.NewRequest(http.MethodGet, "/api/crew-functions?profile_id=work&project_id=beta", nil)
+	get = get.WithContext(context.WithValue(get.Context(), UserContextKey, &UserClaims{UserID: "owner"}))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, get)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var listed struct {
+		Functions []struct {
+			Name     string `json:"name"`
+			Implicit bool   `json:"implicit"`
+		} `json:"functions"`
+		Calls []interface{} `json:"calls"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, fn := range listed.Functions {
+		names[fn.Name] = fn.Implicit
+	}
+	if implicit, ok := names["ask"]; !ok || !implicit {
+		t.Fatalf("functions = %+v", listed.Functions)
+	}
+	if implicit, ok := names["run_login_flow"]; !ok || implicit {
+		t.Fatalf("functions = %+v", listed.Functions)
+	}
+	for _, tc := range []struct {
+		name string
+		code int
+	}{{"ask", http.StatusBadRequest}, {"run_login_flow", http.StatusNoContent}, {"run_login_flow", http.StatusNotFound}} {
+		del := httptest.NewRequest(http.MethodDelete, "/api/crew-functions/"+tc.name+"?profile_id=work&project_id=beta", nil)
+		del = del.WithContext(context.WithValue(del.Context(), UserContextKey, &UserClaims{UserID: "owner"}))
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, del)
+		if recorder.Code != tc.code {
+			t.Fatalf("delete %s = %d, want %d: %s", tc.name, recorder.Code, tc.code, recorder.Body.String())
+		}
+	}
 }

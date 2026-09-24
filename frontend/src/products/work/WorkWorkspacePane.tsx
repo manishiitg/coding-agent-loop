@@ -382,6 +382,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               chats: "Help me with this Crew project's automation: past chats, schedules, and triggers. Explain what's here and ask what I want to review or change.",
               schedules: "Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions.",
               triggers: "Help me manage this project's authenticated triggers. Each trigger sends one saved instruction to this Crew project.",
+              functions: "Help me with this Crew's functions: typed actions other Crews and workflows can call. List them, explain what each does, and ask what I want to add or change.",
             }}
             onAskAI={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           />}

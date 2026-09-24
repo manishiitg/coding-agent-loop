@@ -96,6 +96,35 @@ func writeCrewFunctions(ctx context.Context, target triggerTarget, functions []c
 	return writeFileToWorkspace(ctx, crewFunctionsPath(ctx, target), string(encoded)+"\n")
 }
 
+// crewFunctionAskName is the implicit function every Crew and workflow
+// offers: a free-text question answered by the target's final reply, over
+// the standard inbound trigger. A declared function of the same name wins.
+const crewFunctionAskName = "ask"
+
+func defaultAskCrewFunction() crewFunction {
+	return crewFunction{
+		Name:        crewFunctionAskName,
+		Description: "Ask this Crew or workflow anything in free text; the answer is its final reply. Available on every Crew and workflow without setup.",
+		InputSchema: map[string]interface{}{"type": "object", "required": []interface{}{"message"}, "properties": map[string]interface{}{
+			"message": map[string]interface{}{"type": "string", "description": "Self-contained question or task; the target does not see this conversation."},
+		}},
+		ResultSchema: map[string]interface{}{"type": "object", "required": []interface{}{"answer"}, "properties": map[string]interface{}{
+			"answer": map[string]interface{}{"type": "string"},
+		}},
+		Instructions: "Answer the caller's message. Your final reply is returned to the caller as the answer.",
+		CreatedBy:    "platform (default)",
+	}
+}
+
+// withDefaultAskFunction returns the declared functions plus the implicit
+// ask, unless the target declared its own ask.
+func withDefaultAskFunction(functions []crewFunction) []crewFunction {
+	if _, declared := findCrewFunction(functions, crewFunctionAskName); declared {
+		return functions
+	}
+	return append(append([]crewFunction(nil), functions...), defaultAskCrewFunction())
+}
+
 func findCrewFunction(functions []crewFunction, name string) (crewFunction, bool) {
 	for _, fn := range functions {
 		if fn.Name == strings.TrimSpace(name) {
@@ -202,14 +231,20 @@ type crewFunctionCall struct {
 	Progress       []crewFunctionProgress `json:"progress,omitempty"`
 	InvalidResults int                    `json:"invalid_results,omitempty"`
 	Retried        bool                   `json:"retried,omitempty"`
-	ResultSchema   map[string]interface{} `json:"result_schema,omitempty"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	// FreeText marks the implicit ask: the result is the target's final
+	// reply ({"answer": ...}) and return_function_result is optional.
+	FreeText     bool                   `json:"free_text,omitempty"`
+	ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
 
 	target triggerTarget
 	caller triggerLinkCaller
 	done   chan struct{}
 	closed bool
+	// poll is captured at start so a supervisor never reads the package
+	// interval after it changes.
+	poll time.Duration
 }
 
 var crewFunctionCalls = struct {
@@ -336,6 +371,15 @@ func (api *StreamingAPI) dispatchTargetTrigger(ctx context.Context, userID strin
 }
 
 func crewFunctionTaskText(call *crewFunctionCall, fn crewFunction, args map[string]interface{}) string {
+	if call.FreeText {
+		message, _ := args["message"].(string)
+		return fmt.Sprintf(`[Function call %[1]s] The %[2]s %[3]q asks:
+
+%[4]s
+
+Reply with your answer: your final reply in this turn is returned to the caller as the answer. For longer work, report milestones with report_function_progress(call_id=%[1]q, message=...). If you notice the same kind of ask arriving repeatedly, suggest to the user that it be exposed as a typed function (define_function).`,
+			call.ID, call.CallerKind, call.CallerLabel, strings.TrimSpace(message))
+	}
 	encodedArgs, _ := json.MarshalIndent(args, "", "  ")
 	resultShape := "any JSON value"
 	if len(fn.ResultSchema) > 0 {
@@ -405,7 +449,8 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 		TargetKind: target.Kind, TargetID: target.stampID(), TargetLabel: target.Label, TargetPath: crewFunctionRoot(ctx, target),
 		Chain: append(chain, targetKey), Root: root, TriggerID: triggerID, Status: "queued",
 		ResultSchema: fn.ResultSchema, CreatedAt: now, UpdatedAt: now,
-		target: target, caller: caller, done: make(chan struct{}),
+		FreeText: fn.Name == crewFunctionAskName && fn.CreatedBy == defaultAskCrewFunction().CreatedBy,
+		target:   target, caller: caller, done: make(chan struct{}), poll: triggerTargetPollInterval,
 	}
 	body := map[string]interface{}{
 		"task":    crewFunctionTaskText(call, fn, args),
@@ -437,7 +482,7 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 func (api *StreamingAPI) superviseCrewFunctionCall(call *crewFunctionCall, timeout time.Duration) {
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: call.UserID})
 	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(triggerTargetPollInterval)
+	ticker := time.NewTicker(call.poll)
 	defer ticker.Stop()
 	for {
 		select {
@@ -485,6 +530,9 @@ func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFu
 		if state.Failed {
 			return call.finish("failed", nil, truncateTriggerTargetResult(state.Result))
 		}
+		if call.FreeText {
+			return call.finish("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(state.Result)}, "")
+		}
 		var decoded interface{}
 		if json.Unmarshal([]byte(state.Result), &decoded) != nil {
 			decoded = state.Result
@@ -495,10 +543,17 @@ func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFu
 	select {
 	case <-call.done:
 		return true
-	case <-time.After(minDuration(triggerTargetPollInterval, 2*time.Second)):
+	case <-time.After(minDuration(call.poll, 2*time.Second)):
 	}
 	if state.Failed {
 		return call.finish("failed", nil, fmt.Sprintf("%s %q run ended %s: %s", call.TargetKind, call.TargetLabel, state.Status, truncateTriggerTargetResult(state.Result)))
+	}
+	if call.FreeText {
+		answer := strings.TrimSpace(state.Result)
+		if answer == "" {
+			return call.finish("failed", nil, "the target finished without a reply")
+		}
+		return call.finish("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(answer)}, "")
 	}
 	call.mu.Lock()
 	retried := call.Retried
@@ -693,6 +748,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err != nil {
 			return "", err
 		}
+		functions = withDefaultAskFunction(functions)
 		fn, ok := findCrewFunction(functions, function)
 		if !ok {
 			return "", fmt.Errorf("%s %q has no function %q; it has: %s", target.Kind, target.Label, function, strings.Join(crewFunctionNames(functions), ", "))
@@ -843,6 +899,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err != nil {
 			return "", err
 		}
+		functions = withDefaultAskFunction(functions)
 		listed := make([]map[string]interface{}, 0, len(functions))
 		for _, fn := range functions {
 			listed = append(listed, map[string]interface{}{"name": fn.Name, "description": fn.Description, "input_schema": fn.InputSchema, "result_schema": fn.ResultSchema, "created_by": fn.CreatedBy})
@@ -1090,7 +1147,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err != nil {
 			continue
 		}
-		for _, fn := range functions {
+		for _, fn := range withDefaultAskFunction(functions) {
 			toolName := crewFunctionToolName(target.Label, fn.Name)
 			if seen[toolName] {
 				continue

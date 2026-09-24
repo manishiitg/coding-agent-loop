@@ -124,6 +124,8 @@ import type { Skill } from '../types/skills'
 import { getClipboardImageFiles } from './clipboardImages'
 import { shouldUsePastedTextAttachment } from '../utils/chatPasteBehavior'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
+import { loadProfileAtFiles } from '../utils/profileAtFiles'
+import { proxyCrewFileClient, sharedCrewFileClient } from '../products/work/sharedCrewFiles'
 
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
@@ -493,6 +495,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const agentProfileWorkspace = activeTab?.metadata?.agentProfileWorkspace
   const agentProfileId = activeTab?.metadata?.agentProfileId
   const agentProfileVersion = activeTab?.metadata?.agentProfileVersion
+  const agentProfileProjectId = activeTab?.metadata?.agentProfileProjectId
   // Product identity comes from the tab contract, not the visual composer
   // variant. Work deliberately keeps AgentWorks' composer layout while still
   // being a profile-backed product; coupling runtime behavior to
@@ -1504,6 +1507,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   // Extra files for @ dialog (Chats/ — loaded on demand so workflow-scoped trees still show them)
   const [extraAtFiles, setExtraAtFiles] = useState<PlannerFile[]>([])
+  // Product-profile chats (Crew, …) list their own project for @, with
+  // project-relative paths: the agent's cwd is the project root.
+  const [profileAtFiles, setProfileAtFiles] = useState<PlannerFile[] | null>(null)
+  const profileAtRoot = isProductProfile ? (agentProfileWorkspace || '').trim() : ''
 
   // Command selection dialog state
   const [showCommandDialog, setShowCommandDialog] = useState(false)
@@ -1636,7 +1643,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // workspace tree when it's scoped to a workflow folder).
   // The API returns the CONTENTS of a folder, so we wrap them in synthetic folder entries.
   useEffect(() => {
-    if (!showFileDialog) return
+    if (!showFileDialog || !profileAtRoot) {
+      if (!profileAtRoot) setProfileAtFiles(null)
+      return
+    }
+    let cancelled = false
+    // A shared Crew (another owner's project) is refused by the raw workspace
+    // listing; the mediated shared-project endpoint serves it instead.
+    const fallback = agentProfileId === 'work' && agentProfileProjectId && profileAtRoot.startsWith('_users/')
+      ? sharedCrewFileClient(agentProfileProjectId, profileAtRoot)
+      : null
+    loadProfileAtFiles(profileAtRoot, proxyCrewFileClient, fallback)
+      .then(files => { if (!cancelled) setProfileAtFiles(files) })
+      .catch(() => { if (!cancelled) setProfileAtFiles([]) })
+    return () => { cancelled = true }
+  }, [showFileDialog, profileAtRoot, agentProfileId, agentProfileProjectId])
+
+  useEffect(() => {
+    if (!showFileDialog || profileAtRoot) return
     let cancelled = false
     const fetchExtraFolders = async () => {
       try {
@@ -1653,7 +1677,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
     fetchExtraFolders()
     return () => { cancelled = true }
-  }, [showFileDialog])
+  }, [showFileDialog, profileAtRoot])
 
   // Lazy-load skills when ! popup opens (always re-fetch to pick up new skills)
   useEffect(() => {
@@ -3686,6 +3710,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}
         extraFiles={extraAtFiles}
+        files={profileAtRoot ? (profileAtFiles ?? []) : undefined}
       />
 
       {/* Workflow Selection Dialog */}

@@ -12,7 +12,6 @@ get "no":
 |---|---|---|
 | `GET /api/header-summary` | `GlobalActivityMonitor.tsx:219`, `useChatStore` safety poll | 10s, plus a 60s safety poll |
 | `GET /api/workflow/pulse-module-state` (252 KB) | `WorkspaceViewHost.tsx` | 30s while the Pulse view is open |
-| `GET /api/workflow/plan-changelog?limit=1` | `usePlanData.ts` | 30s while the Plan canvas is visible |
 | `GET /api/org-dashboard/notifications` | `GlobalActivityButton`, `WorkflowActivityButton` | 30s each |
 | `GET /api/report-human-inputs[/aggregate]` | `usePendingDecisionCount`, the activity buttons | 30s each |
 | `GET /api/scheduler/config` | `useGlobalSchedulerPaused.ts` | 30s |
@@ -49,8 +48,8 @@ The feed exists for two surfaces:
     "needs your input" counts)
   - the scheduler-paused indicator
   - runtime health (browser sessions)
-- **Right pane (workspace views in `WorkspaceViewHost`):** Plan canvas, Pulse,
-  Report, Backup, Publish, notifications and decisions. Each view refetches
+- **Right pane (workspace views in `WorkspaceViewHost`):** Pulse, Report,
+  Backup, Publish, notifications and decisions. Each view refetches
   only while it is the open view.
 
 **Chat conversations are out of scope.** They keep their own per-session
@@ -58,6 +57,10 @@ streams (`/api/sessions/{id}/events/stream`) unchanged. This feed never
 carries chat events, token deltas or session transcripts. The `sessions` kind
 below only tells the header's activity monitor that the list of running
 sessions changed. It carries nothing from inside a conversation.
+
+**Plan edits are out of scope too.** The Plan canvas does not watch for
+outside edits: they are infrequent, and the canvas has a manual refresh.
+The changelog poll was removed on 2026-09-24.
 
 ### Wire format
 
@@ -81,7 +84,6 @@ These are the kinds, and the refetch each one triggers:
 | `human_inputs` | workflow | Header: pending count; right pane: decisions | `report-human-inputs` and the aggregate |
 | `scheduler_config` | global | Header: scheduler-paused indicator | `scheduler/config` |
 | `browser_sessions` | global | Header: runtime health | `browser/sessions` |
-| `plan` | workflow | Right pane: Plan canvas (only while visible) | plan and changelog head |
 | `pulse_state` | workflow | Right pane: Pulse (only while open) | `pulse-module-state` |
 
 A notice never contains the changed data. The client always refetches through
@@ -122,7 +124,6 @@ feed small and keeps one source of truth for every shape.
 
 | kind | Publish from |
 |---|---|
-| `plan` | `writePlanChangelogEntry` (planning_agent.go:1343) covers ~24 `logPlanChange` callers. Also `writePlanToFile` (:2671), `writePlanToWorkspace` (workflow.go:2082), `handlePrunePlanChangelog`, and `markChangelogArtifactReviewed`. The writers are centralized, and raw tools cannot write under `planning/` (planning_file_write_access.go). |
 | `pulse_state` | About 20 writers in `pulse_worklist.go`, `pulse_final_commands.go`, `pulse_goal_work.go`, `pulse_schedule.go`, `pulse_fast_requests.go`, `pulse_fix_run.go` and `pulse_review_notes.go`. Add one `notePulseStateChanged(ws)` helper and call it after each commit. Also publish on `workflow.json` writes (`noteWorkspaceMutation` already sees them), because the response includes autonomy, focus areas and next pulse. |
 | `sessions` | The `activeSessions` and `trackedWorkflowExecutions` mutators (server.go `trackActiveSession`, `updateSessionStatus`, `handleDismissSession`, `cleanupInactiveSessionsAt`, `handleQuery` start/finish; `workflow_execution_tracker.go` start/finish/cancel). **Not** `updateSessionActivity`, which runs on every event: publish only when a status changes. |
 | `schedules` | `noteScheduleSummaryChange()` (header_summary_cache.go:19). It is already the invalidation point for this data. |
@@ -193,8 +194,8 @@ This adds one long-lived connection per tab.
    client singleton, `sessions`/`schedules` (header-summary),
    `human_inputs`, `notifications`. This removes about 80% of the idle
    traffic.
-2. **Workflow views.** `pulse_state` and `plan`. Drop the Pulse and canvas
-   timers, and add publish-on-session-completion.
+2. **Right-pane views.** `pulse_state`. Drop the Pulse timer, and add
+   publish-on-session-completion.
 3. **The rest.** `scheduler_config` and `browser_sessions`. Gate
    `RuntimeHealthControl` on tab visibility.
 

@@ -29,40 +29,10 @@ it('loads plan/config concurrently, shares requests and ignores a late previous 
   expect(results.two.plan?.steps[0].id).toBe('slow')
  }finally{act(()=>root.unmount())}
 })
-it('reloads the plan when the changelog head moves (Builder-side mutation)',async()=>{
- const headA={success:true,entries:[{timestamp:'2026-09-19T00:00:00Z',tool:'add_step',reason:'x',step_ids:['one']}],count:1}
- const headB={success:true,entries:[{timestamp:'2026-09-20T00:00:00Z',tool:'add_crew_step',reason:'y',step_ids:['crew-two']}],count:2}
- let planSteps:unknown[]=[{id:'one',type:'regular',title:'One'}]
- vi.mocked(agentApi.getPlannerFileContent).mockImplementation((path:string)=>{
-  if(path.endsWith('step_config.json'))return Promise.resolve({success:true,data:{content:JSON.stringify([])}})
-  return Promise.resolve({success:true,data:{content:JSON.stringify({steps:planSteps})}})
- })
- vi.mocked(agentApi.getPlanChangelog).mockResolvedValue(headA)
- const results:Record<string,ReturnType<typeof usePlanData>>={}
- function Probe({id,path}:{id:string,path:string}) {results[id]=usePlanData(path);return null}
- const root=createRoot(document.createElement('div'))
- const flush=async()=>{for(let i=0;i<10;i++)await act(async()=>{})}
- try{
-  await act(async()=>{root.render(<Probe id="p" path="Workflow/stale-test"/>)})
-  await flush()
-  expect(results.p.plan?.steps.map(s=>s.id)).toEqual(['one'])
-  const callsAfterLoad=vi.mocked(agentApi.getPlannerFileContent).mock.calls.length
-  await act(async()=>{window.dispatchEvent(new Event('focus'))})
-  await flush()
-  expect(vi.mocked(agentApi.getPlannerFileContent).mock.calls.length).toBe(callsAfterLoad)
-  vi.mocked(agentApi.getPlanChangelog).mockResolvedValue(headB)
-  planSteps=[...planSteps,{id:'crew-two',type:'crew',title:'Crew Two'}]
-  await act(async()=>{window.dispatchEvent(new Event('focus'))})
-  await flush()
-  expect(results.p.plan?.steps.map(s=>s.id)).toEqual(['one','crew-two'])
-  expect(results.p.changes?.added).toEqual(['crew-two'])
- }finally{act(()=>root.unmount())}
-})
-
-it('does not poll the changelog when the plan canvas is not on screen', async () => {
+it('never polls the plan changelog (manual refresh reloads the plan)', async () => {
  vi.mocked(agentApi.getPlannerFileContent).mockResolvedValue({success:true,data:{content:JSON.stringify({steps:[]})}} as never)
  vi.mocked(agentApi.getPlanChangelog).mockClear()
- function Probe() {usePlanData('Workflow/hidden-canvas', false);return null}
+ function Probe() {usePlanData('Workflow/no-poll');return null}
  const root=createRoot(document.createElement('div'))
  try{
   await act(async()=>{root.render(<Probe/>)})

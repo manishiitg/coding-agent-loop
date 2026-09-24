@@ -303,6 +303,14 @@ func (g *gateway) serveFrontend(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, path)
 		return
 	}
+	// A hashed asset from a previous release is gone, not a client route:
+	// answering with index.html makes the browser (and a CDN in front) treat
+	// HTML as the script, leaving a blank page after a deploy.
+	if strings.HasPrefix(cleanPath, "/assets/") {
+		w.Header().Set("Cache-Control", "no-store")
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(g.frontendDir, "index.html"))
 }

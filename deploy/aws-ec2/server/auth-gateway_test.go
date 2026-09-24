@@ -790,3 +790,29 @@ func TestServeFrontendCachesHashedAssetsImmutably(t *testing.T) {
 		}
 	}
 }
+
+// A hashed asset from a previous release must 404, not fall back to
+// index.html: a browser (or Cloudflare in front) would otherwise treat the
+// HTML as the script and show a blank page after every deploy.
+func TestMissingHashedAssetIsNotFoundNotSPAFallback(t *testing.T) {
+	frontendDir := t.TempDir()
+	if err := os.WriteFile(frontendDir+"/index.html", []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+	gw := &gateway{frontendDir: frontendDir}
+
+	response := httptest.NewRecorder()
+	gw.serveFrontend(response, httptest.NewRequest(http.MethodGet, "/assets/index-oldhash.js", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("missing asset Cache-Control = %q, want no-store", got)
+	}
+
+	response = httptest.NewRecorder()
+	gw.serveFrontend(response, httptest.NewRequest(http.MethodGet, "/projects/123", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("client route status = %d, want %d (SPA fallback)", response.Code, http.StatusOK)
+	}
+}

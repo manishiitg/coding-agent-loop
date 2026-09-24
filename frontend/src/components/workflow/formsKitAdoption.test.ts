@@ -19,8 +19,9 @@ describe('settings form kit adoption', () => {
     expect(slack).not.toContain('peer-checked')
     expect(slack).not.toContain('<button')
     expect(slack).not.toContain('<textarea')
-    // The app-selection radios stay native: no RadioGroup in the kit.
-    expect(rawCount(slack)).toBe(2)
+    // The own-bot / shared-bot radio stays native (one ModeOption renders
+    // both): no RadioGroup in the kit.
+    expect(rawCount(slack)).toBe(1)
   })
 
   it('builds Gmail from the shared kit with zero raw form elements', () => {

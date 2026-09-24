@@ -2596,6 +2596,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
 	botManager.SetResumeListFunc(api.listBotResumeTargets)
 	botManager.SetWorkflowAccessFunc(api.checkBotWorkflowAccess)
+	services.SetDedicatedSlackRouteFunc(api.dedicatedSlackRoute)
 	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
 		running := api.listRunningWorkflowExecutions(userID)
 		out := make([]services.BotRunningWorkflow, 0, len(running))

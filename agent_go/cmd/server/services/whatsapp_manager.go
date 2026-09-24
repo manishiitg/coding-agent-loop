@@ -582,17 +582,17 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 			handler(msg)
 		}
 	})
-	svc.SetInteractionHandler(func(platform, channelID, threadTS, actionID, value, senderUserID string) {
-		encodedChannelID := encodeWhatsAppManagedChannelID(userID, channelID)
-		encodedThreadTS := threadTS
-		if encodedThreadTS == "" || encodedThreadTS == channelID {
-			encodedThreadTS = encodedChannelID
+	svc.SetInteractionHandler(func(threadID ThreadID, actionID, value, senderUserID string) {
+		channelID := threadID.ChannelID
+		threadID.ChannelID = encodeWhatsAppManagedChannelID(userID, channelID)
+		if threadID.ThreadTS == "" || threadID.ThreadTS == channelID {
+			threadID.ThreadTS = threadID.ChannelID
 		}
 		m.mu.RLock()
 		handler := m.interaction
 		m.mu.RUnlock()
 		if handler != nil {
-			handler(platform, encodedChannelID, encodedThreadTS, actionID, value, senderUserID)
+			handler(threadID, actionID, value, senderUserID)
 		}
 	})
 	m.installProfileRouter(userID, svc)

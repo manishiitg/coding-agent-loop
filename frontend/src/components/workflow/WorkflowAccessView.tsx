@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
 import WorkflowSharePopup from './WorkflowSharePopup'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
+import SlackAdminPanel from '../admin/SlackAdminPanel'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { hasWorkflowOwnerAccess } from '../../utils/workflowPermissions'
@@ -18,6 +19,7 @@ interface WorkflowAccessViewProps {
 const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
   { value: 'workflow', label: 'This workflow' },
   { value: 'users', label: 'Users' },
+  { value: 'slack', label: 'Slack' },
 ]
 
 /**
@@ -27,6 +29,8 @@ const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
  *  - "This workflow": who may see or edit the open workflow (owners,
  *    editors, and read-only readers).
  *  - "Users": the deployment's accounts and roles (admins only).
+ *  - "Slack": the shared Slack bot and the list of workflow bots (admins
+ *    only). Each workflow's own Slack setup stays in its Slack tab.
  */
 export default function WorkflowAccessView({ workspacePath }: WorkflowAccessViewProps) {
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
@@ -40,7 +44,8 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
   const workflowTab = isMultiUser && !!workspacePath && (canShareWorkflow || myAccess === 'read')
   const workflowReadOnly = !canShareWorkflow
   const usersTab = canManageUsers
-  const visibleTabs = ACCESS_TABS.filter(option => (option.value === 'workflow' && workflowTab) || (option.value === 'users' && usersTab))
+  const slackTab = isAdmin
+  const visibleTabs = ACCESS_TABS.filter(option => (option.value === 'workflow' && workflowTab) || (option.value === 'users' && usersTab) || (option.value === 'slack' && slackTab))
   const [tab, setTab] = usePersistentTab<AccessTabId>('agentworks.tab.access', 'workflow', ACCESS_TABS.map(option => option.value))
   const activeTab = visibleTabs.some(option => option.value === tab) ? tab : visibleTabs[0]?.value
   useEffect(() => {
@@ -58,7 +63,9 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
         title="Access"
         subtitle={activeTab === 'users'
           ? 'Accounts and roles for this deployment.'
-          : `${scopeName} · owners edit, run, share and delete; editors edit and run; read-only people chat, run and watch.`}
+          : activeTab === 'slack'
+            ? 'The shared Slack bot and every workflow bot in this deployment.'
+            : `${scopeName} · owners edit, run, share and delete; editors edit and run; read-only people chat, run and watch.`}
         actions={
           activeTab ? (
             <WorkspaceViewActions
@@ -83,6 +90,8 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
               <WorkflowSharePopup workspacePath={workspacePath} readOnly={workflowReadOnly} />
             ) : activeTab === 'users' ? (
               <UsersAdminPanel />
+            ) : activeTab === 'slack' ? (
+              <SlackAdminPanel />
             ) : null}
           </div>
         )}

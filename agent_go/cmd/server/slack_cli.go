@@ -107,8 +107,8 @@ func (api *StreamingAPI) slackCLIFromTool(ctx context.Context, args map[string]i
 	if err != nil {
 		return "", err
 	}
-	route, found := routes[channel]
-	if !services.SlackBotTrafficAllowed(cfg, found) || (route.BotGrant != "run" && route.BotGrant != "owner") {
+	route, found, dedicated := api.slackToolRoute(ctx, session, channel, routes)
+	if !slackTrafficAllowed(cfg, found, dedicated) || (route.BotGrant != "run" && route.BotGrant != "owner") {
 		return "", fmt.Errorf("Slack route is inactive or revoked")
 	}
 	if _, err = api.authorizeSlackToolRoute(ctx, session, channel, route); err != nil {

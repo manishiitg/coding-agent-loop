@@ -272,11 +272,19 @@ func TestSlackGetConfigMasksRegistry(t *testing.T) {
 	}
 }
 
-func TestThreadIDKeyIgnoresConnection(t *testing.T) {
+// Each Slack app keeps its own session in a shared thread; the default
+// connection keeps the legacy key so its durable bindings stay valid.
+func TestThreadIDKeySeparatesConnections(t *testing.T) {
 	plain := ThreadID{Platform: "slack", ChannelID: "C1", ThreadTS: "1.0"}
 	scoped := ThreadID{Platform: "slack", ChannelID: "C1", ThreadTS: "1.0", ConnectionID: "w"}
-	if plain.Key() != scoped.Key() {
-		t.Fatalf("keys differ: %q vs %q", plain.Key(), scoped.Key())
+	if plain.Key() != "slack:C1:1.0" {
+		t.Fatalf("default key changed: %q", plain.Key())
+	}
+	if plain.Key() == scoped.Key() {
+		t.Fatalf("apps share a key: %q", plain.Key())
+	}
+	if !plain.sameThread(scoped) {
+		t.Fatal("same Slack thread not recognized across apps")
 	}
 }
 

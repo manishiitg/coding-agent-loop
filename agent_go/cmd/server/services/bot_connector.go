@@ -180,14 +180,25 @@ type ThreadID struct {
 	ChannelID string
 	ThreadTS  string // platform-specific thread root ID
 	// ConnectionID names the Slack app connection the thread lives on.
-	// Empty means the default connection. It is deliberately excluded from
-	// Key so session lookup stays stable for manually-built IDs.
+	// Empty means the default connection (the root listener).
 	ConnectionID string
 }
 
-// Key returns a unique string key for this thread
+// Key returns a unique string key for this thread. Each Slack app keeps
+// its own session in a shared thread, so a non-default connection is part
+// of the key; the default connection keeps the legacy three-part key.
 func (t ThreadID) Key() string {
-	return fmt.Sprintf("%s:%s:%s", t.Platform, t.ChannelID, t.ThreadTS)
+	key := fmt.Sprintf("%s:%s:%s", t.Platform, t.ChannelID, t.ThreadTS)
+	if connectionID := strings.TrimSpace(t.ConnectionID); connectionID != "" {
+		key += "#" + connectionID
+	}
+	return key
+}
+
+// sameThread reports whether two IDs name the same platform thread,
+// whichever app they arrived on.
+func (t ThreadID) sameThread(other ThreadID) bool {
+	return t.Platform == other.Platform && t.ChannelID == other.ChannelID && t.ThreadTS == other.ThreadTS
 }
 
 // BotIncomingMessage represents a message received from a platform
@@ -334,7 +345,8 @@ type MessageButton struct {
 type BotMessageHandler func(msg BotIncomingMessage)
 
 // BotInteractionHandler is the callback invoked when a user clicks a button
-type BotInteractionHandler func(platform, channelID, threadTS, actionID, value, userID string)
+// threadID carries the app connection the click arrived on.
+type BotInteractionHandler func(threadID ThreadID, actionID, value, userID string)
 
 // MessageFormatter converts standard Markdown to platform-specific format
 type MessageFormatter interface {
@@ -810,20 +822,20 @@ func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage,
 		return msg.PresetWorkflow
 	}
 	if active != nil && strings.EqualFold(strings.TrimSpace(msg.Platform), "slack") {
-		if route := m.resolveChannelWorkflow(msg.Platform, msg.ChannelID); route != nil {
+		if route := m.resolveRoute(msg.Platform, msg.ConnectionID, msg.ChannelID); route != nil {
 			return route
 		}
 		active.mu.Lock()
 		wasRouted := strings.TrimSpace(active.RouteKey) != "" || strings.TrimSpace(active.PresetQueryID) != "" || active.profileRoute != nil
 		active.mu.Unlock()
 		if wasRouted {
-			return &ChannelRoute{BotGrant: "__revoked__"}
+			return RevokedSlackRoute()
 		}
 	}
 	if active != nil {
 		return botRouteFromActive(active)
 	}
-	return m.resolveChannelWorkflow(msg.Platform, msg.ChannelID)
+	return m.resolveRoute(msg.Platform, msg.ConnectionID, msg.ChannelID)
 }
 
 // routeChangeKeepsSession reports whether granting this route must leave the
@@ -877,7 +889,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return true
 	}
 	route := m.workflowRouteForMessage(*msg, active)
-	if route != nil && route.BotGrant == "__revoked__" {
+	if route != nil && route.BotGrant == revokedBotGrant {
 		log.Printf("[BOT_MANAGER] Routed Slack session no longer has an active route for channel=%s", msg.ChannelID)
 		if msg.IsMention {
 			m.sendWorkflowAccessDenied(msg.Platform, threadID, "This Slack route is no longer configured. Ask a workflow owner to re-enable it.")
@@ -1012,6 +1024,34 @@ func (m *BotConversationManager) sendWorkflowAccessDenied(platform string, threa
 	_, _ = connector.SendThreadMessage(context.Background(), threadID, message)
 }
 
+// botThreadPeerStore is optional: a connector serving several app
+// identities reports durable sessions other apps hold in a thread, so the
+// multi-bot rule survives a restart.
+type botThreadPeerStore interface {
+	HasOtherBotSessionBinding(ctx context.Context, thread ThreadID, ownRouteKey string) bool
+}
+
+// threadHasOtherBot reports whether a different app connection holds a
+// session in the same platform thread.
+func (m *BotConversationManager) threadHasOtherBot(thread ThreadID, ownRouteKey string) bool {
+	m.mu.RLock()
+	for _, active := range m.sessions {
+		if active == nil {
+			continue
+		}
+		// ThreadID is fixed at session creation; reading it without
+		// active.mu keeps the m.mu -> active.mu lock order out of play.
+		other := active.ThreadID
+		if other.sameThread(thread) && other.ConnectionID != thread.ConnectionID {
+			m.mu.RUnlock()
+			return true
+		}
+	}
+	m.mu.RUnlock()
+	peers, ok := m.GetConnector(thread.Platform).(botThreadPeerStore)
+	return ok && peers.HasOtherBotSessionBinding(context.Background(), thread, ownRouteKey)
+}
+
 // HandleIncomingMessage processes a message from any platform (async path)
 func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	// Non-mention messages should only be processed if there's an active session
@@ -1026,25 +1066,34 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		// must match ThreadID.Key() format (platform-prefixed) — not just
 		// channel:ts — otherwise the lookup always misses and non-mention
 		// replies are dropped even when a prior session exists.
-		probeThreadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
+		probeThreadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS, ConnectionID: msg.ConnectionID}
 		if probeThreadID.ThreadTS == "" {
 			probeThreadID.ThreadTS = msg.ChannelID
 		}
 		m.mu.Lock()
 		_, hasSession := m.sessions[probeThreadID.Key()]
 		m.mu.Unlock()
+		routeKey := ""
+		if strings.EqualFold(msg.Platform, "slack") {
+			routed := msg
+			routed.PresetWorkflow = m.resolveRoute(msg.Platform, msg.ConnectionID, msg.ChannelID)
+			routeKey = botMessageRouteKey(routed)
+		}
 		if !hasSession {
 			// A durable binding admits replies after restart, but never opens an
 			// unrelated thread merely because its channel has a route.
 			if store, ok := m.GetConnector(msg.Platform).(botSessionBindingStore); ok {
-				route := m.resolveChannelWorkflow(msg.Platform, msg.ChannelID)
-				routed := msg
-				routed.PresetWorkflow = route
-				_, hasSession, _ = store.LoadBotSessionBinding(context.Background(), probeThreadID, botMessageRouteKey(routed))
+				_, hasSession, _ = store.LoadBotSessionBinding(context.Background(), probeThreadID, routeKey)
 			}
 			if !hasSession {
 				return
 			}
+		}
+		// With several bots in one thread a plain reply has no addressee:
+		// every bot stays silent and the user tags the one they mean.
+		if m.threadHasOtherBot(probeThreadID, routeKey) {
+			log.Printf("[BOT_MANAGER] Plain reply in multi-bot thread %s ignored; tag a bot", probeThreadID.Key())
+			return
 		}
 	}
 
@@ -1136,7 +1185,7 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 				// Only reply with rejection for direct @mentions
 				if msg.IsMention {
 					if connector := m.GetConnector(msg.Platform); connector != nil {
-						threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
+						threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS, ConnectionID: msg.ConnectionID}
 						if threadID.ThreadTS == "" {
 							threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
 						}
@@ -1202,8 +1251,8 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 }
 
 // HandleInteraction processes a button click from a platform
-func (m *BotConversationManager) HandleInteraction(platform, channelID, threadTS, actionID, value, userID string) {
-	threadKey := fmt.Sprintf("%s:%s:%s", platform, channelID, threadTS)
+func (m *BotConversationManager) HandleInteraction(threadID ThreadID, actionID, value, userID string) {
+	threadKey := threadID.Key()
 
 	m.mu.RLock()
 	active, exists := m.sessions[threadKey]
@@ -3100,6 +3149,18 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 	return ResolveChannelRoute(botCfg.AllowedChannels, channelID)
 }
 
+// resolveRoute applies the inbound routing rule for a message's arrival app:
+// a Slack app scoped to a workflow or crew project serves that destination
+// wherever it is invited; any other app follows the channel route.
+func (m *BotConversationManager) resolveRoute(platform, connectionID, channelID string) *ChannelRoute {
+	if !strings.EqualFold(strings.TrimSpace(platform), "slack") {
+		return m.resolveChannelWorkflow(platform, channelID)
+	}
+	return ResolveSlackRoute(context.Background(), connectionID, func() *ChannelRoute {
+		return m.resolveChannelWorkflow(platform, channelID)
+	})
+}
+
 // buildQueryRequest constructs a request map for startSessionInternal.
 // userID is the workspace user ID used for scoped secret resolution and access checks.
 // channelID is used for Slack-style channel→workflow routing: pass the
@@ -3113,15 +3174,15 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 // threadID so human tools can notify the same bot conversation.
 func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, threadIDs ...ThreadID) map[string]interface{} {
 	if platform == "slack" && m.workflowTurn != nil {
+		thread := ThreadID{Platform: platform, ChannelID: channelID}
+		if len(threadIDs) > 0 {
+			thread = threadIDs[0]
+		}
 		route := presetRoute
 		if route == nil {
-			route = m.resolveChannelWorkflow(platform, channelID)
+			route = m.resolveRoute(platform, thread.ConnectionID, channelID)
 		}
 		if route != nil && route.WorkflowID != "" {
-			thread := ThreadID{Platform: platform, ChannelID: channelID}
-			if len(threadIDs) > 0 {
-				thread = threadIDs[0]
-			}
 			req, err := m.workflowTurn(context.Background(), query, *route, thread)
 			if err != nil {
 				return map[string]interface{}{"_bot_prepare_error": err.Error()}
@@ -3154,7 +3215,11 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	// which wins over "no routing at all" (default multi-agent chat).
 	route := presetRoute
 	if route == nil && channelID != "" {
-		route = m.resolveChannelWorkflow(platform, channelID)
+		connectionID := ""
+		if len(threadIDs) > 0 {
+			connectionID = threadIDs[0].ConnectionID
+		}
+		route = m.resolveRoute(platform, connectionID, channelID)
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID
@@ -3287,7 +3352,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 
 func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSession, query, userID, platform string, threadID ThreadID) map[string]interface{} {
 	if platform == "slack" && m.workflowTurn != nil {
-		route := m.resolveChannelWorkflow(platform, threadID.ChannelID)
+		route := m.resolveRoute(platform, threadID.ConnectionID, threadID.ChannelID)
 		if route != nil && route.WorkflowID != "" {
 			req := m.buildQueryRequest(query, userID, threadID.ChannelID, route, platform, threadID)
 			if active != nil {
@@ -3331,7 +3396,7 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(platform), "slack") {
-		if route := m.resolveChannelWorkflow(platform, threadID.ChannelID); route != nil {
+		if route := m.resolveRoute(platform, threadID.ConnectionID, threadID.ChannelID); route != nil {
 			routeGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 			workshopMode = WorkshopModeForBotGrant(routeGrant)
 		}

@@ -35,13 +35,13 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 	if err != nil {
 		return ctx, err
 	}
-	route, found := routes[req.BotChannelID]
+	route, found, dedicated := api.slackRouteForConnection(ctx, req.BotConnectionID, req.BotChannelID, routes)
 	if !found {
 		return ctx, fmt.Errorf("Slack bot route was revoked")
 	}
-	// An explicit route is the destination workflow's own enablement: it
-	// authorizes bot turns regardless of the platform switch.
-	if !services.SlackBotTrafficAllowed(cfg, true) {
+	// An explicit route (or the workflow's own app) is the destination's own
+	// enablement: it authorizes bot turns regardless of the platform switch.
+	if !slackTrafficAllowed(cfg, true, dedicated) {
 		return ctx, fmt.Errorf("Slack bot route is disabled")
 	}
 	if route.BotGrant != "run" && route.BotGrant != "owner" {

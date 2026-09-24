@@ -926,15 +926,15 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
           ...(target ? { profile_id: target.profileId } : {}),
         })
       }
-      // A fresh app becomes this workflow/project's selection unless a live
-      // connection is already selected.
+      // The own bot is this workflow/project's Slack identity: it answers
+      // for it in any channel and sends its notifications, so saving selects it.
       if (target) {
-        if (projectSlackSelectionId !== conn.id && !slackSelection.effective) {
+        if (projectSlackSelectionId !== conn.id) {
           await agentApi.setProjectSlackSelection(target.profileId, workspacePath, conn.id)
         }
       } else {
         const capabilities = workflow?.manifest.capabilities
-        if (capabilities && (capabilities.slack_connection_id || '') !== conn.id && !slackSelection.effective) {
+        if (capabilities && (capabilities.slack_connection_id || '') !== conn.id) {
           await updateWorkflow(workspacePath, {
             capabilities: { ...capabilities, slack_connection_id: conn.id },
           })
@@ -1018,7 +1018,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       }
       await agentApi.deleteSlackConnection(conn.id)
       setSlackConnConfirmDelete(false)
-      setSlackSuccess(`${target ? 'Project' : 'Workflow'} Slack app removed; the ${scopeNoun} now uses the platform default.`)
+      setSlackSuccess(`${target ? 'Project' : 'Workflow'} Slack app removed; the ${scopeNoun} now uses the shared bot.`)
       await loadSlack()
       setSlackConnSyncKey(key => key + 1)
       setTimeout(() => setSlackSuccess(null), 3000)
@@ -1186,7 +1186,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     setup, setSetup, expandedChip, setExpandedChip,
     routeSaving, routeError, newSlackChannel, setNewSlackChannel, newWaSlug, setNewWaSlug, addError, setAddError,
     // slack
-    slackConfig, setSlackConfig, slackOriginal, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
+    slackConfig, setSlackConfig, slackOriginal, loadSlack, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
     allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,

@@ -130,7 +130,10 @@ describe('Workflow MCP panel layout', () => {
     const slack = readFileSync('src/components/workflow/bots/SlackSetup.tsx', 'utf8')
 
     expect(chips).toContain('This route answers for another workflow')
-    expect(slack).toContain('Save platform settings')
+    // One question per workflow; platform settings live with the admin panel.
+    expect(slack).toContain('Who answers for this')
+    expect(slack).not.toContain('Save platform settings')
+    expect(readFileSync('src/components/admin/SlackAdminPanel.tsx', 'utf8')).toContain('Shared bot enabled')
     const gmail = readFileSync('src/components/workflow/bots/GmailNotifications.tsx', 'utf8')
     expect(gmail).toContain('Sending accounts')
     expect(gmail).toContain('Ask Builder to set up Gmail')

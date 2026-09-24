@@ -63,7 +63,7 @@ it("shows Slack and WhatsApp as separate tabs with Slack first", async () => {
   const tabs = Array.from(host.querySelectorAll('[role="tab"]'));
   expect(tabs.map(tab => tab.textContent)).toEqual(["Slack", "WhatsApp"]);
   expect(tabs[0].getAttribute("aria-selected")).toBe("true");
-  expect(host.querySelector('[data-testid="channel-slack"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="slack-settings"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="channel-whatsapp"]')).toBeNull();
 });
 
@@ -75,7 +75,7 @@ it("switches the channel card when the WhatsApp tab is picked", async () => {
   });
   expect(tabs[1].getAttribute("aria-selected")).toBe("true");
   expect(host.querySelector('[data-testid="channel-whatsapp"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="channel-slack"]')).toBeNull();
+  expect(host.querySelector('[data-testid="slack-settings"]')).toBeNull();
 });
 
 it("pins to one channel with no tab row when fixedChannel is set", async () => {
@@ -85,9 +85,10 @@ it("pins to one channel with no tab row when fixedChannel is set", async () => {
   expect(host.querySelector('[data-testid="channel-slack"]')).toBeNull();
 });
 
-it("shows Slack settings inline below the routes with no drill-in", async () => {
+it("gives Slack its own one-question tab with no channel row", async () => {
   const slack = await renderPanel("slack");
   expect(slack.querySelector('[data-testid="slack-settings"]')).not.toBeNull();
+  expect(slack.querySelector('[data-testid="channel-slack"]')).toBeNull();
   const whatsapp = await renderPanel("whatsapp");
   expect(whatsapp.querySelector('[data-testid="slack-settings"]')).toBeNull();
 });

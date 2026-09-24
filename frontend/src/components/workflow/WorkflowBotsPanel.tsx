@@ -43,7 +43,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
       workspacePath={workspacePath}
       onAsk={onAsk}
       label={scopeNoun === 'project' ? 'Ask Crew to set up Slack' : 'Ask Builder to set up Slack'}
-      message={`Read builder-reference/references/slack-bot-routing.md, inspect get_slack_bot_settings, and help me set up the Slack bot and channel routes for this ${scopeNoun}. Guide me through app creation and credentials in the settings UI without requesting tokens in chat. Use the existing scoped tools to create the route once the channel ID is clear; use run mode without asking for a grant. Everyone in the channel is allowed by default; ask about blocked emails only if I need exclusions.`}
+      message={`Read builder-reference/references/slack-bot-routing.md, inspect get_slack_bot_settings, and help me set up Slack for this ${scopeNoun}. First ask whether it should have its own bot (a Slack app that answers only for this ${scopeNoun}, in any channel it is invited to, with no routes) or use the shared bot in specific channels. For its own bot, guide me through app creation and credentials in the settings UI without requesting tokens in chat. For the shared bot, use the existing scoped tools to create the route once the channel ID is clear; use run mode without asking for a grant. Everyone in the channel is allowed by default; ask about blocked emails only if I need exclusions.`}
     />
   )
 
@@ -62,26 +62,37 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
             {setup === 'slack' ? 'Slack' : 'WhatsApp'}
-            <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>
+            {setup !== 'slack' && <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>}
           </div>
-          {setup === 'slack' && askSlackSetup}
         </div>
-        {setup === 'slack' ? <SlackSetup bots={bots} /> : <WhatsAppSetup bots={bots} />}
+        {setup === 'slack' ? <SlackSetup bots={bots} headerAction={askSlackSetup} /> : <WhatsAppSetup bots={bots} />}
       </div>
     )
   }
 
   const routes = workflowRoutes.filter(route => route.kind === channel)
+  const tabs = fixedChannel === undefined && (
+    <div className="border-b border-border">
+      <WorkspaceViewTabs value={channel} onChange={(value: string) => setInternalChannel(value as BotChannel)} options={CHANNEL_TABS} ariaLabel="Bots" />
+    </div>
+  )
+
+  // Slack is one question (own bot vs shared bot); SlackSetup owns the
+  // whole tab. WhatsApp keeps the status row + route chips.
+  if (channel === 'slack') {
+    return (
+      <div className="space-y-4">
+        {tabs}
+        <SlackSetup bots={bots} headerAction={askSlackSetup} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
-      {fixedChannel === undefined && (
-        <div className="border-b border-border">
-          <WorkspaceViewTabs value={channel} onChange={(value: string) => setInternalChannel(value as BotChannel)} options={CHANNEL_TABS} ariaLabel="Bots" />
-        </div>
-      )}
+      {tabs}
       <section className="overflow-hidden rounded-md border border-border bg-background">
-        <ChannelRow bots={bots} kind={channel} manageRoutes headerAction={channel === 'slack' ? askSlackSetup : undefined} />
+        <ChannelRow bots={bots} kind={channel} manageRoutes />
         <div className="space-y-2 px-3 pb-3">
           <h3 className="text-xs font-medium text-muted-foreground">{target ? `Routes for this ${scopeNoun}` : 'Workflow routes'}</h3>
           {routes.length > 0 ? (
@@ -92,15 +103,9 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
             <p className="text-xs text-muted-foreground">{workflowId ? 'No routes yet.' : `Select a ${scopeNoun} to manage routes.`}</p>
           )}
           {routeError && <p className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{routeError}</p>}
-          {channel === 'whatsapp' && waRoutingError && <p className="text-xs text-amber-600 dark:text-amber-400">WhatsApp routing unavailable: {waRoutingError}</p>}
+          {waRoutingError && <p className="text-xs text-amber-600 dark:text-amber-400">WhatsApp routing unavailable: {waRoutingError}</p>}
         </div>
       </section>
-      {channel === 'slack' && (
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground">Settings</h3>
-          <SlackSetup bots={bots} />
-        </section>
-      )}
     </div>
   )
 }

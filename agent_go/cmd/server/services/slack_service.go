@@ -1704,8 +1704,8 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	}
 }
 
-func (s *SlackService) routeSlackWorkflowMessage(_ context.Context, userID, userEmail, channelID, threadTS, text string, isThreadReply bool) (string, *ChannelRoute, bool) {
-	route := s.resolveSlackChannelWorkflow(channelID)
+func (s *SlackService) routeSlackWorkflowMessage(ctx context.Context, userID, userEmail, channelID, threadTS, text string, isThreadReply bool) (string, *ChannelRoute, bool) {
+	route := s.resolveSlackRoute(ctx, channelID)
 	if route == nil {
 		return text, nil, false
 	}
@@ -1736,7 +1736,7 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 		return
 	}
 
-	if route := s.resolveSlackChannelWorkflow(callback.Channel.ID); route != nil && len(route.BlockedEmails) > 0 && !SlackRouteAllowsEmail(*route, s.resolveUserEmail(callback.User.ID)) {
+	if route := s.resolveSlackRoute(context.Background(), callback.Channel.ID); route != nil && len(route.BlockedEmails) > 0 && !SlackRouteAllowsEmail(*route, s.resolveUserEmail(callback.User.ID)) {
 		return
 	}
 
@@ -1761,7 +1761,7 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 				if threadTS == "" {
 					threadTS = callback.Message.Timestamp
 				}
-				s.interactionHandler("slack", callback.Channel.ID, threadTS, actionID, value, callback.User.ID)
+				s.interactionHandler(ThreadID{Platform: "slack", ChannelID: callback.Channel.ID, ThreadTS: threadTS, ConnectionID: s.connectionID}, actionID, value, callback.User.ID)
 			} else {
 			}
 			continue
@@ -2328,6 +2328,15 @@ func (s *SlackService) resolveUserEmail(userID string) string {
 		return ""
 	}
 	return user.Profile.Email
+}
+
+// resolveSlackRoute routes a message that arrived on this listener: a
+// dedicated (scoped) app serves its own destination, a shared app follows
+// the channel route.
+func (s *SlackService) resolveSlackRoute(ctx context.Context, channelID string) *ChannelRoute {
+	return ResolveSlackRoute(ctx, s.connectionID, func() *ChannelRoute {
+		return s.resolveSlackChannelWorkflow(channelID)
+	})
 }
 
 func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRoute {

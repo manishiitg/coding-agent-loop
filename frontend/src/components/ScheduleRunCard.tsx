@@ -84,6 +84,7 @@ export function ScheduleRunCard({
   const summary = [
     showScheduleName ? duration : undefined,
     slotLabel || undefined,
+    run.webhook?.commit_sha ? `${run.webhook.component ? `${run.webhook.component} · ` : ''}${run.webhook.env ? `${run.webhook.env} · ` : ''}${run.webhook.commit_sha.slice(0, 12)}` : undefined,
     `Started ${formatScheduleRunTime(run.started_at)}`,
     showOutcome ? scheduleRunExcerpt(outcome, 140) : undefined,
   ].filter((part): part is string => Boolean(part)).join(' · ')
@@ -170,6 +171,10 @@ export function ScheduleRunCard({
                   <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
                   {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
                   <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
+                  {run.webhook.commit_sha && <><dt>Commit SHA</dt><dd className="font-mono">{run.webhook.commit_sha}</dd></>}
+                  {run.webhook.component && <><dt>Component</dt><dd>{run.webhook.component}</dd></>}
+                  {run.webhook.env && <><dt>Environment</dt><dd>{run.webhook.env}</dd></>}
+                  {run.webhook.deployed_at && <><dt>Deployed at</dt><dd>{formatScheduleRunTime(run.webhook.deployed_at)}</dd></>}
                   <dt>Payload (JSON body)</dt>
                   <dd>
                     {isLoadingWebhookPayload && <span>Loading payload…</span>}

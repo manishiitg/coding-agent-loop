@@ -23,13 +23,11 @@ function productCommand(name: string, prompt: string, extra?: Partial<Agentworks
 function agentworksFixture(): AgentworksProductCommand[] {
   return [
     productCommand('design-plan', 'Call get_workflow_command_guidance(kind="design-plan", focus="{{context}}") and follow the returned instructions verbatim.'),
-    productCommand('run-plan-drift', 'Run the /run-plan-drift review as a BACKGROUND task. Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes with their lifecycle outcomes. Focus: {{context}}.', { aliases: ['review-artifact-drift'] }),
+    productCommand('run-plan-drift', 'Run the /run-plan-drift review as a BACKGROUND task. Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes with their lifecycle outcomes. Focus: {{context}}.', { aliases: ['review-artifact-drift'], menuHidden: true }),
     productCommand('design-dashboard', 'Call get_workflow_command_guidance(kind="design-reporting-ui", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['design-reporting-ui'] }),
     productCommand('setup-goals', 'Call get_workflow_command_guidance(kind="setup-goals", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['define-success'] }),
-    productCommand('merge-pulse-issues', 'Consolidate the durable Pulse backlog. Load get_pulse_state(view="backlog", detail="compact") exactly once first. Request detail="full" only for the bounded issue_ids whose identity is uncertain. Call merge_pulse_issues for proven duplicates. do not edit workflow artifacts. Focus: {{context}}.', { aliases: ['pulse-merge'] }),
     productCommand('run-goal-work', 'Run the /run-goal-work pass as a BACKGROUND task via run_in_background. Call get_workflow_command_guidance(kind="strategy-auditor", focus="{{context}}"). Then present Needs your decision proposals.', { aliases: ['strategy-auditor', 'goal-advisor'] }),
-    productCommand('run-technical-review', PULSE_REVIEW_PROMPT, { aliases: ['pulse-review'] }),
-    productCommand('pulse-fixer', 'Run the /pulse-fixer fix pass as a BACKGROUND task. Call get_workflow_command_guidance(kind="pulse-fixer", focus="{{context}}"). completion_mode="present_result".'),
+    productCommand('run-technical-review', PULSE_REVIEW_PROMPT, { aliases: ['pulse-review'], menuHidden: true }),
     productCommand('review-code', 'Call get_workflow_command_guidance(kind="design-plan", focus="Architecture focus: inspect saved scripts. Load references/code-authoring.md then references/scripted.md one at a time. Resolve canonical code paths from workflow.json.code_layout_version. do not apply changes in this review. {{context}}").'),
     productCommand('backup', '{{context}} Help me set up or run backup for this workflow.'),
     productCommand('publish', '{{context}} Help me set up or run publish for this workflow.'),
@@ -109,14 +107,20 @@ describe('Pulse slash commands', () => {
     const workflowCommands = getCommands('workflow', 'workshop').map(command => command.command)
     const orgCommands = getCommands('multi-agent').map(command => command.command)
 
-    for (const command of [
-      'pulse', 'merge-pulse-issues', 'run-technical-review', 'pulse-fixer', 'run-goal-work', 'run-plan-drift',
-    ]) {
+    // Pulse keeps two chat commands; the Pulse tab starts the upkeep reviews.
+    for (const command of ['pulse', 'run-goal-work']) {
       expect(workflowCommands).toContain(command)
       expect(orgCommands).not.toContain(command)
     }
-    // Old names still run as aliases but no longer have menu rows.
-    for (const renamed of ['pulse-merge', 'pulse-review', 'strategy-auditor', 'review-artifact-drift']) {
+    for (const tabOnly of ['run-technical-review', 'run-plan-drift']) {
+      expect(workflowCommands).not.toContain(tabOnly)
+      expect(findCommand(tabOnly, 'workflow', 'workshop')).toBeDefined()
+    }
+    for (const retired of ['pulse-fixer', 'merge-pulse-issues', 'pulse-merge']) {
+      expect(findCommand(retired, 'workflow', 'workshop')).toBeUndefined()
+    }
+    // Old names still run as aliases but have no menu rows.
+    for (const renamed of ['pulse-review', 'strategy-auditor', 'review-artifact-drift']) {
       expect(workflowCommands).not.toContain(renamed)
       expect(findCommand(renamed, 'workflow', 'workshop')).toBeDefined()
     }
@@ -127,7 +131,8 @@ describe('Pulse slash commands', () => {
 
   it('consolidates focused menu entries while preserving every shortcut and its access restrictions', () => {
     const menu = getCommands('workflow', 'workshop').map(command => command.command)
-    expect(menu).toContain('run-technical-review')
+    expect(menu).not.toContain('run-technical-review')
+    expect(findCommand('run-technical-review', 'workflow', 'workshop')).toBeDefined()
     for (const focus of pulseReviewFocuses) {
       expect(menu).not.toContain(focus.legacyCommand)
       expect(findCommand(focus.legacyCommand, 'workflow', 'workshop')).toBeDefined()
@@ -164,7 +169,7 @@ describe('Pulse slash commands', () => {
   it('hides Builder reviews from Run and rejects direct command lookup there', () => {
     const runCommands = getCommands('workflow', 'run').map(command => command.command)
 
-    for (const command of ['pulse', 'pulse-review', 'pulse-fixer', 'strategy-auditor', 'goal-advisor', 'design-plan', 'review-code', 'review-artifact-drift', 'pulse-review-execution-health', 'pulse-review-validation-contract', 'backup', 'publish', 'notify']) {
+    for (const command of ['pulse', 'pulse-review', 'strategy-auditor', 'goal-advisor', 'design-plan', 'review-code', 'review-artifact-drift', 'pulse-review-execution-health', 'pulse-review-validation-contract', 'backup', 'publish', 'notify']) {
       expect(runCommands).not.toContain(command)
       expect(findCommand(command, 'workflow', 'run', true)).toBeUndefined()
       expect(findCommand(command, 'workflow', 'workshop', true)).toBeDefined()
@@ -212,21 +217,6 @@ describe('Pulse slash commands', () => {
     expect(submitted).not.toContain('},{')
   })
 
-  it('runs backlog consolidation through typed Pulse lifecycle tools only', () => {
-    const command = findCommand('pulse-merge', 'workflow')
-    let submitted = ''
-    command?.execute({
-      beforeSlash: 'focus on repeated database tool symptoms',
-      onSubmit: (message: string) => { submitted = message },
-      workshopMode: 'workshop',
-    } as unknown as CommandContext)
-
-    expect(submitted).toContain('get_pulse_state(view="backlog", detail="compact")')
-    expect(submitted).toContain('detail="full" only for the bounded issue_ids')
-    expect(submitted).toContain('merge_pulse_issues')
-    expect(submitted).toContain('do not edit workflow artifacts')
-  })
-
   it('routes Pulse Review through one retained review and fix task', () => {
     const command = findCommand('pulse-review', 'workflow')
     let submitted = ''
@@ -244,21 +234,6 @@ describe('Pulse slash commands', () => {
     expect(submitted).not.toContain('required_pulse_review_modules')
     expect(submitted).toContain('Do not call tools, reload state, or independently revalidate')
     expect(submitted).toContain('prioritize failed evaluation writes')
-  })
-
-  it('routes Pulse Fixer to a separate background agent after review', () => {
-    const command = findCommand('pulse-fixer', 'workflow')
-    let submitted = ''
-
-    command?.execute({
-      beforeSlash: 'repair the highest-impact canonical issue',
-      onSubmit: (message: string) => { submitted = message },
-      workshopMode: 'workshop',
-    } as unknown as CommandContext)
-
-    expect(submitted).toContain('kind="pulse-fixer"')
-    expect(submitted).toContain('BACKGROUND task')
-    expect(submitted).toContain('completion_mode="present_result"')
   })
 
   it('routes a manual technical focus through retained Technical Review and Fix', () => {

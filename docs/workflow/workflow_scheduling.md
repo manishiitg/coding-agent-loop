@@ -102,7 +102,11 @@ Entries are defined in [schedule_runs.go](../../agent_go/cmd/server/schedule_run
 - `started_at`
 - `completed_at`
 
-The file keeps the newest entries first and is capped at 200 runs.
+The file keeps the newest entries first. Workflow history retains terminal
+runs for at least 90 days; older terminal entries are pruned when a new run
+is recorded. Active and undated runs are retained. The UI and
+`get_schedule_runs` page this history with `limit` and `offset`. Product
+schedule stores outside `Workflow/` retain their separate 200-entry cap.
 
 ## Runtime Model
 

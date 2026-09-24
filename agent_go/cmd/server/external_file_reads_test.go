@@ -27,7 +27,7 @@ func TestExternalFileReadsUseSharedFilesystemWithoutWorkflowFilesEndpoint(t *tes
 		t.Fatalf("direct read = %+v, %v", read, err)
 	}
 	listed, err := externalFileRequest(ctx, wf.Request{Root: "Workflow/invoices", Operation: "list", Path: "docs"})
-	if err != nil || len(listed.Entries) != 1 || listed.Entries[0].Path != "docs/notes.md" {
+	if err != nil || !listed.Exists || listed.Path != "docs" || len(listed.Entries) != 1 || listed.Entries[0].Path != "docs/notes.md" {
 		t.Fatalf("direct list = %+v, %v", listed, err)
 	}
 	searched, err := externalFileRequest(ctx, wf.Request{Root: "Workflow/invoices", Operation: "search", Path: "docs", Query: "needle"})
@@ -84,7 +84,7 @@ func TestExternalFileReadsFilterSourceAndProtectRuntimePaths(t *testing.T) {
 	ctx := context.Background()
 	req := wf.Request{Root: "Workflow/invoices", Operation: "list", Path: "code", Glob: "**/*.py", Depth: 8}
 	listed, err := externalFileRequest(ctx, req)
-	if err != nil || len(listed.Entries) != 2 {
+	if err != nil || !listed.Exists || listed.Path != "code" || len(listed.Entries) != 2 {
 		t.Fatalf("filtered list = %+v, %v", listed, err)
 	}
 	for _, entry := range listed.Entries {
@@ -122,7 +122,7 @@ func TestExternalFileReadsUseSharedAssetsWhenWorkspaceIsRemote(t *testing.T) {
 		t.Fatalf("remote list = %+v, %v", listed, err)
 	}
 	searched, err := externalRemoteFileRequest(ctx, wf.Request{Root: "Workflow/invoices", Operation: "search", Path: "docs", Query: "needle"}, "docs")
-	if err != nil || len(searched.Entries) != 1 || searched.Entries[0].Path != "docs/remote.md" {
+	if err != nil || !searched.Exists || searched.Path != "docs" || len(searched.Entries) != 1 || searched.Entries[0].Path != "docs/remote.md" {
 		t.Fatalf("remote search = %+v, %v", searched, err)
 	}
 	filtered, err := externalRemoteFileRequest(ctx, wf.Request{Root: "Workflow/invoices", Operation: "list", Path: "code", Glob: "**/*.py", Depth: 8}, "code")

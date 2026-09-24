@@ -959,7 +959,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "list_approved_fixer_decisions",
-			Description: "Read the durable queue of answered decisions that explicitly authorize a targeted Pulse Fixer repair. Use this once at the start of /pulse-fixer before ordinary issue selection. Each returned candidate is mandatory intake: use its exact input_id and issue_id, read both canonical records, and never let normal repair_eligible filtering skip it.",
+			Description: "Read the durable queue of answered decisions that explicitly authorize a targeted Pulse Fixer repair. Use this once at the start of a Fix phase before ordinary issue selection. Each returned candidate is mandatory intake: use its exact input_id and issue_id, read both canonical records, and never let normal repair_eligible filtering skip it.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

@@ -133,6 +133,8 @@ func ProductWebhookRoutes(router *mux.Router, svc *ProductScheduleService) {
 	router.HandleFunc("/api/product-webhooks/{id}", svc.deleteProductWebhook).Methods("DELETE")
 	router.HandleFunc("/api/product-webhooks/{id}/runs", svc.listProductWebhookRuns).Methods("GET")
 	router.HandleFunc("/api/product-webhooks/{id}/runs/{run}/payload", svc.getProductWebhookPayload).Methods("GET")
+	router.HandleFunc("/api/crew-functions", svc.listCrewFunctionsHTTP).Methods("GET")
+	router.HandleFunc("/api/crew-functions/{name}", svc.deleteCrewFunctionHTTP).Methods("DELETE")
 	router.HandleFunc("/api/hooks/product/{id}", svc.receiveProductWebhook).Methods("POST")
 	router.HandleFunc("/api/hooks/product/{id}/runs/{run}", svc.getProductWebhookRun).Methods("GET")
 }
@@ -334,9 +336,8 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 			return productWebhookResponse{}, false, err
 		}
 		if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
-			// A Crew caller must be one of the requester's own Crews: the
-			// target is already owner-resolved above, so both ends of a
-			// crew→crew binding belong to the same user.
+			// A Crew caller may be any Crew on the server (Crews are shared
+			// server-wide); it must exist and must not be the target itself.
 			caller := *trigger.Caller
 			caller.Type = triggerCallerCrew
 			caller.ProfileID = normalizeInternalProfileID(caller.ProfileID)

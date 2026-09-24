@@ -62,14 +62,14 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		t.Fatal("Crew attached itself")
 	}
 	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/hdfc-personal"})
-	if err != nil || !strings.Contains(out, "read-only project context") {
+	if err != nil || !strings.Contains(out, "workflow references read-only") {
 		t.Fatalf("attach out=%s err=%v", out, err)
 	}
 	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || !containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") || containsWorkReferencePath(cfg.WritePaths, "Workflow/hdfc-personal") {
 		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
 	}
 	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Chats/Work/projects/research"})
-	if err != nil || !strings.Contains(out, "read-only project context") {
+	if err != nil || !strings.Contains(out, "workflow references read-only") {
 		t.Fatalf("attach Crew out=%s err=%v", out, err)
 	}
 	crewReadRoot := "_users/reader/Chats/Work/projects/research"
@@ -159,4 +159,38 @@ func containsWorkReferencePath(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Crews are shared server-wide and read-write: attaching another owner's
+// Crew by its physical path grants it in both the read and write sets,
+// while a workflow reference stays read-only.
+func TestUpdateWorkSessionWorkflowGuardCrewReferencesAreWritable(t *testing.T) {
+	common.SetSessionFolderGuard("session-crew-rw", []string{"_users/me/Chats/Work/projects/mine/"}, []string{"_users/me/Chats/Work/projects/mine/"})
+	updateWorkSessionWorkflowGuard("session-crew-rw", []string{"_users/other/Chats/Work/projects/theirs", "Workflow/reports"})
+	cfg := common.GetSessionShellConfig("session-crew-rw")
+	if cfg == nil || !containsWorkReferencePath(cfg.WritePaths, "_users/other/Chats/Work/projects/theirs/") || !containsWorkReferencePath(cfg.ReadPaths, "_users/other/Chats/Work/projects/theirs") {
+		t.Fatalf("another owner's Crew reference must be read-write: %+v", cfg)
+	}
+	if containsWorkReferencePath(cfg.WritePaths, "Workflow/reports") {
+		t.Fatalf("workflow reference must stay read-only: %+v", cfg)
+	}
+	updateWorkSessionWorkflowGuard("session-crew-rw", nil, "_users/other/Chats/Work/projects/theirs")
+	if cfg = common.GetSessionShellConfig("session-crew-rw"); containsWorkReferencePath(cfg.WritePaths, "_users/other/Chats/Work/projects/theirs/") {
+		t.Fatalf("detached Crew reference kept write access: %+v", cfg)
+	}
+}
+
+func TestContextReferenceAcceptsOtherOwnerCrewPath(t *testing.T) {
+	root, ok := contextReferenceReadRoot("me", "_users/other/Chats/Work/projects/theirs")
+	if !ok || root != "_users/other/Chats/Work/projects/theirs" {
+		t.Fatalf("root=%q ok=%v", root, ok)
+	}
+	for _, bad := range []string{"_users/other/Chats/Work/projects/..", "_users/../Chats/Work/projects/x", "_users/other/Chats/Work/other/x"} {
+		if _, ok := contextReferenceReadRoot("me", bad); ok {
+			t.Fatalf("accepted malformed crew path %q", bad)
+		}
+	}
+	if _, ok := contextReferenceReadRoot("", "_users/other/Chats/Work/projects/theirs"); ok {
+		t.Fatal("unauthenticated caller must not resolve a crew reference")
+	}
 }

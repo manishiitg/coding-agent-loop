@@ -611,7 +611,9 @@ type StreamingAPI struct {
 	// synthetic recap so the new agent sees just enough context to continue.
 	lastWorkshopModeBySession        map[string]string
 	lastChatPolicyBySession          map[string]string
+	lastChatPolicyRoleBySession      map[string]string
 	lastAgentProfileKeyBySession     map[string]string
+	lastAgentToolsModeBySession      map[string]string
 	launchedAgentProfileKeyBySession map[string]string
 	agentProfileAdmissions           sync.Map // *mcpagent.Agent -> immutable launched profile key
 
@@ -2118,6 +2120,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted:               make(map[string]bool),
 		lastWorkshopModeBySession:           make(map[string]string),
 		lastChatPolicyBySession:             make(map[string]string),
+		lastChatPolicyRoleBySession:         make(map[string]string),
 		lastAgentProfileKeyBySession:        make(map[string]string),
 		stoppedSessions:                     make(map[string]bool),
 		interruptedTurns:                    make(map[string]bool),
@@ -2812,6 +2815,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/external/v1/mcp", api.handleExternalMCP).Methods("POST", "GET", "DELETE")
 	apiRouter.HandleFunc("/external/v1/skill.md", api.handleExternalSkillMD).Methods("GET")
 	apiRouter.HandleFunc("/external/v1/skill.zip", api.handleExternalSkillZIP).Methods("GET")
+	apiRouter.HandleFunc("/external/v1/agentworks.plugin", api.handleExternalPlugin).Methods("GET")
 	apiRouter.HandleFunc("/workflow/plan/update-step", requireWorkflowWriteAccess(api.handleUpdatePlanStep)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/update-step-config", requireWorkflowWriteAccess(api.handleUpdateStepConfig)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", requireWorkflowWriteAccess(api.handleBatchUpdateSteps)).Methods("POST", "OPTIONS")
@@ -3756,6 +3760,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.lastAgentProfileKeyBySession = make(map[string]string)
 	}
 	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile)
+	if api.lastAgentToolsModeBySession == nil {
+		api.lastAgentToolsModeBySession = make(map[string]string)
+	}
+	api.lastAgentToolsModeBySession[sessionID] = agentProfileToolsMode(resolvedProfile)
 	api.conversationMux.Unlock()
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
@@ -5720,7 +5728,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					profileRoot := agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder)
 					profileWrite := strings.TrimSuffix(profileRoot, "/") + "/"
 					sandbox := resolvedProfile.Definition.Runtime.Sandbox
-					profileReadOnly := agentProfileReadOnlyFolders(sandbox, workflowReadOnlyFolders)
+					// Crew references (# tags and attached Crews, any owner) are
+					// shared read-write like the Crew itself; workflow references
+					// stay read-only. A Crew Run-mode reader keeps them read-only.
+					crewRefWrite, nonCrewReadOnly := splitCrewReferenceFolders(workflowReadOnlyFolders)
+					if currentUserIsReadOnly && resolvedProfile.Definition.ID == "work" {
+						crewRefWrite, nonCrewReadOnly = nil, workflowReadOnlyFolders
+					}
+					profileReadOnly := agentProfileReadOnlyFolders(sandbox, nonCrewReadOnly)
 					chatHistoryGrants := agentProfileChatHistoryGrants(sandbox, perUserChatHistory)
 					workGrantWrite := []string(nil)
 					workGrantReadOnly := []string(nil)
@@ -5756,16 +5771,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						guardWrite = nil
 						guardBlocked = append(guardBlocked, profileWrite)
 					}
-					executorWrite := append(append([]string{}, chatHistoryGrants...), workGrantWrite...)
+					executorWrite := append(append(append([]string{}, chatHistoryGrants...), workGrantWrite...), crewRefWrite...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, guardWriteRoot, guardReadOnly, executorWrite...)
 					workspace.SetSessionWorkingDir(sessionID, profileRoot)
 					workspace.SetSessionFolderGuard(sessionID,
-						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
-						append(append(guardWrite, chatHistoryGrants...), workGrantWrite...),
+						append(append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...), crewRefWrite...),
+						append(append(append(guardWrite, chatHistoryGrants...), workGrantWrite...), crewRefWrite...),
 					)
 					guardBlocked = append(guardBlocked, workGrantReadOnly...)
 					if len(guardBlocked) > 0 {
 						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, guardBlocked)
+					}
+					if resolvedProfile.Definition.ID == "work" {
+						// Other Crews' files are shared, their chats are not: deny
+						// every referenced Crew's builder/ (transcripts and other
+						// users' mirrored chats). This Crew's own chats stay open.
+						workspace.SetSessionFolderGuardBlockedPaths(sessionID, foreignCrewChatBlockedPaths(profileRoot, workflowReadOnlyFolders))
 					}
 					if resolvedProfile.Definition.ID == "work" {
 						// Work uses the shared managed database boundary: migrations and
@@ -6917,7 +6938,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var preModeChangeSnapshot []llmtypes.MessageContent
 		if newWorkshopMode != "" {
 			activeForPolicy, _ := api.getActiveSession(sessionID)
-			policyKey := api.chatPolicySessionKey(resolveWorkflowChatPolicy(sessionID, req, activeForPolicy, currentUserIsReadOnly))
+			currentPolicy := resolveWorkflowChatPolicy(sessionID, req, activeForPolicy, currentUserIsReadOnly)
+			policyKey := api.chatPolicySessionKey(currentPolicy)
+			policyRoleKey := currentPolicy.sessionKey()
 			codingProvider := common.IsCLIProvider(finalProvider)
 			api.conversationMux.RLock()
 			_, knownInMemory := api.lastChatPolicyBySession[sessionID]
@@ -6936,13 +6959,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			previousPolicy, knownPolicy := api.lastChatPolicyBySession[sessionID]
 			api.lastChatPolicyBySession[sessionID] = policyKey
+			if api.lastChatPolicyRoleBySession == nil {
+				api.lastChatPolicyRoleBySession = make(map[string]string)
+			}
+			previousRole, knownRole := api.lastChatPolicyRoleBySession[sessionID]
+			api.lastChatPolicyRoleBySession[sessionID] = policyRoleKey
 			prevMode, hadPrev := api.lastWorkshopModeBySession[sessionID]
 			if prevMode == "" && savedRuntime != nil {
 				prevMode = savedRuntime.WorkshopMode
 			}
 			// Keep native continuation when its persisted admission still matches.
 			// Fresh chats and API providers must not lose normal history replay.
-			if chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime) || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
+			// Only a role change (mode, origin, capabilities) replaces the native
+			// session. Definition/config drift (chat prompt, MCP or user config)
+			// keeps the same conversation: the retained-policy check refuses the
+			// stale process, and the relaunch resumes it with the current setup.
+			// Exception: a CLI that cannot take new instructions into a resumed
+			// session (Muse) gets a fresh session on any drift, carrying the
+			// recent dialogue, rather than keep running on the old prompt.
+			roleChanged := chatPolicyRoleRequiresReconnect(codingProvider, previousRole, policyRoleKey, knownRole, savedRuntime)
+			definitionChanged := !codingProviderReloadsInstructionsOnResume(finalProvider) && chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime)
+			if roleChanged || definitionChanged || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
 				modeChangePrevMode = prevMode
 				log.Printf("[CHAT_POLICY] Policy refresh for session %s (mode %q -> %q); starting a fresh native coding-agent session with recent conversation context", sessionID, prevMode, newWorkshopMode)
@@ -7304,6 +7341,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						codingFallbackConversationPath,
 						codingFallbackWorkspace,
+						historyForAgent...,
 					)
 					historyToReplay = nil
 					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for conversation archive %s (in-memory history: %d messages)", codingFallbackConversationPath, len(historyForAgent))
@@ -7567,6 +7605,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// conversations are persisted below in their workspace Builder folder.
 		if !isWorkflowPhase {
 			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath, botHistoryMeta)
+			if isCrewReaderTurn(req, currentUserID) {
+				mirrorCrewReaderConversation(currentUserID, req.SelectedFolder, persistSessionID, persistConversationPath, time.Now())
+			}
 		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
@@ -8031,7 +8072,9 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 	api.conversationMux.RLock()
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
+	runtime.ChatPolicyRoleKey = api.lastChatPolicyRoleBySession[sessionID]
 	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
+	runtime.AgentToolsMode = api.lastAgentToolsModeBySession[sessionID]
 	api.conversationMux.RUnlock()
 	if admitted, ok := api.agentProfileAdmissions.Load(underlyingAgent); ok {
 		runtime.AgentProfileKey = admitted.(string)
@@ -9070,9 +9113,28 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	api.conversationMux.RLock()
 	currentProfileKey, profileKeyKnown := api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
+	// A changed profile definition (system prompt, tool allowlist, MCP servers,
+	// Crew identity) must never cost the conversation its memory: the CLI is
+	// relaunched with the current definition and resumes the same native
+	// session. Retained live input is still refused for a stale process (see
+	// agentProfileAllowsRetainedLiveInput), which is what forces that relaunch.
 	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
-		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: agent profile definition changed", sessionID)
-		return false
+		// Switching a Crew's native agent tools (hybrid <-> AgentWorks-only) is
+		// a capability change, like Builder <-> Run: the old transcript is full
+		// of tool use the new mode cannot perform. Start fresh with the recent
+		// dialogue instead of resuming it.
+		api.conversationMux.RLock()
+		currentToolsMode, toolsModeKnown := api.lastAgentToolsModeBySession[sessionID]
+		api.conversationMux.RUnlock()
+		if toolsModeKnown && normalizeAgentToolsMode(runtime.AgentToolsMode) != normalizeAgentToolsMode(currentToolsMode) {
+			log.Printf("[CHAT_HISTORY] Agent tools mode changed for session %s (%s -> %s); starting a fresh native session with the recent dialogue", sessionID, normalizeAgentToolsMode(runtime.AgentToolsMode), normalizeAgentToolsMode(currentToolsMode))
+			return false
+		}
+		if !codingProviderReloadsInstructionsOnResume(provider) {
+			log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; %s cannot load new instructions into a resumed session, starting a fresh one with the recent dialogue", sessionID, provider)
+			return false
+		}
+		log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; resuming the same native coding-agent session with the current definition", sessionID)
 	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
 	projectDirID := strings.TrimSpace(runtime.ProjectDirID)

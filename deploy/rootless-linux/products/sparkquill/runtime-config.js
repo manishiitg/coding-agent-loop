@@ -5,5 +5,6 @@ window.__APP_RUNTIME_CONFIG__ = {
   appName: "SparkQuill",
   faviconUrl: "/favicon.ico",
   enabledProductSurfaces: ["sparkquill"],
-  defaultProductSurface: "sparkquill"
+  defaultProductSurface: "sparkquill",
+  gatewaySso: true
 };

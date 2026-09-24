@@ -46,8 +46,9 @@ export function CliMcpSetupPanel() {
   const [connections, setConnections] = useState<OAuthConnection[]>([])
   const [connectionLoadError, setConnectionLoadError] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [skillBusy, setSkillBusy] = useState<'download' | 'copy' | null>(null)
+  const [skillBusy, setSkillBusy] = useState<'download' | 'copy' | 'plugin' | null>(null)
   const [skillMsg, setSkillMsg] = useState<string | null>(null)
+  const [pluginMsg, setPluginMsg] = useState<string | null>(null)
   const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const installer = `curl -fsSL ${quoted(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${quoted(origin)}`
@@ -90,6 +91,21 @@ export function CliMcpSetupPanel() {
       } finally { URL.revokeObjectURL(url) }
       setSkillMsg('Downloaded agentworks-skill.zip')
     } catch { setSkillMsg('Download failed — try again.') }
+    finally { setSkillBusy(null) }
+  }
+
+  const downloadCoworkPlugin = async () => {
+    setSkillBusy('plugin'); setPluginMsg(null)
+    try {
+      const blob = await externalSkillApi.downloadCoworkPlugin()
+      const url = URL.createObjectURL(blob)
+      try {
+        const anchor = document.createElement('a')
+        anchor.href = url; anchor.download = 'agentworks.plugin'
+        document.body.appendChild(anchor); anchor.click(); anchor.remove()
+      } finally { URL.revokeObjectURL(url) }
+      setPluginMsg('Downloaded agentworks.plugin')
+    } catch { setPluginMsg('Plugin download failed — try again.') }
     finally { setSkillBusy(null) }
   }
 
@@ -141,11 +157,16 @@ export function CliMcpSetupPanel() {
           <Button variant={hostedClient === 'chatgpt' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'chatgpt'} onClick={() => setHostedClient('chatgpt')}>ChatGPT</Button>
           <Button variant={hostedClient === 'cowork' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'cowork'} onClick={() => setHostedClient('cowork')}>Claude Cowork</Button>
         </div>
-        <p className="text-xs text-muted-foreground">{hostedClient === 'chatgpt' ? 'In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.' : 'In Claude Cowork, open Settings → Connectors → Add custom connector.'}</p>
-        <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} />
+        {hostedClient === 'cowork' ? <div className="space-y-2 rounded-md border border-border p-3">
+          <p className="text-sm font-medium text-foreground">Install AgentWorks in Cowork</p>
+          <p className="text-xs text-muted-foreground">Download the plugin, then open Customize → Plugins in Cowork and upload it. Connect AgentWorks and approve access in your browser.</p>
+          <Button variant="outline" size="sm" disabled={skillBusy !== null || isLoopbackOrigin} onClick={() => void downloadCoworkPlugin()}><Download className="mr-1 h-3.5 w-3.5" />Download Cowork plugin</Button>
+          {pluginMsg && <p className="text-xs text-muted-foreground">{pluginMsg}</p>}
+        </div> : <p className="text-xs text-muted-foreground">In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.</p>}
+        {hostedClient === 'chatgpt' ? <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} /> : <details className="rounded-md border border-border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Connect manually instead</summary><p className="mt-2 mb-2">In Cowork, open Customize → Connectors → Add custom connector, then use this URL.</p><CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} /></details>}
         {isLoopbackOrigin && <p className="text-xs text-amber-500">Hosted apps need a public server URL; open Connect on that server instead.</p>}
         <p className="text-xs text-muted-foreground">Choose OAuth when the app asks how to authenticate. AgentWorks will open a sign-in and permission screen.</p>
-        <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+        {hostedClient === 'chatgpt' && <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">Optional: give the assistant workflow guidance</summary>
           <p className="mt-2">Upload the skill where Skills are supported, or paste its text into the app&apos;s custom instructions.</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -153,7 +174,7 @@ export function CliMcpSetupPanel() {
             <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}><Copy className="mr-1 h-3.5 w-3.5" />Copy skill text</Button>
           </div>
           {skillMsg && <p className="mt-2">{skillMsg}</p>}
-        </details>
+        </details>}
       </div>}
     </SettingsCard>
     {connectionLoadError && <p role="alert" className="text-sm text-amber-600">Connected apps are unavailable. Restart or update the AgentWorks server to use browser sign-in.</p>}

@@ -2735,7 +2735,9 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 	}
 }
 
-func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsChangedAgentProfile(t *testing.T) {
+// A changed profile definition (prompt, tools, MCP servers) relaunches the CLI
+// with the current definition but must keep the same native conversation.
+func TestSeedCodingAgentRuntimeFromRestoredConversationResumesAcrossChangedAgentProfile(t *testing.T) {
 	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
 	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
 	agent := &mcpagent.Agent{}
@@ -2747,15 +2749,15 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsChangedAgentProfil
 		AgentProfileKey:   "profile-sha256:old",
 	}
 
-	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
-		t.Fatal("changed agent profile must skip native resume")
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("changed agent profile must still resume the same native session")
 	}
-	if handle := mcpagent.SnapshotAgentSession(agent); handle != nil && handle.Provider.NativeSessionID != "" {
-		t.Fatalf("unexpected native session ID = %q", handle.Provider.NativeSessionID)
+	if handle := mcpagent.SnapshotAgentSession(agent); handle == nil || handle.Provider.NativeSessionID != "stale-pi-session" {
+		t.Fatalf("native session ID = %+v, want stale-pi-session", handle)
 	}
 }
 
-func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsLegacyRuntimeForProfile(t *testing.T) {
+func TestSeedCodingAgentRuntimeFromRestoredConversationResumesLegacyRuntimeForProfile(t *testing.T) {
 	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
 	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
 	agent := &mcpagent.Agent{}
@@ -2766,8 +2768,41 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsLegacyRuntimeForPr
 		ResumeSupported:   true,
 	}
 
-	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
-		t.Fatal("profile-backed chat must not resume a legacy runtime without a profile key")
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("profile-backed chat must resume its legacy runtime rather than lose the conversation")
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationMuseStartsFreshOnChangedProfile(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
+	runtime := &ChatHistoryAgentRuntime{Kind: "coding_agent", Provider: "muse-cli", ExternalSessionID: "old-muse", ResumeSupported: true, AgentProfileKey: "profile-sha256:old"}
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "muse-cli", "", runtime, &mcpagent.Agent{}) {
+		t.Fatal("muse-cli must start a fresh session when its instructions changed")
+	}
+}
+
+// Toggling a Crew's native agent tools is a capability change: fresh session.
+func TestSeedCodingAgentRuntimeFromRestoredConversationFreshOnAgentToolsModeChange(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	for _, tc := range []struct {
+		saved, current string
+		resume         bool
+	}{
+		{"", "hybrid", false},
+		{"mcp_only", "hybrid", false},
+		{"hybrid", "mcp_only", false},
+		{"hybrid", "hybrid", true},
+		{"", "mcp_only", true},
+	} {
+		api := &StreamingAPI{
+			lastAgentProfileKeyBySession: map[string]string{"s": "profile-sha256:current"},
+			lastAgentToolsModeBySession:  map[string]string{"s": tc.current},
+		}
+		runtime := &ChatHistoryAgentRuntime{Kind: "coding_agent", Provider: "claude-code", ExternalSessionID: "native", ResumeSupported: true, AgentProfileKey: "profile-sha256:old", AgentToolsMode: tc.saved}
+		if got := api.seedCodingAgentRuntimeFromRestoredConversation("s", "claude-code", "", runtime, &mcpagent.Agent{}); got != tc.resume {
+			t.Fatalf("saved=%q current=%q resume=%v, want %v", tc.saved, tc.current, got, tc.resume)
+		}
 	}
 }
 

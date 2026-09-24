@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -244,6 +245,147 @@ func TestAuthenticatedRequestRefreshesSessionNearExpiry(t *testing.T) {
 	}
 	if remaining := time.Until(refreshed.Expires); remaining < 11*time.Hour || remaining > 13*time.Hour {
 		t.Fatalf("refreshed session lifetime = %s", remaining)
+	}
+}
+
+func TestGatewaySSOOnlyRemovesPasswordLogin(t *testing.T) {
+	g := &gateway{ssoOnly: true, appName: "SparkQuill", sessionCookie: sessionCookieName("sparkquill")}
+	page := httptest.NewRecorder()
+	g.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "href='/auth/google/start?next=%2F'") || strings.Contains(page.Body.String(), "type=password") {
+		t.Fatalf("SSO login page: status=%d body=%q", page.Code, page.Body.String())
+	}
+	post := httptest.NewRecorder()
+	g.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("password=old-password")))
+	if post.Code != http.StatusMethodNotAllowed || len(post.Result().Cookies()) != 0 {
+		t.Fatalf("password login must be removed: status=%d cookies=%v", post.Code, post.Result().Cookies())
+	}
+}
+
+func TestNewGatewaySSOOnlyNeedsNoSharedPassword(t *testing.T) {
+	t.Setenv("AUTH_SECRET", "test-secret-that-is-long-enough-x")
+	t.Setenv("ACCESS_PASSWORD", "")
+	t.Setenv("GATEWAY_SSO_ONLY", "true")
+	t.Setenv("GATEWAY_SSO_SUPABASE_URL", "https://example.supabase.co")
+	t.Setenv("GATEWAY_SSO_SUPABASE_ANON_KEY", "public-key")
+	t.Setenv("GATEWAY_SSO_REDIRECT_URL", "https://sparkquill.example/auth/google/callback")
+	t.Setenv("GATEWAY_SSO_ALLOWED_EMAILS", " MahimaKh@gmail.com, manisharies.iitg@gmail.com ")
+	g := newGateway()
+	if !g.ssoOnly || len(g.password) != 0 || !g.ssoAllowedEmail["mahimakh@gmail.com"] || !g.ssoAllowedEmail["manisharies.iitg@gmail.com"] {
+		t.Fatal("SSO gateway did not enable the two approved emails without a shared password")
+	}
+}
+
+func TestGoogleSSOGatewayAllowsOnlyApprovedEmailAndSurvivesRestart(t *testing.T) {
+	var tokenRequests int
+	supabase := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/v1/token" || r.URL.Query().Get("grant_type") != "pkce" || r.Header.Get("apikey") != "public-key" {
+			t.Errorf("unexpected token request: %s %s", r.Method, r.URL.String())
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["auth_code"] != "test-code" || body["code_verifier"] == "" {
+			t.Errorf("invalid PKCE exchange: %v %v", body, err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		tokenRequests++
+		w.Header().Set("Content-Type", "application/json")
+		if tokenRequests == 1 {
+			_, _ = io.WriteString(w, `{"user":{"email":"MahimaKh@gmail.com","email_confirmed_at":"2026-09-24T00:00:00Z"}}`)
+		} else {
+			_, _ = io.WriteString(w, `{"user":{"email":"other@gmail.com","email_confirmed_at":"2026-09-24T00:00:00Z"}}`)
+		}
+	}))
+	defer supabase.Close()
+	frontendDir := t.TempDir()
+	if err := os.WriteFile(frontendDir+"/index.html", []byte("SparkQuill family"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &gateway{
+		secret: []byte("test-secret-that-is-long-enough"), sessionCookie: sessionCookieName("sparkquill"), frontendDir: frontendDir,
+		ssoOnly: true, ssoURL: supabase.URL, ssoAnonKey: "public-key", ssoRedirectURL: "https://sparkquill.example/auth/google/callback",
+		ssoAllowedEmail: map[string]bool{"mahimakh@gmail.com": true, "manisharies.iitg@gmail.com": true}, ssoClient: supabase.Client(),
+	}
+	start := httptest.NewRecorder()
+	g.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/auth/google/start?next=%2Factivity", nil))
+	if start.Code != http.StatusFound {
+		t.Fatalf("SSO start = %d", start.Code)
+	}
+	authURL, err := url.Parse(start.Header().Get("Location"))
+	if err != nil || authURL.Query().Get("provider") != "google" || authURL.Query().Get("redirect_to") != g.ssoRedirectURL || authURL.Query().Get("code_challenge_method") != "s256" {
+		t.Fatalf("Supabase redirect = %q, error = %v", start.Header().Get("Location"), err)
+	}
+	var flowCookie *http.Cookie
+	for _, cookie := range start.Result().Cookies() {
+		if cookie.Name == g.ssoFlowCookieName() {
+			flowCookie = cookie
+		}
+	}
+	if flowCookie == nil || !flowCookie.HttpOnly || !flowCookie.Secure {
+		t.Fatalf("PKCE flow cookie = %#v", flowCookie)
+	}
+	callback := httptest.NewRequest(http.MethodGet, "/auth/google/callback?code=test-code", nil)
+	callback.AddCookie(flowCookie)
+	finished := httptest.NewRecorder()
+	g.ServeHTTP(finished, callback)
+	if finished.Code != http.StatusSeeOther || finished.Header().Get("Location") != "/activity" || tokenRequests != 1 {
+		t.Fatalf("SSO callback: status=%d location=%q exchanges=%d body=%q", finished.Code, finished.Header().Get("Location"), tokenRequests, finished.Body.String())
+	}
+	var session *http.Cookie
+	for _, cookie := range finished.Result().Cookies() {
+		if cookie.Name == g.sessionCookie {
+			session = cookie
+		}
+	}
+	if session == nil || !strings.HasPrefix(session.Value, "s.") {
+		t.Fatalf("SSO session cookie = %#v", session)
+	}
+	if remaining := time.Until(session.Expires); remaining < 29*24*time.Hour || remaining > 31*24*time.Hour {
+		t.Fatalf("SSO session lifetime = %s", remaining)
+	}
+
+	// A deployment creates a new gateway process but keeps AUTH_SECRET.
+	restarted := &gateway{secret: g.secret, sessionCookie: g.sessionCookie, frontendDir: frontendDir, ssoOnly: true, ssoAllowedEmail: g.ssoAllowedEmail}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(session)
+	page := httptest.NewRecorder()
+	restarted.ServeHTTP(page, request)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "SparkQuill family") {
+		t.Fatalf("session after restart: status=%d body=%q", page.Code, page.Body.String())
+	}
+
+	// Removing an address blocks its already-issued cookie at the next request.
+	restarted.ssoAllowedEmail = map[string]bool{"manisharies.iitg@gmail.com": true}
+	denied := httptest.NewRecorder()
+	restarted.ServeHTTP(denied, request)
+	if denied.Code != http.StatusSeeOther || !strings.HasPrefix(denied.Header().Get("Location"), "/login") {
+		t.Fatalf("removed email still has access: status=%d location=%q", denied.Code, denied.Header().Get("Location"))
+	}
+
+	// A previously issued shared-password cookie must not bypass SSO.
+	legacy := httptest.NewRequest(http.MethodGet, "/", nil)
+	legacy.AddCookie(&http.Cookie{Name: g.sessionCookie, Value: g.signedSession(time.Now().Add(time.Hour))})
+	legacyResult := httptest.NewRecorder()
+	g.ServeHTTP(legacyResult, legacy)
+	if legacyResult.Code != http.StatusSeeOther {
+		t.Fatalf("old password cookie status = %d", legacyResult.Code)
+	}
+
+	secondStart := httptest.NewRecorder()
+	g.ServeHTTP(secondStart, httptest.NewRequest(http.MethodGet, "/auth/google/start", nil))
+	secondCallback := httptest.NewRequest(http.MethodGet, "/auth/google/callback?code=test-code", nil)
+	secondCallback.AddCookie(secondStart.Result().Cookies()[0])
+	unapproved := httptest.NewRecorder()
+	g.ServeHTTP(unapproved, secondCallback)
+	if unapproved.Code != http.StatusForbidden {
+		t.Fatalf("unapproved Google email status = %d", unapproved.Code)
+	}
+	for _, cookie := range unapproved.Result().Cookies() {
+		if cookie.Name == g.sessionCookie {
+			t.Fatal("unapproved Google email received a session cookie")
+		}
 	}
 }
 

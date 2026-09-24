@@ -76,6 +76,9 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		if err := api.registerTriggerLinkTools(definitionAgent, userID, sessionID, syntheticReq, workflowTriggerLinkCaller(phaseWorkspacePath)); err != nil {
 			return err
 		}
+		if err := api.registerCrewFunctionTools(definitionAgent, userID, sessionID, syntheticReq, workflowTriggerLinkCaller(phaseWorkspacePath), nil); err != nil {
+			return err
+		}
 	}
 	if err := api.registerUserAccessTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
 		return err

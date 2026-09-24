@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -111,6 +112,46 @@ func TestAppendScheduleRunPreservesConcurrentEntries(t *testing.T) {
 	}
 	if len(runs) != count {
 		t.Fatalf("len(runs) = %d, want %d", len(runs), count)
+	}
+}
+
+func TestWorkflowScheduleRunHistoryPagesBeyondFormerLimit(t *testing.T) {
+	_, _ = newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	const totalRuns = maxScheduleRuns + 5
+	for index := 0; index < totalRuns; index++ {
+		run := &ScheduleRunEntry{
+			ID: fmt.Sprintf("run-%03d", index), ScheduleID: "deploy-hook", Status: "success",
+			StartedAt: time.Now().UTC().Add(-time.Duration(totalRuns-index) * time.Minute),
+		}
+		if err := AppendScheduleRun(ctx, "Workflow/test", run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, count, err := ListScheduleRuns(ctx, "Workflow/test", "deploy-hook", 10, maxScheduleRuns)
+	if err != nil || count != totalRuns || len(page) != 5 || page[0].ID != "run-004" {
+		t.Fatalf("older page = %+v, total=%d, err=%v", page, count, err)
+	}
+}
+
+func TestWorkflowScheduleRunHistoryPrunesOldTerminalRuns(t *testing.T) {
+	stub, _ := newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	old := time.Now().UTC().AddDate(0, 0, -workflowScheduleRunRetentionDays-1)
+	seed, err := json.Marshal([]ScheduleRunEntry{
+		{ID: "old-completed", ScheduleID: "deploy-hook", Status: "success", StartedAt: old},
+		{ID: "old-running", ScheduleID: "deploy-hook", Status: "running", StartedAt: old},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.files[scheduleRunsPath("Workflow/test")] = string(seed)
+	if err := AppendScheduleRun(ctx, "Workflow/test", &ScheduleRunEntry{ID: "new", ScheduleID: "deploy-hook", Status: "success", StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := ReadScheduleRuns(ctx, "Workflow/test")
+	if err != nil || len(runs) != 2 || runs[0].ID != "new" || runs[1].ID != "old-running" {
+		t.Fatalf("retained runs = %+v, err=%v", runs, err)
 	}
 }
 

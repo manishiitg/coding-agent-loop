@@ -1,5 +1,6 @@
 import { GoalProgress } from './GoalProgress'
 import { PulseGoalWork } from './PulseGoalWork'
+import { pulseFixStats, pulseFixSummary } from './pulseFixStats'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
@@ -7,6 +8,8 @@ import {
   X,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { findProductCommand } from '../../commands/registry'
+import type { CommandContext } from '../../commands/types'
 import { DEFAULT_PULSE_AUTONOMY } from '../../services/api-types'
 import { playbooksApi } from '../../api/playbooks'
 import { useChatStore } from '../../stores/useChatStore'
@@ -94,6 +97,27 @@ function reviewRunDate(value: string): string {
     : date.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+// Pulse tab buttons run the same product command a chat user would, so each
+// action has one prompt. The hard-coded text below is only a fallback for when
+// product commands have not loaded yet.
+const PULSE_TAB_COMMANDS: Record<string, string> = {
+  strategic_review: 'run-goal-work',
+  technical_review: 'run-technical-review',
+  plan_drift_review: 'run-plan-drift',
+  architecture_review: 'run-architecture-review',
+}
+
+export function pulseTabReviewMessage(module: string, workspacePath = '<this workflow>'): string {
+  const command = findProductCommand(PULSE_TAB_COMMANDS[module] ?? '', 'workflow', 'workshop')
+  let message = ''
+  command?.execute({
+    beforeSlash: 'Requested from the Pulse tab.',
+    onSubmit: (submitted: string) => { message = submitted },
+    workshopMode: 'workshop',
+  } as unknown as CommandContext)
+  return message || manualPulseReviewMessage(module, workspacePath)
+}
+
 export function manualPulseReviewMessage(module: string, workspacePath = '<this workflow>'): string {
   switch (module) {
     case 'strategic_review':
@@ -101,7 +125,7 @@ export function manualPulseReviewMessage(module: string, workspacePath = '<this 
     case 'architecture_review':
       return `Run a manual Architecture Review for this workflow now. First call record_pulse_result(workspace_path=${JSON.stringify(workspacePath)}, module="architecture_review", pulse_run_id="current", result="running", note_only=true, manual=true, reason="Manual Architecture Review requested from the Pulse UI"). If another Pulse pass owns it, report that collision and stop. Otherwise load read_skill(skills=[{"name":"builder-reference","path":"references/architecture-review.md"}]) and follow it exactly as a read-only review. Persist findings, decisions, impact records, and one terminal architecture_review result with focuses included; do not edit the workflow.`
     case 'technical_review':
-      return 'Run the Technical Review for this workflow now. Call get_workflow_command_guidance(kind="engineering-review", focus="Manual Technical Review requested from the Pulse UI") and follow the returned instructions exactly. Run only the review phase; diagnose concrete correctness failures and leave repairs for an explicit Fix action.'
+      return 'Run the Technical Review for this workflow now as a background task. Call get_workflow_command_guidance(kind="engineering-review", focus="Manual Technical Review requested from the Pulse UI") and follow the returned instructions; after the review receipt is saved, call get_workflow_command_guidance(kind="pulse-fixer") and fix every issue it found in the same task, so each ends fixed, not a problem, a decision for the user, or platform-owned.'
     case 'plan_drift_review':
       return 'Run Plan Drift for this workflow now. Call get_workflow_command_guidance(kind="review-artifact-drift", focus="Manual Plan Drift requested from the Pulse UI") and follow the returned instructions exactly. Apply only the bounded compatibility repairs that Plan Drift authorizes.'
     default:
@@ -151,6 +175,7 @@ export function PulseWorkspace({
 }) {
   const loadVersion = useRef(0)
   const [findings, setFindings] = useState<PulseFindingLifecycle[]>([])
+  const fixStats = useMemo(() => pulseFixStats(findings), [findings])
   const [reviews, setReviews] = useState<PulseReviewRecord[]>([])
   const [coverage, setCoverage] = useState<PulseReviewFocus[]>([])
   const [audits, setAudits] = useState<PulseReviewAudit[]>([])
@@ -256,7 +281,7 @@ export function PulseWorkspace({
     if (manualReviewStarting) return
     setManualReviewStarting(module)
     try {
-      await sendWorkspacePaneMessageToChat({ workspacePath, message: manualPulseReviewMessage(module, workspacePath) })
+      await sendWorkspacePaneMessageToChat({ workspacePath, message: pulseTabReviewMessage(module, workspacePath) })
       useChatStore.getState().addToast(`${module === 'strategic_review' ? 'Goal Work' : module === 'architecture_review' ? 'Architecture Review' : module === 'technical_review' ? 'Technical Review' : 'Plan Drift'} opened in chat`, 'success')
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not start the review', 'error')
@@ -385,12 +410,13 @@ export function PulseWorkspace({
           playbookFocusAreas={playbookFocuses.flatMap(item => item.focusAreas.map(area => ({ area, source: item.playbookTitle })))}
           running={manualReviewStarting === 'strategic_review'}
           runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps or change the workflow.' : undefined} />
-        {(openIssueCount > 0 || planDriftDue) && (
+        {(findings.length > 0 || planDriftDue) && (
           <button type="button" onClick={() => setTab('platform')} className="w-full rounded-lg border bg-muted/20 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/40">
-            <span className="font-medium text-foreground">Platform health:</span> {planDriftDue ? 'a Plan Drift check is due. ' : ''}{openIssueCount > 0 ? `${openIssueCount} open maintenance issue${openIssueCount === 1 ? '' : 's'}. ` : ''}Pulse handles these in the background.
+            <span className="font-medium text-foreground">Platform health:</span> {pulseFixSummary(fixStats)}{planDriftDue ? ' · Plan Drift check due' : ''}
           </button>
         )}
       </> : <>
+      <p className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground" aria-label="Fix speed">{pulseFixSummary(fixStats)}</p>
       <PulseReviewOverview platformOnly moduleStates={moduleStates} planDriftDue={planDriftDue} planDriftDueItems={planDriftDueItems} planDriftDueError={planDriftDueError} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
         audits={audits} findings={findings} moduleFilter={selectedReviewModule || null} reviewFocusSelections={reviewFocusSelections}
         playbookFocuses={playbookFocuses}

@@ -58,19 +58,58 @@ type WorkflowWebhookDelivery struct {
 	StepID          string            `json:"step_id,omitempty"`
 }
 
-// WebhookRunMetadata is safe delivery context for history; never includes payloads or secrets.
+// WebhookRunMetadata is bounded delivery context for history; it never includes
+// the full payload or authentication secrets.
 type WebhookRunMetadata struct {
 	TriggerName string    `json:"trigger_name"`
 	DeliveryID  string    `json:"delivery_id"`
 	Event       string    `json:"event,omitempty"`
 	ReceivedAt  time.Time `json:"received_at"`
+	CommitSHA   string    `json:"commit_sha,omitempty"`
+	Component   string    `json:"component,omitempty"`
+	Env         string    `json:"env,omitempty"`
+	DeployedAt  string    `json:"deployed_at,omitempty"`
 }
 
 func webhookRunMetadata(sctx *ScheduleContext) *WebhookRunMetadata {
 	if sctx == nil || sctx.WebhookInput == nil {
 		return nil
 	}
-	return &WebhookRunMetadata{TriggerName: sctx.Schedule.Name, DeliveryID: sctx.WebhookInput.DeliveryID, Event: sctx.WebhookInput.Event, ReceivedAt: sctx.WebhookInput.ReceivedAt}
+	metadata := &WebhookRunMetadata{TriggerName: sctx.Schedule.Name, DeliveryID: sctx.WebhookInput.DeliveryID, Event: sctx.WebhookInput.Event, ReceivedAt: sctx.WebhookInput.ReceivedAt}
+	var deploy struct {
+		CommitSHA  string `json:"commit_sha"`
+		Component  string `json:"component"`
+		Env        string `json:"env"`
+		DeployedAt string `json:"deployed_at"`
+	}
+	if json.Unmarshal(sctx.WebhookInput.Payload, &deploy) != nil {
+		return metadata
+	}
+	sha := strings.TrimSpace(deploy.CommitSHA)
+	if len(sha) >= 7 && len(sha) <= 64 {
+		validSHA := true
+		for _, digit := range sha {
+			if !((digit >= '0' && digit <= '9') || (digit >= 'A' && digit <= 'F') || (digit >= 'a' && digit <= 'f')) {
+				validSHA = false
+				break
+			}
+		}
+		if validSHA {
+			metadata.CommitSHA = sha
+		}
+	}
+	if component := strings.TrimSpace(deploy.Component); len(component) <= 80 && !strings.ContainsAny(component, "\r\n") {
+		metadata.Component = component
+	}
+	if env := strings.TrimSpace(deploy.Env); len(env) <= 80 && !strings.ContainsAny(env, "\r\n") {
+		metadata.Env = env
+	}
+	if deployedAt := strings.TrimSpace(deploy.DeployedAt); len(deployedAt) <= 64 {
+		if _, err := time.Parse(time.RFC3339Nano, deployedAt); err == nil {
+			metadata.DeployedAt = deployedAt
+		}
+	}
+	return metadata
 }
 
 type webhookRouteOption struct {
@@ -341,14 +380,14 @@ func (s *SchedulerService) getWorkflowWebhookPayload(w http.ResponseWriter, r *h
 		return
 	}
 
-	runs, _, err := ListScheduleRuns(r.Context(), result.WorkspacePath, id, maxScheduleRuns, 0)
+	runs, err := ReadScheduleRuns(r.Context(), result.WorkspacePath)
 	if err != nil {
 		http.Error(w, "could not read webhook history", http.StatusInternalServerError)
 		return
 	}
 	found := false
 	for _, run := range runs {
-		if run.ID == runID && run.Webhook != nil {
+		if run.ID == runID && run.ScheduleID == id && run.Webhook != nil {
 			found = true
 			break
 		}

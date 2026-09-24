@@ -182,26 +182,62 @@ func TestTriggerLinkPermissions(t *testing.T) {
 	for _, tt := range []struct {
 		name, target, want string
 	}{
-		{"another user's crew", "Gamma", "no Crew you own"},
-		{"another user's crew by physical path", linkGammaPath, "no Crew you own"},
 		{"read-only workflow", "workflow:Shared", "only have read access"},
 		{"itself", "Alpha Bot", "cannot call itself"},
-		{"unknown", "nope", "no Crew you own"},
+		{"unknown", "nope", "no Crew or workflow you can edit"},
 	} {
 		_, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": tt.target})
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("%s: err = %v, want %q", tt.name, err, tt.want)
 		}
 	}
-	if triggers, _ := env.svc.projectWebhookConfigs(ctx, "other", "work", "gamma"); len(triggers) != 0 {
-		t.Fatalf("a rejected connect wrote triggers on another user's crew: %+v", triggers)
+}
+
+// Crews are shared server-wide: a Crew connects to and creates triggers on
+// another user's Crew, by name or physical path, and the trigger lands in
+// that Crew's own list under its owner.
+func TestTriggerLinkReachesAnotherUsersCrew(t *testing.T) {
+	env := newTriggerLinkEnv(t)
+	tools := env.crewTools(t, linkAlphaPath)
+	ctx := context.Background()
+	for _, target := range []string{"Gamma", linkGammaPath} {
+		out, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": target})
+		if err != nil {
+			t.Fatalf("connect %q to another user's crew: %v", target, err)
+		}
+		if got := decodeToolJSON(t, out); got["trigger_id"] == "" {
+			t.Fatalf("connect %q returned no trigger: %s", target, out)
+		}
 	}
-	// A crew caller on a crew trigger must be the requester's own crew.
+	triggers, err := env.svc.projectWebhookConfigs(ctx, "other", "work", "gamma")
+	if err != nil || len(triggers) != 1 || !triggers[0].IsInternal() {
+		t.Fatalf("expected one reused standard trigger on gamma, got %+v err=%v", triggers, err)
+	}
+	if _, err := tools["connect_to_target"].exec(ctx, map[string]interface{}{"target": "Gamma", "name": "Nightly QA", "instructions": "Run the QA checklist."}); err != nil {
+		t.Fatalf("custom trigger on another user's crew: %v", err)
+	}
+	if triggers, _ = env.svc.projectWebhookConfigs(ctx, "other", "work", "gamma"); len(triggers) != 2 {
+		t.Fatalf("custom trigger not added to gamma's own list: %+v", triggers)
+	}
+	// A Crew caller from another owner may bind to a Crew trigger.
 	if _, _, err := env.svc.saveProductWebhookConfig(ctx, "owner", productWebhookRequest{
-		ProfileID: "work", ProjectID: "beta", Name: "Squat", Message: "x", Enabled: true,
+		ProfileID: "work", ProjectID: "beta", Name: "From gamma", Message: "x", Enabled: true,
 		Kind: triggerKindInternal, Caller: &triggerCaller{Type: triggerCallerCrew, ID: "gamma", ProfileID: "work"},
-	}, ""); err == nil {
-		t.Fatal("binding another user's crew as caller must fail")
+	}, ""); err != nil {
+		t.Fatalf("binding another user's crew as caller: %v", err)
+	}
+	crews, err := listAccessibleCrewProjects(ctx, "owner", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawGamma bool
+	for _, crew := range crews {
+		if crew["workspace_path"] == linkGammaPath && crew["access"] == "write" && crew["owner"] == "other" {
+			sawGamma = true
+		}
+	}
+	if !sawGamma {
+		t.Fatalf("list must include another user's crew with write access: %+v", crews)
 	}
 }
 

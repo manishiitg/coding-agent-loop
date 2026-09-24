@@ -57,7 +57,9 @@ func TestWorkflowContextAccess(t *testing.T) {
 	}
 }
 
-func TestCrewContextAccessIsSameAccountAndReadOnly(t *testing.T) {
+// Crews are shared server-wide: another owner's Crew is reachable by its
+// physical path; missing Crews and sub-folders are still rejected.
+func TestCrewContextAccessIsServerWide(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","products":[]},{"id":"bob","username":"bob","products":[]}]}`)
 	workspace := &mockWorkspaceAPI{files: map[string]string{
@@ -74,12 +76,19 @@ func TestCrewContextAccessIsSameAccountAndReadOnly(t *testing.T) {
 	}
 	writes, reads := collectSplitFolderGuardFolders("", roots)
 	if len(writes) != 0 || !reflect.DeepEqual(reads, roots) {
-		t.Fatalf("Crew context must grant only read access: writes=%v reads=%v", writes, reads)
+		t.Fatalf("reference roots arrive as the read set (Crew roots are split into writes at guard setup): writes=%v reads=%v", writes, reads)
 	}
 	if got, err := authorizeWorkflowContextPaths(ctx, []string{"Chats/Work/projects/research"}); err == nil || got != nil {
 		t.Fatalf("workflow-only authorizer accepted Crew path: %v %v", got, err)
 	}
-	for _, path := range []string{"Chats/Work/projects/private", "_users/bob/Chats/Work/projects/private", "Chats/Work/projects/research/code"} {
+	if got, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{"_users/bob/Chats/Work/projects/private"}); err != nil || !reflect.DeepEqual(readRoots, []string{"_users/bob/Chats/Work/projects/private"}) {
+		t.Fatalf("another owner's Crew must be reachable: %v %v %v", got, readRoots, err)
+	}
+	crewWrite, readOnly := splitCrewReferenceFolders([]string{"_users/bob/Chats/Work/projects/private", "Workflow/reports"})
+	if !reflect.DeepEqual(crewWrite, []string{"_users/bob/Chats/Work/projects/private/"}) || !reflect.DeepEqual(readOnly, []string{"Workflow/reports"}) {
+		t.Fatalf("crew roots must be writable and workflows read-only: write=%v read=%v", crewWrite, readOnly)
+	}
+	for _, path := range []string{"Chats/Work/projects/private", "_users/bob/Chats/Work/projects/missing", "Chats/Work/projects/research/code"} {
 		if got, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{path}); err == nil || got != nil || readRoots != nil {
 			t.Fatalf("unauthorized Crew reference accepted: %q => %v %v %v", path, got, readRoots, err)
 		}

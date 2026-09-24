@@ -2746,6 +2746,9 @@ export const externalSkillApi = {
   downloadSkillZIP: async (): Promise<Blob> => {
     return (await api.get('/api/external/v1/skill.zip', { responseType: 'blob' })).data
   },
+  downloadCoworkPlugin: async (): Promise<Blob> => {
+    return (await api.get('/api/external/v1/agentworks.plugin', { responseType: 'blob' })).data
+  },
 }
 
 export const authApi = {

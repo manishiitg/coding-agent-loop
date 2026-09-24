@@ -28,6 +28,7 @@ vi.mock('../workflow/WorkflowAPITriggersView', () => ({ default: (props: Record<
   triggersPanelProps.current = props
   return <div data-testid="workflow-triggers" data-hide-header={String(Boolean(props.hideHeader))} data-refresh-token={String(props.refreshToken ?? 0)}>Workflow trigger content</div>
 } }))
+vi.mock('./CrewFunctionsView', () => ({ default: () => <div data-testid="functions">Function content</div> }))
 vi.mock('./TriggerDeliveryHistoryPanel', () => ({ TriggerDeliveryHistoryPanel: () => <div data-testid="delivery-history" /> }))
 const { askAIProps } = vi.hoisted(() => ({ askAIProps: { current: null as null | Record<string, unknown> } }))
 vi.mock('../workflow/AskAIButton', () => ({
@@ -67,16 +68,19 @@ describe('AutomationHubPanel', () => {
       expect(panel?.className).toContain('flex-1')
       expect(panel?.className).toContain('min-w-0')
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
-      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Triggers', 'Bots', 'Chats'])
+      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Triggers', 'Functions', 'Bots', 'Chats'])
       expect(host.querySelector('[data-testid="schedules"]')?.getAttribute('data-hide-header')).toBe('true')
 
-      await act(async () => { tabs[3]!.click(); await Promise.resolve() })
+      await act(async () => { tabs[4]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="chats"]')).not.toBeNull()
       await act(async () => { tabs[0]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="schedules"]')?.getAttribute('data-hide-header')).toBe('true')
       await act(async () => { tabs[1]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="triggers"]')).not.toBeNull()
       await act(async () => { tabs[2]!.click(); await Promise.resolve() })
+      expect(host.querySelector('[data-testid="functions"]')).not.toBeNull()
+      expect(openWorkspaceView).toHaveBeenLastCalledWith('workshop', 'functions')
+      await act(async () => { tabs[3]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="bots"]')).not.toBeNull()
       expect(openWorkspaceView).toHaveBeenLastCalledWith('workshop', 'bots')
     } finally {

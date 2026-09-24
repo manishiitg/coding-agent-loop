@@ -185,8 +185,12 @@ https://your-server/api/external/v1/mcp
 
 - ChatGPT: Settings → Apps & Connectors → Developer Mode → add a custom MCP
   connector with that URL and choose OAuth authentication.
-- Claude Cowork: Settings → Connectors → Add custom connector with that URL
-  and choose OAuth authentication.
+- Claude Cowork: in AgentWorks Connect → Hosted AI app → Claude Cowork,
+  download `agentworks.plugin`. In Cowork, open Customize → Plugins, upload
+  the plugin, then connect AgentWorks and approve OAuth in your browser. The
+  plugin contains the remote MCP connector and the AgentWorks skill. It
+  contains no credential. The manual alternative is Customize → Connectors
+  → Add custom connector with the URL above and OAuth authentication.
 
 The assistant discovers AgentWorks OAuth metadata from the server. Sign in to
 Confida when prompted, review the requested permissions, and allow access.
@@ -194,7 +198,7 @@ The connection uses short-lived MCP-only access tokens and rotating refresh
 tokens. Revoke it under **Connect → Connected apps**. The CLI and local stdio
 MCP bridge use their own browser-approved OAuth connections.
 
-The optional **Give the assistant workflow guidance** section downloads the
+For ChatGPT, the optional **Give the assistant workflow guidance** section downloads the
 same guidance as an
 uploadable skill zip (`GET /api/external/v1/skill.zip`, a SKILL.md following
 the Agent Skills layout ChatGPT, Claude, and Cowork accept) or copies its
@@ -570,6 +574,20 @@ lists — fails server startup, and the CLI subcommand mappings are test-pinned
 to the union. Changing the surface means editing the yaml and the golden test
 together, deliberately; adding a tool to run mode exposes it externally unless
 it appears in `external_denylist`.
+
+For webhook runs, `get_schedule_runs` returns the accepted delivery's
+`commit_sha`, `component`, `env`, and `deployed_at` under `webhook` when those
+fields were present in the delivery body. `get_run` returns the same `webhook`
+metadata for that run folder. These fields identify the deploy ping that
+started the run; overlapping pings skipped by the trigger do not create runs.
+`get_schedule_runs` can read retained history for a deleted schedule ID and
+marks that case with `schedule_deleted: true`. `list_workflow_knowledge` pages
+the learnings and knowledgebase inventories together with `limit` and `offset`;
+follow `next_offset` while `has_more` is true. Directory listing tools return
+`exists: true` when the requested path exists, even if the result page is empty.
+Workflow schedule history uses the same `limit` and `offset` paging and keeps
+terminal run records for at least 90 days. Older records are pruned when a new
+run is recorded; run artifacts have a separate retention policy.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint

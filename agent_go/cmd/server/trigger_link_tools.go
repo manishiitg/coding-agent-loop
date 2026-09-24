@@ -28,8 +28,9 @@ import (
 //     with an [AUTO-NOTIFICATION] carrying the final result, failure, or
 //     timeout — the same mechanism trigger_and_auto_notify uses.
 //
-// Targets are limited to the requester's own Crews and to workflows they own
-// or can edit; workflow readers and Crew Run-mode readers cannot trigger.
+// Targets are any Crew on the server (Crews are shared read-write) and
+// workflows the requester owns or can edit; workflow readers and Crew
+// Run-mode readers cannot trigger.
 
 const (
 	triggerTargetDefaultTimeout = 60 * time.Minute
@@ -48,7 +49,18 @@ type triggerTarget struct {
 	Label       string
 	CrewID      string
 	CrewProfile string
-	Manifest    *WorkflowManifest
+	// CrewOwner is the user whose workspace holds a Crew target. Crews are
+	// shared server-wide, so it may differ from the requester.
+	CrewOwner string
+	Manifest  *WorkflowManifest
+}
+
+// ownerOr returns the Crew target's owner, falling back to userID.
+func (t triggerTarget) ownerOr(userID string) string {
+	if strings.TrimSpace(t.CrewOwner) != "" {
+		return t.CrewOwner
+	}
+	return userID
 }
 
 func (t triggerTarget) describe() map[string]interface{} {
@@ -62,7 +74,7 @@ type triggerLinkCaller struct {
 	Path  string
 }
 
-// resolveTriggerTarget finds one Crew the user owns, or one workflow the user
+// resolveTriggerTarget finds one Crew on the server, or one workflow the user
 // may open, by exact workspace path, ID, name, identity name, or folder name.
 // A "crew:" / "workflow:" prefix (as inserted by #crew:/#workflow: tags)
 // restricts the kind. Ambiguous names fail with the candidates listed.
@@ -113,7 +125,11 @@ func resolveTriggerTarget(ctx context.Context, claims *UserClaims, raw string) (
 			if !matches(id, name, identity, crewPath, path.Base(crewPath)) {
 				continue
 			}
-			found = append(found, triggerTarget{Kind: triggerCallerCrew, Path: crewPath, Label: firstNonEmptyTrimmed(identity, name), CrewID: id, CrewProfile: "work"})
+			owner := userID
+			if crewOwner, ok := crewProjectOwnerID(crewPath); ok {
+				owner = crewOwner
+			}
+			found = append(found, triggerTarget{Kind: triggerCallerCrew, Path: crewPath, Label: firstNonEmptyTrimmed(identity, name), CrewID: id, CrewProfile: "work", CrewOwner: owner})
 		}
 	}
 	if wantKind != triggerCallerCrew {
@@ -134,7 +150,7 @@ func resolveTriggerTarget(ctx context.Context, claims *UserClaims, raw string) (
 	}
 	switch len(found) {
 	case 0:
-		return triggerTarget{}, fmt.Errorf("no Crew you own or workflow you can edit matches %q; call list_accessible_workflows to find its exact workspace_path", query)
+		return triggerTarget{}, fmt.Errorf("no Crew or workflow you can edit matches %q; call list_accessible_workflows to find its exact workspace_path", query)
 	case 1:
 		return found[0], nil
 	default:
@@ -191,7 +207,7 @@ func (api *StreamingAPI) connectTriggerTargetWith(ctx context.Context, userID st
 		}
 		custom := strings.TrimSpace(instructions) != ""
 		if !custom {
-			triggers, err := api.productSchedules.projectWebhookConfigs(ctx, userID, target.CrewProfile, target.CrewID)
+			triggers, err := api.productSchedules.projectWebhookConfigs(ctx, target.ownerOr(userID), target.CrewProfile, target.CrewID)
 			if err != nil {
 				return "", false, err
 			}
@@ -206,7 +222,7 @@ func (api *StreamingAPI) connectTriggerTargetWith(ctx context.Context, userID st
 			message = strings.TrimSpace(instructions) + "\n\n" + message
 		}
 		stamp := caller.Stamp
-		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{
+		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, target.ownerOr(userID), productWebhookRequest{
 			ProfileID: target.CrewProfile, ProjectID: target.CrewID,
 			Name: firstNonEmptyTrimmed(name, "Called by "+caller.Label), Message: message,
 			Enabled: true, RunDestination: firstNonEmptyTrimmed(destination, runDestinationCrewChat), Kind: triggerKindInternal, Caller: &stamp,
@@ -228,7 +244,7 @@ func (api *StreamingAPI) callableTargetTriggers(ctx context.Context, userID stri
 	out := []map[string]interface{}{}
 	switch target.Kind {
 	case triggerCallerCrew:
-		triggers, err := api.productSchedules.projectWebhookConfigs(ctx, userID, target.CrewProfile, target.CrewID)
+		triggers, err := api.productSchedules.projectWebhookConfigs(ctx, target.ownerOr(userID), target.CrewProfile, target.CrewID)
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +456,7 @@ func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegist
 	}
 	targetSchema := map[string]interface{}{"type": "string", "description": "The Crew or workflow to call: its name, a #crew:<name> / #workflow:<name> tag from the user's message, or its exact workspace_path."}
 
-	if err := register("connect_to_target", "Connect this chat's Crew or workflow to another Crew or workflow so it can call it: reuses the target's internal trigger bound to this caller, or creates a standard one (no public URL or secret). To create a purpose-specific trigger on a target Crew, pass name and instructions (what that Crew should do whenever it is called); it appears in that Crew's own trigger list, named for and bound to this caller. Targets are your own Crews and workflows you own or can edit. Returns the trigger_id and the target's triggers this caller may use. Use when the user tags #crew:<name> or #workflow:<name> and asks to connect, link, or be able to call it.", map[string]interface{}{
+	if err := register("connect_to_target", "Connect this chat's Crew or workflow to another Crew or workflow so it can call it: reuses the target's internal trigger bound to this caller, or creates a standard one (no public URL or secret). To create a purpose-specific trigger on a target Crew, pass name and instructions (what that Crew should do whenever it is called); it appears in that Crew's own trigger list, named for and bound to this caller. Targets are any Crew on the server and workflows you own or can edit; creating new triggers on a Crew or reusing its existing ones is always allowed. Returns the trigger_id and the target's triggers this caller may use. Use when the user tags #crew:<name> or #workflow:<name> and asks to connect, link, or be able to call it.", map[string]interface{}{
 		"type": "object", "required": []string{"target"}, "properties": map[string]interface{}{
 			"target":          targetSchema,
 			"name":            map[string]interface{}{"type": "string", "description": "Crew targets only: name for a new purpose-specific trigger."},
@@ -596,7 +612,7 @@ func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegist
 		return err
 	}
 
-	return register("get_target_run", "Check a run started by call_target: status, whether it has finished, and its final result (a Crew's final answer, or a workflow's step outputs).", map[string]interface{}{
+	return register("get_target_run", "Check a run started by call_target: status, whether it has finished, its final result (a Crew's final answer, or a workflow's step outputs), and while a Crew is still working, a short tail of what it is doing (recent_activity) without interrupting it.", map[string]interface{}{
 		"type": "object", "required": []string{"target", "trigger_id", "run_id"}, "properties": map[string]interface{}{
 			"target":     targetSchema,
 			"trigger_id": map[string]interface{}{"type": "string", "description": "trigger_id from call_target."},
@@ -616,10 +632,18 @@ func (api *StreamingAPI) registerTriggerLinkTools(registrar definitionToolRegist
 		if err != nil {
 			return "", err
 		}
-		encoded, err := json.MarshalIndent(map[string]interface{}{
+		out := map[string]interface{}{
 			"target": target.describe(), "run_id": strings.TrimSpace(runID), "status": state.Status,
 			"terminal": state.Terminal, "failed": state.Failed, "result": truncateTriggerTargetResult(state.Result),
-		}, "", "  ")
+		}
+		// What the Crew is doing right now, read from its session events
+		// without interrupting it.
+		if !state.Terminal && target.Kind == triggerCallerCrew {
+			if activity := api.crewFunctionActivity(crewTargetRunSessionID(state)); activity != nil {
+				out["recent_activity"] = activity
+			}
+		}
+		encoded, err := json.MarshalIndent(out, "", "  ")
 		return string(encoded), err
 	})
 }

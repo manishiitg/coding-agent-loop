@@ -72,8 +72,8 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if !strings.EqualFold(manifest.Profile.Runtime.AgentTools.Mode, "mcp_only") {
 		t.Fatalf("work must route coding operations through governed MCP tools, got agent_tools.mode=%q", manifest.Profile.Runtime.AgentTools.Mode)
 	}
-	if !manifest.Profile.Runtime.Sandbox.IsStrict() || manifest.Profile.Runtime.Sandbox.ChatHistoryDenied() {
-		t.Fatalf("work MCP tools must stay strict while retaining the signed-in user's chat-history memory: %+v", manifest.Profile.Runtime.Sandbox)
+	if !manifest.Profile.Runtime.Sandbox.IsStrict() || !manifest.Profile.Runtime.Sandbox.ChatHistoryDenied() {
+		t.Fatalf("work MCP tools must stay strict and must not see the account-wide chat_history/ (it indexes other products' chats): %+v", manifest.Profile.Runtime.Sandbox)
 	}
 	if !manifest.Profile.ToolPolicy.IsAllowlist() {
 		t.Fatal("work must declare tool_policy.mode: allowlist -- fail-open would silently reach workflow/schedule/pulse tools")
@@ -122,6 +122,14 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"call_target":                            false,
 		"get_target_run":                         false,
 		"send_to_target_run":                     false,
+		"define_function":                        false,
+		"delete_function":                        false,
+		"list_functions":                         false,
+		"call_function":                          false,
+		"get_function_call":                      false,
+		"ask_function_update":                    false,
+		"report_function_progress":               false,
+		"return_function_result":                 false,
 		"list_project_schedules":                 false,
 		"create_project_schedule":                false,
 		"update_project_schedule":                false,

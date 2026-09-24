@@ -55,8 +55,15 @@ type ChatHistorySession struct {
 // ChatHistoryAgentRuntime records enough information to reopen a previous chat
 // with its original runtime when that runtime supports native resume.
 type ChatHistoryAgentRuntime struct {
-	ChatPolicyKey      string                       `json:"chat_policy_key,omitempty"`
-	AgentProfileKey    string                       `json:"agent_profile_key,omitempty"`
+	ChatPolicyKey string `json:"chat_policy_key,omitempty"`
+	// ChatPolicyRoleKey is the role part of ChatPolicyKey (mode, origin,
+	// capabilities) without definition/config drift. Only a role change may
+	// replace the native coding-agent session.
+	ChatPolicyRoleKey string `json:"chat_policy_role_key,omitempty"`
+	AgentProfileKey   string `json:"agent_profile_key,omitempty"`
+	// AgentToolsMode is the profile's agent_tools mode ("hybrid" or
+	// "mcp_only") the native session was started with.
+	AgentToolsMode     string                       `json:"agent_tools_mode,omitempty"`
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`

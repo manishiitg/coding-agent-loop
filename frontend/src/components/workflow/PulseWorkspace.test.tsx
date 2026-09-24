@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('../../services/api', () => ({ agentApi: {}, getApiBaseUrl: () => 'http://127.0.0.1:99999' }))
 vi.mock('../../api/playbooks', () => ({ playbooksApi: { list: vi.fn(), listInstalled: vi.fn() } }))
 vi.mock('./ReportHumanInputPanel', () => ({ ReportHumanInputPanel: () => <section>Needs your decision</section> }))
-import { manualPulseReviewMessage, PulseWorkspace } from './PulseWorkspace'
+import { manualPulseReviewMessage, PulseWorkspace, pulseTabReviewMessage } from './PulseWorkspace'
+import { setProductCommands } from '../../commands/registry'
+import { toAgentworksCommandDefinitions } from '../../commands/agentworksProductCommands'
 import { AUTONOMY_LEVELS, autonomyLevelIndex } from './pulseAutonomy'
 
 describe('PulseWorkspace information hierarchy', () => {
@@ -43,7 +45,7 @@ describe('PulseWorkspace information hierarchy', () => {
     // run + change auto, outward ask = the "Edit workflow" stop.
     expect(html).toContain('Also edits steps and schedules. Asks before new posts or messages.')
     expect(html).not.toContain('Always asks you')
-    expect(html).toContain('a Plan Drift check is due')
+    expect(html).toContain('Plan Drift check due')
     // Platform upkeep and the retired improvement ledger are not on the user's view.
     expect(html).not.toContain('Maintenance issues')
     expect(html).not.toContain('Strategic proposals')
@@ -69,5 +71,21 @@ describe('PulseWorkspace information hierarchy', () => {
     expect(autonomyLevelIndex({ run: 'auto', outward: 'auto', change: 'ask' })).toBe(1)
     expect(autonomyLevelIndex({ run: 'ask', outward: 'auto', change: 'auto' })).toBe(0)
     expect(AUTONOMY_LEVELS.map(level => level.label)).toEqual(['Ask first', 'Run steps', 'Edit workflow', 'Full'])
+  })
+
+  it('runs the same product command from a Pulse tab button, with review and fix together', () => {
+    // Before product commands load, the fallback still reviews and fixes.
+    expect(pulseTabReviewMessage('technical_review')).toContain('kind="pulse-fixer"')
+    setProductCommands(toAgentworksCommandDefinitions([{
+      name: 'run-technical-review', description: 'Technical', icon: 'check-circle', aliases: ['pulse-review'], menuHidden: true,
+      prompt: 'Run /run-technical-review as a BACKGROUND task. Review, then fix. Focus: {{context}}',
+    }]))
+    try {
+      const message = pulseTabReviewMessage('technical_review')
+      expect(message).toContain('Run /run-technical-review as a BACKGROUND task')
+      expect(message).toContain('Requested from the Pulse tab.')
+    } finally {
+      setProductCommands([])
+    }
   })
 })

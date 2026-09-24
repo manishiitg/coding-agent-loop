@@ -133,6 +133,27 @@ func (f *externalToolsFixture) planRevision(t *testing.T, user string) string {
 	return revision
 }
 
+func TestExternalDirectoryListingsReportExistingPaths(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.write(t, "Workflow/invoices/runs/iteration-1-sched/default/logs/output.txt", "finished")
+	for _, call := range []struct {
+		name string
+		args map[string]any
+		path string
+	}{
+		{"list_files", map[string]any{"workflow_id": "invoices", "path": "docs"}, "docs"},
+		{"search_files", map[string]any{"workflow_id": "invoices", "path": "docs", "query": "Invoices"}, "docs"},
+		{"list_runs", map[string]any{"workflow_id": "invoices"}, "runs"},
+		{"get_run", map[string]any{"workflow_id": "invoices", "run_folder": "iteration-1-sched/default"}, "runs/iteration-1-sched/default"},
+		{"get_logs", map[string]any{"workflow_id": "invoices", "run_folder": "iteration-1-sched/default"}, "runs/iteration-1-sched/default/logs"},
+	} {
+		body := externalTestBody(t, f.call(t, "owner", call.name, call.args), 200)
+		if body["exists"] != true || body["path"] != call.path {
+			t.Fatalf("%s incorrectly reports directory missing: %v", call.name, body)
+		}
+	}
+}
+
 func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T) {
 	api := &StreamingAPI{}
 	for _, authenticated := range []bool{false, true} {

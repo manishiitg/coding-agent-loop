@@ -243,7 +243,7 @@ func externalListFiles(ctx context.Context, root *os.Root, p string, req wf.Requ
 	}
 	start := min(req.Offset, len(all))
 	end := min(start+req.Limit, len(all))
-	result := wf.Result{Entries: all[start:end], Truncated: truncated}
+	result := wf.Result{File: wf.File{Path: p, Exists: true}, Entries: all[start:end], Truncated: truncated}
 	if len(all) > end {
 		result.NextOffset = end
 	}

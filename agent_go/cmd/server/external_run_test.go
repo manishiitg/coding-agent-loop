@@ -109,6 +109,23 @@ func TestExternalListSchedulesEmptyAndUnknownRuns(t *testing.T) {
 	}
 }
 
+func TestExternalScheduleRunsRemainReadableAfterScheduleDeletion(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	runs, err := json.Marshal([]ScheduleRunEntry{{ID: "retained-run", ScheduleID: "deleted-schedule", Status: "success", StartedAt: time.Now().UTC()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, "Workflow/invoices/schedule-runs.json", string(runs))
+	body := externalTestBody(t, f.call(t, "owner", "get_schedule_runs", map[string]any{"workflow_id": "invoices", "schedule_id": "deleted-schedule"}), 200)
+	if body["schedule_deleted"] != true || body["total"] != float64(1) || body["runs"].([]any)[0].(map[string]any)["id"] != "retained-run" {
+		t.Fatalf("deleted schedule history is unavailable: %v", body)
+	}
+	page := externalTestBody(t, f.call(t, "owner", "get_schedule_runs", map[string]any{"workflow_id": "invoices", "schedule_id": "deleted-schedule", "offset": 1}), 200)
+	if page["schedule_deleted"] != true || page["total"] != float64(1) || len(page["runs"].([]any)) != 0 {
+		t.Fatalf("deleted schedule history does not paginate: %v", page)
+	}
+}
+
 func TestExternalWebhookRunExposesAcceptedDeployMetadata(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","label":"Invoice processing","created_by":"owner","access":{"owners":["owner"]},"schedules":[{"id":"deploy-hook","name":"Rerun Basic Smoke Suite","schedule_type":"webhook","enabled":true}]}`)

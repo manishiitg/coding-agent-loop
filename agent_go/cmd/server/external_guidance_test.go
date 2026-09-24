@@ -31,6 +31,21 @@ func TestExternalGuidanceCatalogIncludesNewTools(t *testing.T) {
 	}
 }
 
+func TestExternalKnowledgeInventoryPagination(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	for _, name := range []string{"a.md", "b.md", "c.md", "d.md"} {
+		f.write(t, "Workflow/invoices/knowledgebase/"+name, "# "+name)
+	}
+	first := externalTestBody(t, f.call(t, "owner", "list_workflow_knowledge", map[string]any{"workflow_id": "invoices", "limit": 2}), 200)
+	if len(first["knowledgebase"].([]any)) != 2 || first["has_more"] != true || first["next_offset"] != float64(2) || first["truncated"] != true {
+		t.Fatalf("first knowledge page hides more files: %v", first)
+	}
+	second := externalTestBody(t, f.call(t, "owner", "list_workflow_knowledge", map[string]any{"workflow_id": "invoices", "limit": 2, "offset": 2}), 200)
+	if len(second["knowledgebase"].([]any)) != 2 || second["has_more"] != false {
+		t.Fatalf("second knowledge page is incomplete: %v", second)
+	}
+}
+
 func TestExternalGuidanceTopicScopeSplit(t *testing.T) {
 	api := &StreamingAPI{}
 	// A read-only token sees canonical guidance but not workflow knowledge.

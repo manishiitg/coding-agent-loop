@@ -580,6 +580,11 @@ For webhook runs, `get_schedule_runs` returns the accepted delivery's
 fields were present in the delivery body. `get_run` returns the same `webhook`
 metadata for that run folder. These fields identify the deploy ping that
 started the run; overlapping pings skipped by the trigger do not create runs.
+`get_schedule_runs` can read retained history for a deleted schedule ID and
+marks that case with `schedule_deleted: true`. `list_workflow_knowledge` pages
+the learnings and knowledgebase inventories together with `limit` and `offset`;
+follow `next_offset` while `has_more` is true. Directory listing tools return
+`exists: true` when the requested path exists, even if the result page is empty.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint

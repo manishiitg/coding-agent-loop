@@ -486,10 +486,6 @@ func (api *StreamingAPI) externalScheduleRuns(w http.ResponseWriter, r *http.Req
 			break
 		}
 	}
-	if !known {
-		externalError(w, http.StatusNotFound, "schedule_not_found", "Schedule does not exist on this workflow.")
-		return
-	}
 	limit := externalInt(args, "limit", 50)
 	offset := externalInt(args, "offset", 0)
 	if limit < 1 {
@@ -503,11 +499,15 @@ func (api *StreamingAPI) externalScheduleRuns(w http.ResponseWriter, r *http.Req
 		externalError(w, http.StatusBadGateway, "workspace_unavailable", "Schedule run history is unavailable.")
 		return
 	}
+	if !known && total == 0 {
+		externalError(w, http.StatusNotFound, "schedule_not_found", "Schedule does not exist on this workflow.")
+		return
+	}
 	if runs == nil {
 		runs = []ScheduleRunEntry{}
 	}
 	end := offset + len(runs)
-	externalJSON(w, map[string]any{"workflow_id": workflow.Manifest.ID, "schedule_id": scheduleID, "runs": runs, "total": total, "next_offset": end, "has_more": end < total})
+	externalJSON(w, map[string]any{"workflow_id": workflow.Manifest.ID, "schedule_id": scheduleID, "schedule_deleted": !known, "runs": runs, "total": total, "next_offset": end, "has_more": end < total})
 }
 
 func (api *StreamingAPI) externalTriggerSchedule(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {

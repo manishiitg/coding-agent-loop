@@ -88,7 +88,7 @@ func externalTools() ([]externalTool, error) {
 		add("get_agent_context", "Describe this connection for an external agent: token capabilities, available tools, and guidance version. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
 		add("list_guidance_topics", "List the server-owned external guidance topics and their descriptions.", false, false, nil)
 		add("get_guidance_topic", "Read one external guidance topic rendered from the canonical builder reference. Load only topics relevant to the task.", false, false, map[string]any{"topic": externalString("Topic name from list_guidance_topics.")}, "topic")
-		add("list_workflow_knowledge", "List a workflow's learnings, knowledgebase notes, workspace skills, and skill wiring (workflow-selected skills plus per-step enabled_skills).", false, true, nil)
+		add("list_workflow_knowledge", "List a workflow's learnings, knowledgebase notes, workspace skills, and skill wiring (workflow-selected skills plus per-step enabled_skills). Page the file inventories with limit and offset; has_more signals another page.", false, true, page())
 		add("read_workflow_knowledge", "Read one knowledge file: learnings/ or knowledgebase/ paths from the workflow, or skills/<folder>/<file> from the workspace skill catalog. Nothing else is addressable.", false, true, map[string]any{"path": externalString("Knowledge path: learnings/..., knowledgebase/..., or skills/<folder>/<file>.")}, "path")
 		add("list_runs", "List saved run folders and their metadata files. Use get_run for a chosen run.", false, true, page())
 		for _, name := range []string{"get_run", "get_logs"} {
@@ -123,7 +123,7 @@ func externalTools() ([]externalTool, error) {
 		addRun("list_schedules", "List the workflow's schedules: IDs, type, cron or calendar shape, timezone, enabled state, and groups.", false, nil)
 		p = page()
 		p["schedule_id"] = externalString("Schedule ID from list_schedules.")
-		addRun("get_schedule_runs", "List a schedule's run history: status, duration, run folder, errors, and webhook deploy metadata when present.", false, p, "schedule_id")
+		addRun("get_schedule_runs", "List a schedule's retained run history, including after schedule deletion: status, duration, run folder, errors, and webhook deploy metadata when present.", false, p, "schedule_id")
 		addRun("trigger_schedule", "Trigger a schedule to run immediately, outside its normal timing. Requires the runs:execute scope.", true, map[string]any{"schedule_id": externalString("Schedule ID from list_schedules.")}, "schedule_id")
 		addRun("chat", "Chat with the workflow assistant in a pinned Run-mode session: ask questions, request analysis, or direct runs conversationally. Starts a new session, or continues session_id for multi-turn conversation. Requires the runs:execute scope. Poll run_status for the reply.", true, map[string]any{"message": externalString("The question or instruction to send."), "session_id": map[string]any{"type": "string", "description": "Existing run session ID to continue. Omit to start a new conversation."}}, "message")
 		addRun("run_reply_input", "Answer a pending human-input request in a run session (see run_status pending_inputs). Requires the runs:execute scope.", true, map[string]any{"session_id": externalString("Run session ID from run_status."), "request_id": externalString("Pending input request ID from run_status."), "response": externalString("The answer to submit.")}, "session_id", "request_id", "response")
@@ -349,7 +349,7 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if tool.Name == "list_workflow_knowledge" {
-		api.externalListKnowledge(w, r, *selected)
+		api.externalListKnowledge(w, r, *selected, args)
 		return
 	}
 	if tool.Name == "read_workflow_knowledge" {
@@ -451,14 +451,14 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 		externalFailure(w, err)
 		return
 	}
-	// File responses include the existing Share file viewer URL. get_run
-	// lists a directory, so its Result has entries but Exists is false.
-	if result.Exists || name == "get_run" {
+	// File reads include the existing Share file viewer URL. get_run
+	// also adds the matching schedule run's delivery metadata.
+	if (req.Operation == "read" && result.Exists) || name == "get_run" {
 		raw, _ := json.Marshal(result)
 		var linked map[string]any
 		_ = json.Unmarshal(raw, &linked)
 		linked["workflow_id"] = workflow.Manifest.ID
-		if result.Exists {
+		if req.Operation == "read" && result.Exists {
 			linked["preview_url"] = sharedAssetURL(r, path.Join(workflow.WorkspacePath, result.Path))
 		}
 		if name == "get_run" {

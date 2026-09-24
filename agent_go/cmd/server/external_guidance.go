@@ -219,10 +219,14 @@ var externalKnowledgePrefixes = []string{"learnings/", "knowledgebase/"}
 // externalListKnowledge serves list_workflow_knowledge: learnings and KB
 // inventory, workspace skill folders, and the skill wiring (workflow-selected
 // skills plus per-step enabled_skills) for one workflow.
-func (api *StreamingAPI) externalListKnowledge(w http.ResponseWriter, r *http.Request, workflow DiscoveredWorkflow) {
+func (api *StreamingAPI) externalListKnowledge(w http.ResponseWriter, r *http.Request, workflow DiscoveredWorkflow, args map[string]any) {
 	out := map[string]any{"workflow_id": workflow.Manifest.ID}
+	limit := externalInt(args, "limit", 200)
+	offset := externalInt(args, "offset", 0)
+	hasMore := false
+	truncated := false
 	for _, dir := range []string{"learnings", "knowledgebase"} {
-		result, err := externalFileRequest(r.Context(), wf.Request{Root: workflow.WorkspacePath, Operation: "list", Path: dir, Depth: 4, Limit: 200})
+		result, err := externalFileRequest(r.Context(), wf.Request{Root: workflow.WorkspacePath, Operation: "list", Path: dir, Depth: 4, Limit: limit, Offset: offset})
 		if err != nil {
 			var upstream *externalUpstreamError
 			if errors.As(err, &upstream) && upstream.status == 404 {
@@ -233,6 +237,13 @@ func (api *StreamingAPI) externalListKnowledge(w http.ResponseWriter, r *http.Re
 			return
 		}
 		out[dir] = result.Entries
+		hasMore = hasMore || result.NextOffset > 0
+		truncated = truncated || result.Truncated
+	}
+	out["has_more"] = hasMore
+	out["truncated"] = truncated
+	if hasMore {
+		out["next_offset"] = offset + limit
 	}
 	out["selected_skills"] = workflow.Manifest.Capabilities.SelectedSkills
 	stepSkills := externalStepSkills(r.Context(), workflow)

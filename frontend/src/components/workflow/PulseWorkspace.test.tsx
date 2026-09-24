@@ -43,7 +43,7 @@ describe('PulseWorkspace information hierarchy', () => {
     // run + change auto, outward ask = the "Edit workflow" stop.
     expect(html).toContain('Also edits steps and schedules. Asks before new posts or messages.')
     expect(html).not.toContain('Always asks you')
-    expect(html).toContain('a Plan Drift check is due')
+    expect(html).toContain('Plan Drift check due')
     // Platform upkeep and the retired improvement ledger are not on the user's view.
     expect(html).not.toContain('Maintenance issues')
     expect(html).not.toContain('Strategic proposals')

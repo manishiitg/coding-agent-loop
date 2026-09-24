@@ -24,6 +24,26 @@ Therefore:
 
 Workflow run-folder artifacts, plan/step config, knowledgebase notes, learnings — same rule. Read, then quote.`
 
+// botSessionContinuityGuidance is appended to every per-platform formatting
+// fragment so the rule is in-context from session start. It previously lived
+// only in the lazily-loaded deployed-channel reference doc, which trivial
+// one-word turns never load — the model then announced "Session ended" on a
+// bare "end" (issue 202, E1) even though no session control exists or fired.
+// A bot chat is an open conversation: it never closes, and any message at any
+// time gets an answer.
+const botSessionContinuityGuidance = `
+
+# Session continuity in chat threads
+
+Session-end words are ordinary text, never session controls. "done", "end",
+"reset", "bye", "thanks", and the like (bare or @-prefixed) do not end,
+clear, restart, or pause anything. There is no session to close: this chat
+stays open and every message gets an answer from the conversation.
+
+Therefore: never announce "session ended" (or closed/finished/wrapped up),
+never say goodbye, and never wrap up on their account. Reply briefly from
+context and keep the conversation open.`
+
 // buildChannelFormattingInstructions returns a system-prompt fragment telling
 // the agent how to format its replies for a specific chat channel. Both Slack
 // and WhatsApp share a minimal "mrkdwn-like" subset — single-asterisk bold,
@@ -63,7 +83,7 @@ Do NOT use:
 - Tables — Slack has no table rendering. Use a bulleted list or paste as a code block with column alignment instead.
 - HTML.
 
-Keep individual messages under 3000 characters where possible — Slack caps at ~40k, but long single messages are harder to read on mobile.` + botFileAccessGuidance
+Keep individual messages under 3000 characters where possible — Slack caps at ~40k, but long single messages are harder to read on mobile.` + botFileAccessGuidance + botSessionContinuityGuidance
 
 	case "whatsapp":
 		return `# Output formatting — WhatsApp
@@ -85,7 +105,7 @@ Do NOT use:
 - Nested markup (e.g. bold inside italic) — unreliable.
 - HTML.
 
-Keep replies concise — WhatsApp caps individual messages at ~4000 characters, and small phone screens make long walls of text hard to read.` + botFileAccessGuidance
+Keep replies concise — WhatsApp caps individual messages at ~4000 characters, and small phone screens make long walls of text hard to read.` + botFileAccessGuidance + botSessionContinuityGuidance
 	}
 	return ""
 }

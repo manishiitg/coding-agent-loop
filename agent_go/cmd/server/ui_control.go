@@ -105,6 +105,9 @@ func (b *uiControlBroker) scope(session string) string {
 	defer b.mu.Unlock()
 	return b.scopes[session]
 }
+
+const uiControlBindingLease = 6 * time.Minute
+
 func uiTerminal(status string) bool { return status != "accepted" && status != "applying" }
 func (b *uiControlBroker) finish(a *uiAction, status, code string) {
 	if uiTerminal(a.Status) {
@@ -117,7 +120,10 @@ func (b *uiControlBroker) finish(a *uiAction, status, code string) {
 func (b *uiControlBroker) prune() {
 	now := b.now()
 	for id, c := range b.bindings {
-		if now.Sub(c.seen) > 15*time.Second {
+		// The pane renews every 5 minutes (not every 10s): the agent's
+		// explicit commands arrive over the chat's SSE, so the lease only
+		// needs to outlive the renewal interval.
+		if now.Sub(c.seen) > uiControlBindingLease {
 			delete(b.bindings, id)
 			for _, a := range b.actions {
 				if a.binding == id {

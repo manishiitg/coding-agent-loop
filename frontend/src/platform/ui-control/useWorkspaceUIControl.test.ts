@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { UI_CONTROL_BACKUP_POLL_MS } from './useWorkspaceUIControl'
 
 describe('workspace UI control transport', () => {
-  it('uses SSE and state changes as primary wake-ups with a ten-second backup poll', () => {
-    expect(UI_CONTROL_BACKUP_POLL_MS).toBe(10_000)
+  it('uses SSE and state changes as wake-ups with only a slow lease renewal', () => {
+    expect(UI_CONTROL_BACKUP_POLL_MS).toBe(5 * 60_000)
 
     const source = readFileSync('src/platform/ui-control/useWorkspaceUIControl.ts', 'utf8')
     expect(source).toContain('useEffect(() => { if (latestAction) wake.current?.() }, [latestAction])')

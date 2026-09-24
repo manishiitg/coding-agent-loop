@@ -61,12 +61,19 @@ carries chat events, token deltas or session transcripts. The `sessions` kind
 below only tells the header's activity monitor that the list of running
 sessions changed. It carries nothing from inside a conversation.
 
+**Left (chat) and right (workspace pane) state are separate.** Chat events
+never refresh, mark stale, or otherwise touch the right pane. The right pane
+gets its state only from the server (its own fetches plus this feed) and from
+the user's clicks. The one allowed link is explicit agent navigation
+(ui-control `open_workspace_view`), delivered over the chat's SSE. Its lease
+renews every 5 minutes; this used to be a 10s poll.
+
 **Sending a message changes only the chat.** An interactive chat turn
 finishing never refreshes the right pane. Only these do: a finished
 **workflow run** (tracked execution with source `workflow_run`), a finished
 **scheduled session**, or a real data write (a decision recorded, a report
-file written). The chat's own "turn finished" no longer fires
-`WORKFLOW_LOG_REFRESH_EVENT`; only a decision mutation does.
+file written). ChatArea no longer fires `WORKFLOW_LOG_REFRESH_EVENT` at all. The
+decisions panel listens for `human_inputs` notices instead.
 
 **Plan edits are out of scope too.** The Plan canvas does not watch for
 outside edits: they are infrequent, and the canvas has a manual refresh.

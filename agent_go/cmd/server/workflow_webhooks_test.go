@@ -128,6 +128,51 @@ func TestWebhookReceiverAuthenticationInputAndErrors(t *testing.T) {
 	}
 }
 
+func TestWebhookWithoutIdempotencyKeyStartsDistinctRuns(t *testing.T) {
+	sched := webhookTestSchedule(t, "bearer")
+	runs := make(map[string]schedulerstate.Run)
+	receiver := webhookReceiver{
+		find: func(context.Context, string) (*ScheduleSearchResult, error) {
+			return &ScheduleSearchResult{WorkspacePath: "Workflow/test", Manifest: &WorkflowManifest{ID: "wf_test", Schedules: []WorkflowSchedule{sched}}}, nil
+		},
+		existing: func(_ context.Context, id string) (schedulerstate.Run, error) {
+			if run, ok := runs[id]; ok {
+				return run, nil
+			}
+			return schedulerstate.Run{}, schedulerstate.ErrRunNotFound
+		},
+		start: func(_ string, _ string, _ string, input *WorkflowWebhookDelivery) (string, error) {
+			runs[input.RunID] = schedulerstate.Run{RunID: input.RunID}
+			return input.RunID, nil
+		},
+	}
+	var firstID string
+	for i := 0; i < 2; i++ {
+		req := webhookTestRequest(sched, `{}`)
+		req.Header.Del("Idempotency-Key")
+		w := httptest.NewRecorder()
+		receiver.receive(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("keyless delivery %d: status=%d body=%s", i, w.Code, w.Body.String())
+		}
+		var response struct {
+			RunID      string `json:"run_id"`
+			DeliveryID string `json:"delivery_id"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.DeliveryID == "" || response.RunID != webhookDeliveryRunID("wf_test", sched.ID, response.DeliveryID) {
+			t.Fatalf("keyless delivery %d has inconsistent identity: %+v", i, response)
+		}
+		if i == 0 {
+			firstID = response.RunID
+		} else if response.RunID == firstID {
+			t.Fatalf("distinct keyless deliveries reused run ID %s", firstID)
+		}
+	}
+}
+
 func TestWebhookDuplicateDeliverySurvivesRestartAndConcurrentRetries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	store, err := schedulerstate.Open(path)

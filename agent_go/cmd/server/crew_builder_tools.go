@@ -220,12 +220,12 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 	}
 	return reg.RegisterCustomTool("create_crew", "Create a new Crew for the workflow being built, with trigger, read-only attachment, and step configuration in one call. Propose a Crew only when the responsibility is ongoing and stateful enough to deserve maturing: prefer a message sequence for fixed flows and an orchestrator step for one-shot agentic work. Before calling, list skills, servers, and secrets and propose only available ones; tell the user which integrations need connecting in the Crew UI. Unknown skills, servers, secrets, or globals fail the call; configured-but-disconnected servers are selected and reported as pending. Call only after the user explicitly approves the proposal in chat. Pass a fresh UUID idempotency_key per proposal and reuse it verbatim on retry: the same key with an unchanged proposal returns the existing crew instead of minting a duplicate, while a changed proposal under a claimed key is rejected and needs a new key. Secrets pass as names only; never send values. After success, immediately call add_step(type=crew) with the returned step configuration plus placement and reason; if that step id already exists, verify it matches and continue.", map[string]interface{}{
 		"type": "object", "additionalProperties": false,
-		"required": []string{"title", "step_instruction", "idempotency_key"},
+		"required": []string{"title", "purpose", "role", "step_instruction", "idempotency_key"},
 		"properties": map[string]interface{}{
 			"title":                map[string]interface{}{"type": "string", "description": "Crew display name, 1-60 characters."},
-			"description":          map[string]interface{}{"type": "string", "description": "Short Crew summary shown in the Crew list."},
+			"purpose":              map[string]interface{}{"type": "string", "description": "What the Crew owns. Stored as the Crew's purpose (shown in the Crew list and Identity) and seeded into its starter brief."},
+			"role":                 map[string]interface{}{"type": "string", "description": "Short Crew role shown in Identity, at most 120 characters (e.g. Reviewer)."},
 			"icon":                 map[string]interface{}{"type": "string", "description": "Crew icon, at most 8 characters. Defaults to the title initial."},
-			"purpose":              map[string]interface{}{"type": "string", "description": "What the Crew owns, seeded into its starter brief."},
 			"instructions":         map[string]interface{}{"type": "string", "description": "Starter instructions seeded into the Crew brief."},
 			"skills":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Installed skill names to select. Unknown skills fail the call."},
 			"servers":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "MCP server names to select. Unknown servers fail the call; disconnected ones are selected and reported as pending."},
@@ -266,7 +266,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 		}
 		req := CreateCrewRequest{
 			UserID: userID, WorkflowPath: workspace, ProfileID: str("crew_profile_id"),
-			Title: str("title"), Description: str("description"), Icon: str("icon"),
+			Title: str("title"), Icon: str("icon"), Role: str("role"),
 			Purpose: str("purpose"), Instructions: str("instructions"),
 			Alias: str("alias"), TriggerName: str("trigger_name"), TriggerMessage: str("trigger_message"),
 			StepID: str("step_id"), StepTitle: str("step_title"), StepInstruction: str("step_instruction"),

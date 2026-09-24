@@ -1,3 +1,13 @@
+## Builder-created Crews are born identity-complete — PLAT-358
+
+[PLAT-358](pulse_platform/plans-contracts/plat-358.md) fixes issue #205
+`BUG_ID_003`: `create_crew` took optional `description` plus optional
+`purpose` and no `role`, so Builder-created Crews opened with the "needs a
+role and purpose" banner. The tool now takes required `purpose` (stored in
+the purpose slot, seeded into the starter brief) and required `role`
+(stored in the identity block); `description` is removed. Pushed to main;
+deployment and live acceptance pending.
+
 ## Crew functions: typed calls between Crews and workflows — PLAT-357
 
 [PLAT-357](pulse_platform/integrations/plat-357.md) adds typed functions a

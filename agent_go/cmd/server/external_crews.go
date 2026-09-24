@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // External (MCP / agentworks CLI) access to Crews. Every tool resolves the
@@ -15,6 +16,50 @@ import (
 
 var externalCrewTools = map[string]bool{
 	"list_crews": true, "get_crew": true, "list_crew_files": true, "read_crew_file": true, "list_crew_functions": true,
+	"call_crew_function": true, "ask_crew": true, "get_crew_function_call": true,
+}
+
+const (
+	// externalCrewMaxWaitSeconds keeps a waiting request under the ~30s
+	// origin timeout of the proxies in front of hosted deployments.
+	externalCrewMaxWaitSeconds = 25
+	externalCrewCallTimeout    = 60 * time.Minute
+)
+
+// externalCrewCaller stamps calls from this signed-in user's external
+// connection; triggers bound to it are reused across that user's tokens.
+func externalCrewCaller(claims *UserClaims) triggerLinkCaller {
+	label := "external connection of " + firstNonEmptyTrimmed(claims.Username, claims.Email, claims.UserID)
+	if claims.AccessToken != nil && strings.TrimSpace(claims.AccessToken.Name) != "" {
+		label += " (" + strings.TrimSpace(claims.AccessToken.Name) + ")"
+	}
+	return triggerLinkCaller{Stamp: triggerCaller{Type: triggerCallerUser, ID: claims.UserID}, Label: label}
+}
+
+func externalCrewWait(args map[string]any) time.Duration {
+	seconds := externalCrewMaxWaitSeconds
+	if raw, ok := args["wait_seconds"].(float64); ok && raw >= 0 && raw < float64(externalCrewMaxWaitSeconds) {
+		seconds = int(raw)
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// externalCrewCallResponse returns the call's state after waiting up to wait.
+func externalCrewCallResponse(ctx context.Context, call *crewFunctionCall, wait time.Duration) map[string]interface{} {
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-call.done:
+		case <-timer.C:
+		case <-ctx.Done():
+		}
+		timer.Stop()
+	}
+	out := call.snapshot()
+	if status, _ := out["status"].(string); status != "completed" && status != "failed" {
+		out["next"] = "Still running in the Crew's chat. Poll get_crew_function_call with this call_id."
+	}
+	return out
 }
 
 func isExternalCrewTool(name string) bool { return externalCrewTools[name] }
@@ -96,6 +141,23 @@ func (api *StreamingAPI) externalCrewCall(w http.ResponseWriter, r *http.Request
 		value, _ := args[key].(string)
 		return strings.TrimSpace(value)
 	}
+	if name == "get_crew_function_call" {
+		call := lookupCrewFunctionCall(str("call_id"))
+		if call == nil {
+			externalError(w, 404, "not_found", "Function call not found (calls are tracked until the server restarts).")
+			return
+		}
+		call.mu.Lock()
+		owned := call.UserID == claims.UserID && call.CallerKind == triggerCallerUser
+		targetID := call.TargetID
+		call.mu.Unlock()
+		if !owned || (claims.AccessToken != nil && !claims.AccessToken.AllowsCrew(targetID)) {
+			externalError(w, 404, "not_found", "Function call not found (calls are tracked until the server restarts).")
+			return
+		}
+		externalJSON(w, externalCrewCallResponse(ctx, call, 0))
+		return
+	}
 	if name == "list_crews" {
 		crews, err := api.externalCrewsVisible(ctx, claims, str("query"))
 		if err != nil {
@@ -129,6 +191,31 @@ func (api *StreamingAPI) externalCrewCall(w http.ResponseWriter, r *http.Request
 			out["model"] = map[string]any{"mode": llm.Mode, "provider": llm.Provider}
 		}
 		externalJSON(w, out)
+	case "call_crew_function", "ask_crew":
+		target := triggerTarget{Kind: triggerCallerCrew, Path: crew.Binding.WorkspacePath, Label: label, CrewID: manifest.ID, CrewProfile: "work", CrewOwner: crew.OwnerID}
+		functions, err := readCrewFunctions(ctx, target)
+		if err != nil {
+			externalError(w, 502, "workspace_unavailable", "Cannot read the Crew's functions.")
+			return
+		}
+		fnName, callArgs := crewFunctionAskName, map[string]interface{}{"message": str("message")}
+		if name == "call_crew_function" {
+			fnName = str("function")
+			callArgs, _ = args["args"].(map[string]interface{})
+		}
+		fn, found := findCrewFunction(withDefaultAskFunction(functions), fnName)
+		if !found {
+			externalError(w, 404, "not_found", fmt.Sprintf("Crew %q has no function %q; see list_crew_functions.", label, fnName))
+			return
+		}
+		// The call outlives this request; the Crew works in its own chat.
+		callCtx := context.WithoutCancel(ctx)
+		call, err := api.startCrewFunctionCall(callCtx, claims.UserID, externalCrewCaller(claims), target, fn, callArgs, externalCrewCallTimeout)
+		if err != nil {
+			externalError(w, 400, "call_refused", err.Error())
+			return
+		}
+		externalJSON(w, externalCrewCallResponse(ctx, call, externalCrewWait(args)))
 	case "list_crew_functions":
 		externalJSON(w, map[string]any{"crew_id": manifest.ID, "functions": externalCrewFunctionSummaries(ctx, crew, manifest, label)})
 	case "list_crew_files":

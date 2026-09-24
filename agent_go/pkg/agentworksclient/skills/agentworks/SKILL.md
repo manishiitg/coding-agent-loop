@@ -1,6 +1,6 @@
 ---
 name: agentworks
-description: Read and run AgentWorks workflows through the CLI or MCP bridge (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules). Load when the task touches an AgentWorks workflow or when agentworks tools are available.
+description: Read and run AgentWorks workflows and Crews through the CLI or MCP bridge (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Load when the task touches an AgentWorks workflow or when agentworks tools are available.
 ---
 
 # AgentWorks
@@ -33,6 +33,10 @@ To run: call a run-mode tool such as `execute_step` — the reply carries `sessi
 ## Chat
 
 `chat` asks the workflow assistant anything — analysis, explanations, follow-ups — in a pinned Run-mode session. Pass `session_id` to continue the conversation; sessions are shared with the run tools, so one conversation can ask, run, and ask about the run. Read replies with `run_status`, and answer waiting human-input steps with `run_reply_input`.
+
+## Crews
+
+Crews are persistent AgentWorks agents. Discover them with `list_crews` (IDs, never paths); `get_crew` shows identity, model, and functions. Read project files with `list_crew_files` / `read_crew_file` (private chat transcripts and databases are never exposed). Call a Crew's typed functions with `call_crew_function` (arguments must match `list_crew_functions`), or ask anything with `ask_crew`. Both run as a turn in the Crew's own chat: the result returns within `wait_seconds` (max 25), otherwise poll `get_crew_function_call` with the returned `call_id` for progress and the result. Needs `crews:read` / `crews:run` on a token that includes the Crew.
 
 ## Answer from reading
 

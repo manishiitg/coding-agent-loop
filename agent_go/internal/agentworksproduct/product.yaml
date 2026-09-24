@@ -369,6 +369,9 @@ chat:
       - list_crew_files
       - read_crew_file
       - list_crew_functions
+      - call_crew_function
+      - ask_crew
+      - get_crew_function_call
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

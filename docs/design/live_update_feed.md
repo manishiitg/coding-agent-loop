@@ -85,10 +85,38 @@ These are the kinds, and the refetch each one triggers:
 | `scheduler_config` | global | Header: scheduler-paused indicator | `scheduler/config` |
 | `browser_sessions` | global | Header: runtime health | `browser/sessions` |
 | `pulse_state` | workflow | Right pane: Pulse (only while open) | `pulse-module-state` |
+| `report` | workflow | Right pane: Report dashboard | re-run the dashboard (`ReportViewer` `refresh()`: document catalog + HTML) |
 
 A notice never contains the changed data. The client always refetches through
 the existing endpoint, which applies its own access rules. This keeps the
 feed small and keeps one source of truth for every shape.
+
+### The Report dashboard refreshes itself (highest value)
+
+Today the dashboard (`db/reports/index.html` in `ReportViewer.tsx`) reloads
+only in two cases: the user clicks its refresh button, or an agent calls
+`refreshWorkspaceView` (useWorkflowStore.ts:1022). New data written by a
+scheduled run or a step never shows up by itself.
+
+**Server publishes `report` for a workflow when:**
+1. **A run or session in that workflow finishes** (terminal status on a
+   tracked execution or session). This is the main trigger. Most dashboard
+   data is written during agent turns, often by coding CLIs straight into
+   `db/db.sqlite`, where the server cannot see individual writes.
+2. **A write under `<ws>/db/reports/`** goes through the agent server
+   (`writeFileToWorkspace`, the `/api/wp` proxy write routes).
+3. **A DB write** goes through the workspace service's `/api/mutate` or
+   `/api/report-field` via the agent-server proxy.
+
+**Client:**
+- While the Report view is open, a `report` notice for its workflow calls
+  the existing `refresh()`. Notices are debounced, so there is at most one
+  reload every 10s during a busy run.
+- A notice that arrives while the view is closed marks it stale, and it
+  reloads when opened.
+- The reload keeps scroll position and the selected document. If
+  `HtmlReportFrame` cannot re-run in place, the dashboard is swapped only
+  after the new HTML has loaded, so it never flashes blank.
 
 ### Server
 
@@ -129,6 +157,7 @@ feed small and keeps one source of truth for every shape.
 | `schedules` | `noteScheduleSummaryChange()` (header_summary_cache.go:19). It is already the invalidation point for this data. |
 | `notifications` | `SendUserNotification` and `UpsertPulseResultActivity` (services/org_dashboard_connector.go). |
 | `human_inputs` | `create`/`answer`/`dismiss`/`consumeReportHumanInput` (report_human_inputs.go), plus three outliers: `dismissDuplicateHumanInput`, `consumeLinkedPulseDecisionTx`, `activateApprovedAdvisorSpecialization`. |
+| `report` | Session/execution terminal status (the same hook as publish-on-session-completion). Writes under `db/reports/` via `writeFileToWorkspace` and the `/api/wp` proxy. Proxied `/api/mutate` and `/api/report-field`. |
 | `scheduler_config` | `SaveSchedulerConfig` (scheduler_config_store.go:43). |
 | `browser_sessions` | The `browser.SessionTracker` mutators (`Touch` on first sight only, `Remove*`, `Close*`, `Clear`). The client computes `age`/`idle` from timestamps instead of polling for them. |
 
@@ -190,12 +219,14 @@ This adds one long-lived connection per tab.
 
 ## Phases
 
-1. **Feed plus the biggest pollers.** `livefeed` package, `/api/live`, the
-   client singleton, `sessions`/`schedules` (header-summary),
+1. **Feed, the Report dashboard, and the biggest pollers.** `report`
+   (dashboard auto-refresh on run completion) comes first, because it is the
+   most visible gain. It needs publish-on-session-completion. Also: the
+   `livefeed` package, `/api/live`, the client singleton,
+   `sessions`/`schedules` (header-summary),
    `human_inputs`, `notifications`. This removes about 80% of the idle
    traffic.
-2. **Right-pane views.** `pulse_state`. Drop the Pulse timer, and add
-   publish-on-session-completion.
+2. **Pulse.** `pulse_state`. Drop the Pulse timer.
 3. **The rest.** `scheduler_config` and `browser_sessions`. Gate
    `RuntimeHealthControl` on tab visibility.
 

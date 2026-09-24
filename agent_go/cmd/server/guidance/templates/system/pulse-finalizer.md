@@ -99,8 +99,12 @@ and evidence last.
    Call `record_pulse_next_run` once with `pulse_run_id`, the time when useful new
    evidence will exist (an outcome maturing, a pending user decision, an
    experiment checkpoint, the next run whose results matter) and that reason in
-   one plain sentence for the user. The platform keeps it between once a day and
-   once a week and tells you if it moved the time. Then stop.
+   one plain sentence for the user. Match the pace to the workflow: come back
+   soon (next day) while issues were found, the goal is off track, or a new
+   test just started; stretch toward a week as the workflow runs clean and the
+   goal is on target. Fixing does not wait for this: fix runs start on their
+   own whenever there is something to fix. The platform keeps it between once
+   a day and once a week and tells you if it moved the time. Then stop.
 
 Use ordinary language. Do not expose manifests, finding IDs, hashes, packet
 names, paths, or state codes in notifications. Keep them in SQLite-backed

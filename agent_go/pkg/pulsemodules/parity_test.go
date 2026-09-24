@@ -83,8 +83,8 @@ func TestExecutionOrderKeepsDriftExclusiveThenArchitectureBeforeTechnical(t *tes
 	if len(postDrift) != 3 || postDrift[0] != StrategicReviewID || postDrift[1] != ArchitectureReviewID || postDrift[2] != TechnicalReviewID {
 		t.Fatalf("PostDriftExecutionOrder = %v", postDrift)
 	}
-	if !RunsWhileDriftDue(StrategicReviewID) || RunsWhileDriftDue(ArchitectureReviewID) || RunsWhileDriftDue(TechnicalReviewID) {
-		t.Fatal("only Goal Work (strategic_review) may run while Plan Drift is due")
+	if !RunsWhileDriftDue(StrategicReviewID) || !RunsWhileDriftDue(TechnicalReviewID) || RunsWhileDriftDue(ArchitectureReviewID) {
+		t.Fatal("Goal Work and Technical run after Plan Drift in the same pass; only Architecture waits")
 	}
 }
 

@@ -1,5 +1,6 @@
 import { GoalProgress } from './GoalProgress'
 import { PulseGoalWork } from './PulseGoalWork'
+import { pulseFixStats, pulseFixSummary } from './pulseFixStats'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
@@ -151,6 +152,7 @@ export function PulseWorkspace({
 }) {
   const loadVersion = useRef(0)
   const [findings, setFindings] = useState<PulseFindingLifecycle[]>([])
+  const fixStats = useMemo(() => pulseFixStats(findings), [findings])
   const [reviews, setReviews] = useState<PulseReviewRecord[]>([])
   const [coverage, setCoverage] = useState<PulseReviewFocus[]>([])
   const [audits, setAudits] = useState<PulseReviewAudit[]>([])
@@ -385,12 +387,13 @@ export function PulseWorkspace({
           playbookFocusAreas={playbookFocuses.flatMap(item => item.focusAreas.map(area => ({ area, source: item.playbookTitle })))}
           running={manualReviewStarting === 'strategic_review'}
           runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps or change the workflow.' : undefined} />
-        {(openIssueCount > 0 || planDriftDue) && (
+        {(findings.length > 0 || planDriftDue) && (
           <button type="button" onClick={() => setTab('platform')} className="w-full rounded-lg border bg-muted/20 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/40">
-            <span className="font-medium text-foreground">Platform health:</span> {planDriftDue ? 'a Plan Drift check is due. ' : ''}{openIssueCount > 0 ? `${openIssueCount} open maintenance issue${openIssueCount === 1 ? '' : 's'}. ` : ''}Pulse handles these in the background.
+            <span className="font-medium text-foreground">Platform health:</span> {pulseFixSummary(fixStats)}{planDriftDue ? ' · Plan Drift check due' : ''}
           </button>
         )}
       </> : <>
+      <p className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground" aria-label="Fix speed">{pulseFixSummary(fixStats)}</p>
       <PulseReviewOverview platformOnly moduleStates={moduleStates} planDriftDue={planDriftDue} planDriftDueItems={planDriftDueItems} planDriftDueError={planDriftDueError} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
         audits={audits} findings={findings} moduleFilter={selectedReviewModule || null} reviewFocusSelections={reviewFocusSelections}
         playbookFocuses={playbookFocuses}

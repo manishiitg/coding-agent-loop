@@ -114,11 +114,11 @@ func TestPlanDriftDueStillLeavesGoalWorkDue(t *testing.T) {
 	for _, d := range decisions {
 		due[normalizePulseModule(d.Module)] = d.Due
 	}
-	if !due[pulseModulePlanDriftReview] || !due[pulseModuleStrategicReview] {
-		t.Fatalf("Drift and Goal Work must stay due: %+v", decisions)
+	if !due[pulseModulePlanDriftReview] || !due[pulseModuleStrategicReview] || !due[pulseModuleTechnicalReview] {
+		t.Fatalf("Drift, Goal Work and Technical must stay due: %+v", decisions)
 	}
-	if due[pulseModuleTechnicalReview] || due[pulseModuleArchitectureReview] {
-		t.Fatalf("platform upkeep must wait for Drift: %+v", decisions)
+	if due[pulseModuleArchitectureReview] {
+		t.Fatalf("Architecture must wait for a clean plan: %+v", decisions)
 	}
 }
 

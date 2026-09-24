@@ -136,9 +136,10 @@ var All = []Module{
 // ExecutionOrder is the canonical reviewer sequence. Plan Drift runs first
 // when due. Strategic Review is Goal Work, Pulse's main job
 // (docs/design/pulse_goal_work.md), so it runs next and is never blocked by a
-// due Plan Drift (it only loses its Run permission then). Architecture and
-// Technical are platform upkeep: when Plan Drift is due they wait for the next
-// cycle rather than judging a plan already known to drift.
+// due Plan Drift (it only loses its Run permission then). Technical also runs
+// in the same pass: Plan Drift has already finished and repaired the plan by
+// then, and open issues must not wait a cycle. Architecture is research and
+// waits for the next cycle rather than judging a plan known to drift.
 var ExecutionOrder = []string{
 	PlanDriftReviewID,
 	StrategicReviewID,
@@ -152,10 +153,14 @@ func PostDriftExecutionOrder() []string {
 	return append([]string(nil), ExecutionOrder[1:]...)
 }
 
-// RunsWhileDriftDue reports whether a reviewer still runs in a cycle where
-// Plan Drift is due. Only Goal Work does.
+// RunsWhileDriftDue reports whether a reviewer still runs, after Plan Drift,
+// in a cycle where Plan Drift is due: Goal Work and Technical do.
 func RunsWhileDriftDue(module string) bool {
-	return Normalize(module) == StrategicReviewID
+	switch Normalize(module) {
+	case StrategicReviewID, TechnicalReviewID:
+		return true
+	}
+	return false
 }
 
 // PseudoIDs are data-module values that appear in builder/improve.html but are

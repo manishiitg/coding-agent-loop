@@ -347,3 +347,26 @@ falls back to the Pulse model and then the Builder model when missing. The Pulse
 conversation itself (Gate, dispatch, finalizer) stays on the Builder model
 because its retained coding CLI cannot switch models mid-conversation. Manual
 review commands run on the Builder model. See `selectBackgroundTaskLLM`.
+
+## Find, fix, close (2026-09-24)
+
+The user's rule: Pulse finds an issue and closes it by applying the fix; it
+does not wait. Every issue ends the pass that finds it as **fixed**, **not a
+problem**, **the user's decision** (with the exact change ready to approve), or
+**platform-owned**. A failed fix stays open and is retried.
+
+- Retired and refused: `proposal_only`, `queued_for_engineering`,
+  `awaiting_run`, `blocked`, and the `evidence_wait` route. Each full Pulse's
+  backlog reconciliation reopens issues parked by them, closes old waits whose
+  review found no problem, and hands the rest to the fixer.
+- Technical's completion check counts every open workflow issue except those
+  waiting on the user; a pass that leaves any open is partial. It runs after
+  Plan Drift in the same pass.
+- **Fix runs** (`pulse_fix_run.go`): a short Technical Review+Fix pass starts
+  as soon as a workflow has open issues, new step concerns or a failed
+  scheduled run; at most 3 a day, 3 hours apart; none for a stable workflow.
+  They do not move the full Pulse schedule.
+- The full Pulse paces itself: next day while there are problems or the goal
+  is off track, toward weekly once it runs clean and on target.
+- The Pulse tab leads with fixes this week, typical time to fix, and what is
+  still open.

@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,9 +17,8 @@ import (
 // Skills support. The zip follows the Agent Skills SKILL.md layout that
 // ChatGPT, Claude, and Cowork all accept for upload.
 //
-// The skill carries the server origin but never a credential: the connector
-// URL already holds the token, and skill text gets stored in connector
-// configs and shared across workspaces.
+// The skill carries the server origin but never a credential. Hosted clients
+// obtain access through OAuth; skill text can be shared across workspaces.
 
 // hostedSkillDescription is the SKILL.md frontmatter description: what the
 // skill does and when to use it. Keep it under 1024 chars with no XML
@@ -99,6 +99,64 @@ func (api *StreamingAPI) handleExternalSkillZIP(w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="agentworks-skill.zip"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+// handleExternalPlugin packages the hosted skill with a Cowork remote MCP
+// connector. The OAuth client discovers authorization from the public MCP URL;
+// no credential or client secret belongs in the downloadable archive.
+func (api *StreamingAPI) handleExternalPlugin(w http.ResponseWriter, r *http.Request) {
+	if GetUserFromContext(r.Context()) == nil {
+		externalError(w, http.StatusUnauthorized, "unauthorized", "Sign in to AgentWorks.")
+		return
+	}
+	origin, resource, ok := mcpOAuthURLs()
+	if !ok {
+		externalError(w, http.StatusServiceUnavailable, "plugin_unavailable", "The Cowork plugin requires a configured public HTTPS URL.")
+		return
+	}
+	manifest, err := json.MarshalIndent(map[string]any{
+		"name": "agentworks", "version": "0.1.0",
+		"description": "Read AgentWorks workflow knowledge and test code, inspect runs, and run permitted workflows.",
+		"author":      map[string]string{"name": "AgentWorks"},
+	}, "", "  ")
+	if err != nil {
+		externalError(w, http.StatusInternalServerError, "plugin_unavailable", err.Error())
+		return
+	}
+	connector, err := json.MarshalIndent(map[string]any{
+		"mcpServers": map[string]any{"agentworks": map[string]string{"type": "http", "url": resource}},
+	}, "", "  ")
+	if err != nil {
+		externalError(w, http.StatusInternalServerError, "plugin_unavailable", err.Error())
+		return
+	}
+	files := []struct{ name, content string }{
+		{".claude-plugin/plugin.json", string(manifest) + "\n"},
+		{".mcp.json", string(connector) + "\n"},
+		{"skills/agentworks/SKILL.md", buildHostedSkillMarkdown(origin)},
+		{"README.md", "# AgentWorks for Claude Cowork\n\nInstall this plugin in Customize > Plugins, then connect AgentWorks and approve access in your browser. The connector uses OAuth; this package contains no credential.\n"},
+	}
+	var buf bytes.Buffer
+	archive := zip.NewWriter(&buf)
+	for _, file := range files {
+		entry, err := archive.Create(file.name)
+		if err == nil {
+			_, err = io.WriteString(entry, file.content)
+		}
+		if err != nil {
+			externalError(w, http.StatusInternalServerError, "plugin_unavailable", err.Error())
+			return
+		}
+	}
+	if err := archive.Close(); err != nil {
+		externalError(w, http.StatusInternalServerError, "plugin_unavailable", err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="agentworks.plugin"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
 }

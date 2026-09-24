@@ -446,11 +446,30 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     void refreshPulseModuleStates()
   }, [openPulseOnMount, kind, refreshPulseModuleStates])
 
+  // The module state is a ~250KB payload: poll slowly, never while the tab is
+  // hidden, and never start a poll while the previous one is still in flight
+  // (on a slow link a fixed 5s interval piled requests up and starved chat).
+  const pulsePollInFlightRef = useRef(false)
   useEffect(() => {
     if (workflowWorkspaceView !== 'pulse') return
-    void refreshPulseModuleStates()
-    const timer = window.setInterval(() => { void refreshPulseModuleStates(false) }, 5_000)
-    return () => window.clearInterval(timer)
+    const poll = async (showLoading: boolean) => {
+      if (pulsePollInFlightRef.current) return
+      if (!showLoading && document.hidden) return
+      pulsePollInFlightRef.current = true
+      try {
+        await refreshPulseModuleStates(showLoading)
+      } finally {
+        pulsePollInFlightRef.current = false
+      }
+    }
+    void poll(true)
+    const timer = window.setInterval(() => { void poll(false) }, 30_000)
+    const onVisible = () => { if (!document.hidden) void poll(false) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [workflowWorkspaceView, refreshPulseModuleStates])
 
   const pulseModuleStateByModule = useMemo(

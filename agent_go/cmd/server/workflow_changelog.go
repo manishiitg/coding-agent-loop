@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -121,9 +122,16 @@ func (api *StreamingAPI) handleGetPlanChangelog(w http.ResponseWriter, r *http.R
 		return entries[i].Timestamp > entries[j].Timestamp
 	})
 
+	// Optional ?limit=N (1..planChangelogMaxEntries) lets change-detection
+	// callers fetch just the head entry instead of the full feed.
+	maxEntries := planChangelogMaxEntries
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n < maxEntries {
+		maxEntries = n
+	}
+
 	total := len(entries)
-	if len(entries) > planChangelogMaxEntries {
-		entries = entries[:planChangelogMaxEntries]
+	if len(entries) > maxEntries {
+		entries = entries[:maxEntries]
 	}
 
 	writeAIJSON(w, PlanChangelogResponse{Success: true, Entries: entries, Count: total})

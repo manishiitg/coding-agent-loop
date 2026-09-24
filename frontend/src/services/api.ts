@@ -2363,8 +2363,8 @@ export const agentApi = {
     })
     return response.data
   },
-  getPlanChangelog: async (workspacePath: string): Promise<import('./api-types').PlanChangelogResponse> => {
-    const response = await api.get('/api/workflow/plan-changelog', { params: { workspace_path: workspacePath } })
+  getPlanChangelog: async (workspacePath: string, limit?: number): Promise<import('./api-types').PlanChangelogResponse> => {
+    const response = await api.get('/api/workflow/plan-changelog', { params: { workspace_path: workspacePath, limit } })
     return { success: !!response.data?.success, entries: Array.isArray(response.data?.entries) ? response.data.entries : [], count: response.data?.count ?? 0, error: response.data?.error }
   },
   prunePlanChangelog: async (workspacePath: string, olderThanDays: number): Promise<{ success: boolean; deleted: number; error?: string }> => {

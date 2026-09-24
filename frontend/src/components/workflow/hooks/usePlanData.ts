@@ -722,7 +722,9 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     if (changelogCheckInFlightRef.current) return
     changelogCheckInFlightRef.current = true
     try {
-      const changelog = await agentApi.getPlanChangelog(workspacePath).catch(() => null)
+      // Only the head entry and total count feed the marker: ask for one
+      // entry instead of the full (multi-MB) feed.
+      const changelog = await agentApi.getPlanChangelog(workspacePath, 1).catch(() => null)
       if (!changelog || changelog.success === false) return
       const marker = changelogHeadMarker(changelog.entries || [], changelog.count || 0)
       const seen = changelogHeadRef.current

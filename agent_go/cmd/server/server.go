@@ -613,6 +613,7 @@ type StreamingAPI struct {
 	lastChatPolicyBySession          map[string]string
 	lastChatPolicyRoleBySession      map[string]string
 	lastAgentProfileKeyBySession     map[string]string
+	lastAgentToolsModeBySession      map[string]string
 	launchedAgentProfileKeyBySession map[string]string
 	agentProfileAdmissions           sync.Map // *mcpagent.Agent -> immutable launched profile key
 
@@ -3759,6 +3760,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.lastAgentProfileKeyBySession = make(map[string]string)
 	}
 	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile)
+	if api.lastAgentToolsModeBySession == nil {
+		api.lastAgentToolsModeBySession = make(map[string]string)
+	}
+	api.lastAgentToolsModeBySession[sessionID] = agentProfileToolsMode(resolvedProfile)
 	api.conversationMux.Unlock()
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
@@ -8069,6 +8074,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
 	runtime.ChatPolicyRoleKey = api.lastChatPolicyRoleBySession[sessionID]
 	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
+	runtime.AgentToolsMode = api.lastAgentToolsModeBySession[sessionID]
 	api.conversationMux.RUnlock()
 	if admitted, ok := api.agentProfileAdmissions.Load(underlyingAgent); ok {
 		runtime.AgentProfileKey = admitted.(string)
@@ -9113,6 +9119,17 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	// session. Retained live input is still refused for a stale process (see
 	// agentProfileAllowsRetainedLiveInput), which is what forces that relaunch.
 	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		// Switching a Crew's native agent tools (hybrid <-> AgentWorks-only) is
+		// a capability change, like Builder <-> Run: the old transcript is full
+		// of tool use the new mode cannot perform. Start fresh with the recent
+		// dialogue instead of resuming it.
+		api.conversationMux.RLock()
+		currentToolsMode, toolsModeKnown := api.lastAgentToolsModeBySession[sessionID]
+		api.conversationMux.RUnlock()
+		if toolsModeKnown && normalizeAgentToolsMode(runtime.AgentToolsMode) != normalizeAgentToolsMode(currentToolsMode) {
+			log.Printf("[CHAT_HISTORY] Agent tools mode changed for session %s (%s -> %s); starting a fresh native session with the recent dialogue", sessionID, normalizeAgentToolsMode(runtime.AgentToolsMode), normalizeAgentToolsMode(currentToolsMode))
+			return false
+		}
 		if !codingProviderReloadsInstructionsOnResume(provider) {
 			log.Printf("[CHAT_HISTORY] Agent profile definition changed for session %s; %s cannot load new instructions into a resumed session, starting a fresh one with the recent dialogue", sessionID, provider)
 			return false

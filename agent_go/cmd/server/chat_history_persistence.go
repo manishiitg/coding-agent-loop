@@ -59,8 +59,11 @@ type ChatHistoryAgentRuntime struct {
 	// ChatPolicyRoleKey is the role part of ChatPolicyKey (mode, origin,
 	// capabilities) without definition/config drift. Only a role change may
 	// replace the native coding-agent session.
-	ChatPolicyRoleKey  string                       `json:"chat_policy_role_key,omitempty"`
-	AgentProfileKey    string                       `json:"agent_profile_key,omitempty"`
+	ChatPolicyRoleKey string `json:"chat_policy_role_key,omitempty"`
+	AgentProfileKey   string `json:"agent_profile_key,omitempty"`
+	// AgentToolsMode is the profile's agent_tools mode ("hybrid" or
+	// "mcp_only") the native session was started with.
+	AgentToolsMode     string                       `json:"agent_tools_mode,omitempty"`
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`

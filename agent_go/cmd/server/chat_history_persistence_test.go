@@ -2782,6 +2782,30 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationMuseStartsFreshOnChangedP
 	}
 }
 
+// Toggling a Crew's native agent tools is a capability change: fresh session.
+func TestSeedCodingAgentRuntimeFromRestoredConversationFreshOnAgentToolsModeChange(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	for _, tc := range []struct {
+		saved, current string
+		resume         bool
+	}{
+		{"", "hybrid", false},
+		{"mcp_only", "hybrid", false},
+		{"hybrid", "mcp_only", false},
+		{"hybrid", "hybrid", true},
+		{"", "mcp_only", true},
+	} {
+		api := &StreamingAPI{
+			lastAgentProfileKeyBySession: map[string]string{"s": "profile-sha256:current"},
+			lastAgentToolsModeBySession:  map[string]string{"s": tc.current},
+		}
+		runtime := &ChatHistoryAgentRuntime{Kind: "coding_agent", Provider: "claude-code", ExternalSessionID: "native", ResumeSupported: true, AgentProfileKey: "profile-sha256:old", AgentToolsMode: tc.saved}
+		if got := api.seedCodingAgentRuntimeFromRestoredConversation("s", "claude-code", "", runtime, &mcpagent.Agent{}); got != tc.resume {
+			t.Fatalf("saved=%q current=%q resume=%v, want %v", tc.saved, tc.current, got, tc.resume)
+		}
+	}
+}
+
 func TestSeedCodingAgentRuntimeFromRestoredConversationAcceptsMatchingAgentProfile(t *testing.T) {
 	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
 	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}

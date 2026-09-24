@@ -115,6 +115,8 @@ fi
 sync_repo "mcpagent" "$MCPAGENT"
 bash "$REPO/agent_go/scripts/install-slack-cli.sh" /srv/dominion/tools
 command -v slack >/dev/null
+echo "==> Ensuring gog (Gmail connector CLI) is the latest release"
+bash "$REPO/deploy/common/install-gog.sh" /srv/dominion/tools
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only
 # agent_go/go.mod does), so without a go.work tying all three siblings
@@ -298,6 +300,9 @@ if ! grep -q '^GOG_KEYRING_PASSWORD=' "$DOMINION_ENV_FILE"; then
 fi
 grep -q '^GOG_KEYRING_BACKEND=' "$DOMINION_ENV_FILE" || echo 'GOG_KEYRING_BACKEND=file' >> "$DOMINION_ENV_FILE"
 chmod 600 "$DOMINION_ENV_FILE"
+# Deterministic, fail-closed configuration check (shared with Confida and
+# SparkQuill) before anything restarts.
+PRODUCT=dominion python3 "$REPO/deploy/rootless-linux/deployment_checks.py" preflight
 # dominion-agent depends on dominion-workspace (After=dominion-workspace.service
 # in its unit), so restart it first -- and it must actually be restarted here:
 # until now this script only ever restarted dominion-agent, so dominion-workspace
@@ -347,6 +352,9 @@ for _ in $(seq 1 60); do
 done
 if $healthy; then
   echo "==> Health check passed. Active release: $(readlink -f "$CURRENT_LINK")"
+  # The running agent must actually carry the checked configuration (e.g.
+  # gog's file keyring), not just the env file on disk.
+  PRODUCT=dominion python3 "$REPO/deploy/rootless-linux/deployment_checks.py" running
 else
   echo "FATAL: health check failed after restart — rolling back to $PREVIOUS_RELEASE" >&2
   if [[ -n "$PREVIOUS_RELEASE" ]]; then

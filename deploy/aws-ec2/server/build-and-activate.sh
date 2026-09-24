@@ -127,6 +127,10 @@ esac
 # the whole deploy failed with no path to self-heal. Install it into the same
 # tool prefix as claude/cursor-agent below, then assert.
 "${SSH[@]}" "bash -s -- '$REMOTE_TOOLS_DIR'" < "$REPO_ROOT/agent_go/scripts/install-slack-cli.sh"
+# gog (Gmail connector CLI): latest checksum-verified release in the same
+# tool prefix, the same "always latest" policy as agent-browser. The one-time
+# root copy from install-system-tools.sh stays as a fallback.
+"${SSH[@]}" "bash -s -- '$REMOTE_TOOLS_DIR'" < "$REPO_ROOT/deploy/common/install-gog.sh"
 "${SSH[@]}" "export PATH='$REMOTE_TOOLS_DIR/bin:'\$PATH; command -v agent-browser >/dev/null || npm install -g --prefix '$REMOTE_TOOLS_DIR' agent-browser@latest; command -v agent-browser >/dev/null"
 "${SSH[@]}" "mkdir -p '$REMOTE_RELEASE'; touch '$REMOTE_RELEASE/.deploying'"
 "${SSH[@]}" "node '$REMOTE_RELEASE/check-release-assets.mjs' '$REMOTE_RELEASE/frontend'"

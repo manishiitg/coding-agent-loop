@@ -58,7 +58,6 @@ import {
 } from '../utils/chatSubmitHelpers'
 import {
   shouldKeepChatSessionSubscribed,
-  shouldKeepWorkflowSessionSubscribed,
 } from '../utils/workflowSessionSubscription'
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
@@ -2608,7 +2607,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const bgTab = chatStore.getTab(tab.tabId)
         const bgStreaming = bgTab?.isStreaming ?? tab.isStreaming
         const bgRunning = bgTab?.hasRunningBgAgents ?? false
-        return shouldKeepWorkflowSessionSubscribed({
+        // The visible Builder chat keeps its stream like any chat: input typed
+        // into an idle-but-alive retained CLI (no streaming flag, not listed
+        // as backend-active) must still stream its reply without a reload.
+        return shouldKeepChatSessionSubscribed({
+          isVisible: activeTabIdFromStore === tab.tabId,
           isStreaming: bgStreaming,
           hasRunningBackgroundAgents: bgRunning,
           isBackendActive: activeIds.has(tab.sessionId),

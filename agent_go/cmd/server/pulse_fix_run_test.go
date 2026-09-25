@@ -27,6 +27,13 @@ func TestDecidePulseFixRunStartsOnlyWhenThereIsSomethingToFix(t *testing.T) {
 	if due, _ := decidePulseFixRun(pulseFixSignals{NewConcerns: 1}, now.Add(-4*time.Hour), 1, now); !due {
 		t.Fatal("after the gap and under the limit a fix run should start")
 	}
+	// Fresh trouble is fixed quickly; an older backlog waits longer.
+	if due, _ := decidePulseFixRun(pulseFixSignals{FailedRuns: 1}, now.Add(-2*time.Hour), 1, now); !due {
+		t.Fatal("a new failed run two hours after the last fix run should start one")
+	}
+	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 3}, now.Add(-2*time.Hour), 1, now); due || !strings.Contains(reason, "4h0m0s") {
+		t.Fatalf("an unchanged backlog must wait the longer gap, got %v %q", due, reason)
+	}
 }
 
 func TestPulseFixRunHistoryCountsTheLastDay(t *testing.T) {

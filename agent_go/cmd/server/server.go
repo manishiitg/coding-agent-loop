@@ -2131,6 +2131,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		stoppedSessions:                     make(map[string]bool),
 		interruptedTurns:                    make(map[string]bool),
 	}
+	// Pulse Goal Work reaches other workflows and Crews through the external API.
+	pulsePlatformAPI = api
 	// Terminal Center's Formatted view and the runtime coordinator now consume
 	// the same accepted structured events. The terminal observer updates the
 	// durable pane snapshot first; retained-turn reconciliation then uses that

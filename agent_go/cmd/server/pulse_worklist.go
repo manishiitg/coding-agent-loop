@@ -2976,7 +2976,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_next_run",
-			Description: "Choose when this workflow's next full Pulse should run, at the end of a Pulse pass. Pick the time when useful new evidence will exist: an outcome maturing, a decision the user must answer, a run whose results matter, or an experiment checkpoint. Give the concrete reason; it is shown to the user. The platform enforces at most one Pulse per min interval (default daily) and at least one per max interval (default weekly) and reports any adjustment. Normal workflow runs never run the full Pulse; this is the only way the next one is chosen.",
+			Description: "Choose when this workflow's next full Pulse should run, at the end of a Pulse pass. Pick the time when useful new evidence will exist: an outcome maturing, a decision the user must answer, a run whose results matter, or an experiment checkpoint. Give the concrete reason; it is shown to the user. The platform enforces at most one Pulse per min interval (default 6 hours) and at least one per max interval (default weekly) and reports any adjustment. Normal workflow runs never run the full Pulse; this is the only way the next one is chosen.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -3027,7 +3027,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_fast_request",
-			Description: "From a normal run's finalizer only: ask for the workflow's next full Pulse as soon as its once-a-day guard allows, because this run produced material new evidence (a serious failure or regression, a plan/schema/evaluation change, abnormal cost or runtime) where waiting for the chosen Pulse time is worse. Routine runs must not call it. It never runs a review inline or changes any schedule.",
+			Description: "From a normal run's finalizer only: ask for the workflow's next full Pulse as soon as its minimum-interval guard allows, because this run produced material new evidence (a serious failure or regression, a plan/schema/evaluation change, abnormal cost or runtime) where waiting for the chosen Pulse time is worse. Routine runs must not call it. It never runs a review inline or changes any schedule.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

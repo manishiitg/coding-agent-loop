@@ -239,7 +239,7 @@ const (
 	pulseScheduleModeSelf  = "self"
 	pulseScheduleModeFixed = "fixed"
 
-	defaultPulseMinIntervalHours = 24
+	defaultPulseMinIntervalHours = 6
 	defaultPulseMaxIntervalHours = 168
 	// defaultPulseFirstRunHour is the local hour of a workflow's first
 	// self-scheduled Pulse when it has not yet chosen a time itself.

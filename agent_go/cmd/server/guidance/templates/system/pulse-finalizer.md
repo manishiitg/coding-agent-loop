@@ -99,10 +99,14 @@ and evidence last.
    Call `record_pulse_next_run` once with `pulse_run_id`, the time when useful new
    evidence will exist (an outcome maturing, a pending user decision, an
    experiment checkpoint, the next run whose results matter) and that reason in
-   one plain sentence for the user. Match the pace to the workflow: come back
-   soon (next day) while issues were found, the goal is off track, or a new
-   test just started; stretch toward a week as the workflow runs clean and the
-   goal is on target. Fixing does not wait for this: fix runs start on their
+   one plain sentence for the user. Match the pace to the goal: when the primary
+   goal is far behind (its progress in `get_goal_metrics` is at or near zero,
+   or well short of its target date), come back at the six-hour floor on every
+   pass until it moves, unless nothing at all can change before then; when the
+   goal is behind and Goal Work has work ready or results maturing (its result
+   says when), come back within hours; come back the next
+   day while issues were found or a new test just started; stretch toward a
+   week as the workflow runs clean and the goal is on target. Fixing does not wait for this: fix runs start on their
    own whenever there is something to fix. The platform keeps it between once
    a day and once a week and tells you if it moved the time. Then stop.
 

@@ -195,7 +195,13 @@ func decidePulseDue(schedule WorkflowPulseSchedule, state pulseScheduleState, fa
 			// No run yet and no chosen time: the launcher persists a first time.
 			return pulseDueDecision{}
 		}
-		candidate, reason = last.Add(minInterval), "no next time chosen yet; defaults to one day after the last Pulse"
+		// The floor allows a faster pace only when a pass chose it; with no
+		// choice, the default stays one day.
+		defaultGap := 24 * time.Hour
+		if minInterval > defaultGap {
+			defaultGap = minInterval
+		}
+		candidate, reason = last.Add(defaultGap), "no next time chosen yet; defaults to one day after the last Pulse"
 	}
 	if fastPending {
 		earliest := now
@@ -347,7 +353,7 @@ func recordPulseFastRequestFromToolArgs(ctx context.Context, args map[string]int
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Earlier Pulse requested for run %s: %s. The workflow's Pulse schedule will start it as soon as its once-a-day guard allows.", request.RequestedRunID, request.Reason), nil
+	return fmt.Sprintf("Earlier Pulse requested for run %s: %s. The workflow's Pulse schedule will start it as soon as its minimum-interval guard allows.", request.RequestedRunID, request.Reason), nil
 }
 
 // PulseNextRunView is the Pulse schedule as shown in the Pulse view.

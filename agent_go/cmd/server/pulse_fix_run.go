@@ -20,10 +20,12 @@ import (
 
 const (
 	pulseFixRunScheduleID = "pulse-fix-run"
-	// pulseFixRunMinGap and pulseFixRunMaxPerDay bound cost: a workflow whose
-	// issues a pass cannot close is retried, but not continuously.
-	pulseFixRunMinGap    = 3 * time.Hour
-	pulseFixRunMaxPerDay = 3
+	// The gaps and daily cap bound cost. Fresh trouble (a failed run or new
+	// step concerns) is fixed quickly; a backlog of older issues a pass could
+	// not close is retried, but not continuously.
+	pulseFixRunFreshGap   = 90 * time.Minute
+	pulseFixRunBacklogGap = 4 * time.Hour
+	pulseFixRunMaxPerDay  = 6
 )
 
 const pulseFixRunsSchema = `CREATE TABLE IF NOT EXISTS pulse_fix_runs (
@@ -117,8 +119,12 @@ func decidePulseFixRun(signals pulseFixSignals, lastFix time.Time, fixesLastDay 
 	if fixesLastDay >= pulseFixRunMaxPerDay {
 		return false, fmt.Sprintf("daily limit of %d fix runs reached", pulseFixRunMaxPerDay)
 	}
-	if !lastFix.IsZero() && now.Sub(lastFix) < pulseFixRunMinGap {
-		return false, fmt.Sprintf("last fix run started %s ago; minimum gap is %s", now.Sub(lastFix).Round(time.Minute), pulseFixRunMinGap)
+	gap := pulseFixRunBacklogGap
+	if signals.NewConcerns > 0 || signals.FailedRuns > 0 {
+		gap = pulseFixRunFreshGap
+	}
+	if !lastFix.IsZero() && now.Sub(lastFix) < gap {
+		return false, fmt.Sprintf("last fix run started %s ago; minimum gap is %s", now.Sub(lastFix).Round(time.Minute), gap)
 	}
 	return true, signals.reason()
 }

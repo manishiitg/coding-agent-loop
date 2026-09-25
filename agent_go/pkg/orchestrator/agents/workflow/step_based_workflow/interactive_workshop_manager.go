@@ -1531,6 +1531,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"record_pulse_next_run",
 		"record_pulse_fast_request",
 		"record_pulse_goal_work",
+		"search_platform",
+		"ask_platform_crew",
 	}
 
 	var tools []string

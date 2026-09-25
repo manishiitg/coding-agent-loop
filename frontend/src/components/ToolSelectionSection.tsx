@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo } from 'react';
 import { Checkbox } from './ui/checkbox';
 import { Check, Loader2 } from 'lucide-react';
 import { useToolSelectionStore } from '../stores/useToolSelectionStore';
-import { useMCPStore } from '../stores';
-import { isSelectedServer, toolBelongsToServer, hasServerTool, toggleServerSelection } from '../utils/mcpServerAlias';
+import { useMCPStore } from '../stores/useMCPStore';
+import { isSelectedServer, serverNamesMatch, toolBelongsToServer, hasServerTool, toggleServerSelection } from '../utils/mcpServerAlias';
 import ConnectionIcon from './connectors/ConnectionIcon';
 import { brandSlugFor } from './connectors/brandSlug';
 
@@ -13,6 +13,8 @@ interface ToolSelectionSectionProps {
   selectedTools: string[]; // Array of "server:tool"
   onServerChange: (servers: string[]) => void;
   onToolChange: (tools: string[]) => void;
+  /** Save a checkbox's server and tool changes as one selection update. */
+  onSelectionChange?: (servers: string[], tools: string[]) => void;
   stepId?: string; // Optional step ID for debugging
   agentMode: string; // Add agentMode prop
   /** Lets the server list use an embedded side panel's remaining vertical space. */
@@ -40,6 +42,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   selectedTools,
   onServerChange,
   onToolChange,
+  onSelectionChange,
   stepId,
   fillAvailableHeight = false,
   hideHeader = false,
@@ -73,6 +76,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   
   // Get MCP server connection status
   const mcpToolList = useMCPStore((state) => state.toolList);
+  const isLoadingConnections = useMCPStore((state) => state.isLoadingTools);
   const serverStatusMap = useMemo(() => {
     const map: Record<string, 'ok' | 'error' | 'loading' | 'unknown'> = {};
     mcpToolList.forEach(tool => {
@@ -185,14 +189,17 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     if (disabled) return;
     const wasSelected = isSelectedServer(selectedServers, serverName);
     const { servers, tools } = toggleServerSelection(serverName, selectedServers, selectedTools);
-    onServerChange(servers);
-    onToolChange(tools);
+    if (onSelectionChange) onSelectionChange(servers, tools);
+    else {
+      onServerChange(servers);
+      onToolChange(tools);
+    }
 
     if (!wasSelected) {
       // Always expand when server is selected so user can choose tool mode
       expandServer(serverName);
     }
-  }, [disabled, selectedServers, selectedTools, onServerChange, onToolChange, expandServer]);
+  }, [disabled, selectedServers, selectedTools, onServerChange, onToolChange, onSelectionChange, expandServer]);
 
   // Handle switching between "all tools" and "specific tools" for a server
   const handleServerToolModeChange = useCallback((serverName: string, mode: 'all' | 'specific') => {
@@ -338,16 +345,21 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           const isServerToolsArray = Array.isArray(serverTools);
 
           const connectionStatus = serverStatusMap[serverName];
+          const isConnected = mcpToolList.some(tool =>
+            tool.server && serverNamesMatch(tool.server, serverName) && tool.connection === 'connected'
+          );
           const statusDotClass =
+            !isConnected ? (isLoadingConnections ? 'bg-yellow-400' : 'bg-gray-400') :
             connectionStatus === 'ok' ? 'bg-green-500' :
             connectionStatus === 'error' ? 'bg-red-500' :
             connectionStatus === 'loading' ? 'bg-yellow-400' :
-            'bg-gray-400';
+            'bg-green-500';
           const statusTitle =
+            !isConnected ? (isLoadingConnections ? 'Checking connection...' : 'Disconnected') :
             connectionStatus === 'ok' ? 'Connected' :
             connectionStatus === 'error' ? 'Error' :
             connectionStatus === 'loading' ? 'Connecting...' :
-            'Unknown / not started';
+            'Connected';
 
           const isExpandedCard = !hideToolDetails && isExpanded && isServerSelected;
 
@@ -387,6 +399,12 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                   }}
                 >
                   <span className="truncate">{serverName}</span>
+                  {isServerSelected && (
+                    <span className="shrink-0 text-xs text-blue-700 dark:text-blue-300">Configured</span>
+                  )}
+                  {isServerSelected && !isConnected && !isLoadingConnections && (
+                    <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">Disconnected</span>
+                  )}
                   {!hideToolDetails && isServerSelected && isServerToolsArray && serverTools.length > 0 && (
                     <span className="ml-1 text-xs text-gray-500 dark:text-gray-400 shrink-0">
                       ({toolMode === 'all' ? 'all tools' : `${selectedTools.filter(t => t.startsWith(`${serverName}:`) && !t.endsWith(':*')).length}/${serverTools.length} tools`})

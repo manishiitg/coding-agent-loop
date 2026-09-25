@@ -17,9 +17,11 @@ describe('Workflow MCP panel layout', () => {
     expect(panel).toMatch(/mcp:\s*\{[\s\S]*?savesViaManifest: false,/)
   })
 
-  it('persists MCP server and tool selections immediately', () => {
+  it('persists a checkbox change to servers and tools in one update', () => {
     const source = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
 
+    expect(source.match(/onSelectionChange=\{\(selected_servers, selected_tools\)/g)).toHaveLength(2)
+    expect(source).toMatch(/onSelectionChange=\{\(selected_servers, selected_tools\) => \{\s*const next = \{ \.\.\.capabilities, selected_servers, selected_tools \}\s*setCapabilities\(next\)\s*void persist\(next\)/)
     expect(source).toMatch(/onServerChange=\{\(selected_servers\)[\s\S]*?void persist\(next\)/)
     expect(source).toMatch(/onToolChange=\{\(selected_tools\)[\s\S]*?void persist\(next\)/)
   })

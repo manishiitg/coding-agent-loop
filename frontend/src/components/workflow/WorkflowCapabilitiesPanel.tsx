@@ -395,6 +395,11 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                             setCapabilities(next)
                             void persist(next)
                           }}
+                          onSelectionChange={(selected_servers, selected_tools) => {
+                            const next = { ...capabilities, selected_servers, selected_tools }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
                           agentMode="workflow"
                           hideHeader
                           manageOwnScroll={false}
@@ -422,6 +427,11 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                           }}
                           onToolChange={(selected_tools) => {
                             const next = { ...capabilities, selected_tools }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
+                          onSelectionChange={(selected_servers, selected_tools) => {
+                            const next = { ...capabilities, selected_servers, selected_tools }
                             setCapabilities(next)
                             void persist(next)
                           }}

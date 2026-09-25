@@ -50,9 +50,12 @@ export const toggleServerSelection = (
     };
   }
 
-  const hasSpecificTools = selectedTools.some(t => toolBelongsToServer(t, serverName) && !t.endsWith(':*'));
+  const specificTools = selectedTools.filter(t => toolBelongsToServer(t, serverName) && !t.endsWith(':*'));
   const servers = [...selectedServers.filter(s => !serverNamesMatch(s, serverName)), serverName];
-  const tools = hasSpecificTools ? selectedTools : [...selectedTools, `${serverName}:*`];
+  // A previously removed server may still have stale wildcard markers in the
+  // manifest. Restore a single marker instead of accumulating duplicates.
+  const otherTools = selectedTools.filter(t => !toolBelongsToServer(t, serverName));
+  const tools = specificTools.length > 0 ? [...otherTools, ...new Set(specificTools)] : [...otherTools, `${serverName}:*`];
   return { servers, tools };
 };
 

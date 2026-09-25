@@ -1193,40 +1193,46 @@ func mergeRestoredChatHistory(existing, incoming []llmtypes.MessageContent) []ll
 	if chatHistoryHasPrefix(incoming, existing) {
 		return incoming
 	}
-	// Rendered system prompts contain turn-local data such as the current time.
-	// Their text can differ while the human/assistant body is a true cumulative
-	// continuation. Compare that body independently and keep only the newest
-	// runtime prompt; otherwise every save appends the full conversation again.
-	if existing[0].Role == llmtypes.ChatMessageTypeSystem && incoming[0].Role == llmtypes.ChatMessageTypeSystem {
-		body := mergeRestoredChatHistory(existing[1:], incoming[1:])
-		merged := make([]llmtypes.MessageContent, 0, len(body)+1)
-		merged = append(merged, incoming[0])
-		merged = append(merged, body...)
-		return merged
-	}
-	maxOverlap := len(existing)
-	if len(incoming) < maxOverlap {
-		maxOverlap = len(incoming)
-	}
-	for overlap := maxOverlap; overlap > 0; overlap-- {
-		matched := true
-		for i := 0; i < overlap; i++ {
-			if !chatHistoryMessagesEqual(existing[len(existing)-overlap+i], incoming[i]) {
-				matched = false
-				break
+	// The file often holds rows the in-memory history never saw (live input,
+	// structured completion replies, native transcript catch-up), so incoming
+	// is not a prefix extension. Align the two instead of concatenating: the
+	// old fallback appended the whole history onto the file every turn.
+	old, oldErr := chatHistoryToRaw(existing)
+	next, nextErr := chatHistoryToRaw(incoming)
+	if oldErr == nil && nextErr == nil {
+		if aligned, err := alignChatHistories(old, next); err == nil {
+			var merged []llmtypes.MessageContent
+			if encoded, err := json.Marshal(aligned); err == nil && json.Unmarshal(encoded, &merged) == nil {
+				return merged
 			}
 		}
-		if matched {
-			merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming)-overlap)
-			merged = append(merged, existing...)
-			merged = append(merged, incoming[overlap:]...)
-			return merged
+	}
+	// Never concatenate: keep the file and add only what it lacks at the end.
+	return appendMissingChatHistoryTail(existing, incoming)
+}
+
+func chatHistoryToRaw(history []llmtypes.MessageContent) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, 0, len(history))
+	for _, message := range history {
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, encoded)
+	}
+	return out, nil
+}
+
+// appendMissingChatHistoryTail is the fallback when a history can't be
+// encoded: keep existing and append the incoming rows after its last match.
+func appendMissingChatHistoryTail(existing, incoming []llmtypes.MessageContent) []llmtypes.MessageContent {
+	last := len(existing) - 1
+	for start := 0; start < len(incoming); start++ {
+		if chatHistoryMessagesEqual(existing[last], incoming[start]) {
+			return append(append([]llmtypes.MessageContent{}, existing...), incoming[start+1:]...)
 		}
 	}
-	merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming))
-	merged = append(merged, existing...)
-	merged = append(merged, incoming...)
-	return merged
+	return existing
 }
 
 // mergeNativeContinuationChatHistory keeps the durable/UI transcript

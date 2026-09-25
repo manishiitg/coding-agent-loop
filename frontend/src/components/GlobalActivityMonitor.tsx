@@ -1,6 +1,6 @@
 import { useLLMStore } from '../stores/useLLMStore'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, ChevronDown, Clock, Loader2, Pause, Webhook } from 'lucide-react'
+import { AlertCircle, Bot, CalendarClock, ChevronDown, Clock, Loader2, MessageSquare, Pause, Play, Webhook } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -24,7 +24,7 @@ import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '
 import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
-import { crewActivityTitle, showsActivityTypeIcon, type ActivityType } from '../utils/globalActivityPresentation'
+import { activityTypeLabels, crewActivityTitle, type ActivityType } from '../utils/globalActivityPresentation'
 import { useLiveRefetch } from '../hooks/useLiveRefetch'
 
 type ActivityMonitorItem =
@@ -42,11 +42,19 @@ function activityType(session: ActiveSessionInfo): ActivityType {
   return 'Chat'
 }
 
+const activityTypeIcons: Record<ActivityType, typeof Webhook> = {
+  Scheduled: CalendarClock,
+  Webhook,
+  Manual: Play,
+  Bot,
+  Chat: MessageSquare,
+}
+
 function ActivityTypeIcon({ type }: { type: ActivityType }) {
-  if (!showsActivityTypeIcon(type)) return null
-  const Icon = type === 'Scheduled' ? CalendarClock : Webhook
+  const Icon = activityTypeIcons[type]
+  const label = activityTypeLabels[type]
   return (
-    <span className="inline-flex opacity-75" title={type} aria-label={type}>
+    <span className="inline-flex opacity-75" title={label} aria-label={label}>
       <Icon className="h-3 w-3" aria-hidden="true" />
     </span>
   )

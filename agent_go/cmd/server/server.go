@@ -1890,6 +1890,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	eventStore.SetEventAddedCallback(terminalEventObserver)
 	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
+	startMemoryLog(eventStore)
 
 	// Initialize the operator-state store (bot connector configs + user
 	// secrets) and the authoritative global cost event database.

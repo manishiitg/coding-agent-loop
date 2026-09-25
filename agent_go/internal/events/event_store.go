@@ -2116,3 +2116,56 @@ func (es *EventStore) settleOpenToolCalls(sessionID string, turnEnd Event, stuck
 		})
 	}
 }
+
+// EventStoreStats summarises what the store holds in memory.
+type EventStoreStats struct {
+	Sessions       int
+	Events         int
+	TerminalEvents int
+	// Largest lists the sessions holding the most events, largest first.
+	Largest []SessionEventCount
+}
+
+// SessionEventCount is one session's in-memory event count.
+type SessionEventCount struct {
+	SessionID      string
+	Events         int
+	TerminalEvents int
+}
+
+// Stats reports in-memory sizes, for the periodic memory log.
+func (es *EventStore) Stats(top int) EventStoreStats {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	counts := map[string]*SessionEventCount{}
+	count := func(sessionID string) *SessionEventCount {
+		entry := counts[sessionID]
+		if entry == nil {
+			entry = &SessionEventCount{SessionID: sessionID}
+			counts[sessionID] = entry
+		}
+		return entry
+	}
+	stats := EventStoreStats{}
+	for sessionID, events := range es.events {
+		count(sessionID).Events = len(events)
+		stats.Events += len(events)
+	}
+	for sessionID, terminals := range es.terminalEvents {
+		for _, events := range terminals {
+			count(sessionID).TerminalEvents += len(events)
+			stats.TerminalEvents += len(events)
+		}
+	}
+	stats.Sessions = len(counts)
+	for _, entry := range counts {
+		stats.Largest = append(stats.Largest, *entry)
+	}
+	sort.Slice(stats.Largest, func(i, j int) bool {
+		return stats.Largest[i].Events+stats.Largest[i].TerminalEvents > stats.Largest[j].Events+stats.Largest[j].TerminalEvents
+	})
+	if len(stats.Largest) > top {
+		stats.Largest = stats.Largest[:top]
+	}
+	return stats
+}

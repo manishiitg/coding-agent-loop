@@ -4,12 +4,21 @@ import financeAnalystSetupState from './templates/finance-analyst/TEMPLATE_SETUP
 import taxExportSkill from './templates/tax-export/SKILL.md?raw'
 import taxExportSetup from './templates/tax-export/SETUP.md?raw'
 import taxExportSetupState from './templates/tax-export/TEMPLATE_SETUP.json?raw'
+import billingOperationsSkill from './templates/billing-operations-coordinator/SKILL.md?raw'
+import billingOperationsSetup from './templates/billing-operations-coordinator/SETUP.md?raw'
+import billingOperationsSetupState from './templates/billing-operations-coordinator/TEMPLATE_SETUP.json?raw'
+import revenueCloseSkill from './templates/revenue-close-analyst/SKILL.md?raw'
+import revenueCloseSetup from './templates/revenue-close-analyst/SETUP.md?raw'
+import revenueCloseSetupState from './templates/revenue-close-analyst/TEMPLATE_SETUP.json?raw'
+import spendPayablesSkill from './templates/spend-payables-coordinator/SKILL.md?raw'
+import spendPayablesSetup from './templates/spend-payables-coordinator/SETUP.md?raw'
+import spendPayablesSetupState from './templates/spend-payables-coordinator/TEMPLATE_SETUP.json?raw'
 import websiteGrowthSkill from './templates/website-growth-starter/SKILL.md?raw'
 import websiteGrowthSetup from './templates/website-growth-starter/SETUP.md?raw'
 import websiteGrowthSetupState from './templates/website-growth-starter/TEMPLATE_SETUP.json?raw'
 import { websiteGrowthSpecialists, type WebsiteGrowthSpecialistId } from './websiteGrowthSpecialists'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'website-growth-starter' | WebsiteGrowthSpecialistId
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -30,6 +39,7 @@ export type CrewTemplate = {
   id: CrewTemplateId
   version: number
   category: string
+  subcategory?: string
   name: string
   icon: string
   role: string
@@ -49,6 +59,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
   id: 'finance-analyst',
   version: 1,
   category: 'Finance',
+  subcategory: 'Planning & performance',
   name: 'Finance Analyst',
   icon: '📊',
   role: 'Finance analyst for this business',
@@ -73,6 +84,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
   id: 'tax-export',
   version: 1,
   category: 'Finance',
+  subcategory: 'Tax & compliance',
   name: 'Tax Export Preparer',
   icon: '🧾',
   role: 'Tax records preparer for this business',
@@ -92,6 +104,81 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'skills/tax-export/SKILL.md': taxExportSkill,
     'templates/tax-export/SETUP.md': taxExportSetup,
     'templates/tax-export/TEMPLATE_SETUP.json': taxExportSetupState,
+  },
+}, {
+  id: 'billing-operations-coordinator',
+  version: 1,
+  category: 'Finance',
+  subcategory: 'Billing & payments',
+  name: 'Billing Operations Coordinator',
+  icon: '💳',
+  role: 'Subscription billing and payment operations coordinator',
+  purpose: 'Review overdue invoices, failed payments, customer refund requests, and disputes; prepare source-linked next actions and customer-safe drafts for approval.',
+  firstResult: 'A dated billing exception queue with source IDs, deadlines, proposed next steps, and drafts for review.',
+  minimumInput: 'Provide a billing export or authorized account, reporting period, invoice terms, refund policy, and contact rules.',
+  optionalConnections: 'Stripe or Paddle if used; a CRM or support inbox for prior contact. Exports work without a live connection.',
+  exampleRequests: [
+    'Review overdue invoices and failed payments this week. Show what needs follow-up and why.',
+    'Prepare a refund request queue with payment IDs, remaining refundable amounts, and approval owners.',
+  ],
+  selectedSkills: ['billing-operations-coordinator'],
+  setupPath: 'templates/billing-operations-coordinator/TEMPLATE_SETUP.json',
+  setupGuidePath: 'templates/billing-operations-coordinator/SETUP.md',
+  requiredFiles: ['skills/billing-operations-coordinator/SKILL.md', 'templates/billing-operations-coordinator/SETUP.md', 'templates/billing-operations-coordinator/TEMPLATE_SETUP.json'],
+  files: {
+    'skills/billing-operations-coordinator/SKILL.md': billingOperationsSkill,
+    'templates/billing-operations-coordinator/SETUP.md': billingOperationsSetup,
+    'templates/billing-operations-coordinator/TEMPLATE_SETUP.json': billingOperationsSetupState,
+  },
+}, {
+  id: 'revenue-close-analyst',
+  version: 1,
+  category: 'Finance',
+  subcategory: 'Revenue accounting',
+  name: 'Revenue & Close Analyst',
+  icon: '📚',
+  role: 'Subscription revenue and accounting close analyst',
+  purpose: 'Reconcile subscription billing, credits, payments, and ledger records into a reviewable close memo with unresolved differences.',
+  firstResult: 'A period close checklist, reconciliation, and source-linked exception memo for the accountant.',
+  minimumInput: 'Provide a fiscal period, entity, currency, accounting policy, and authorized billing and ledger exports.',
+  optionalConnections: 'A billing source such as Stripe or Paddle, plus the customer’s ledger or revenue schedule if available. Exports are sufficient.',
+  exampleRequests: [
+    'Prepare a close review for this period and show differences between billed, collected, and recognized revenue.',
+    'Reconcile these subscription invoices, credits, and ledger entries with source IDs.',
+  ],
+  selectedSkills: ['revenue-close-analyst'],
+  setupPath: 'templates/revenue-close-analyst/TEMPLATE_SETUP.json',
+  setupGuidePath: 'templates/revenue-close-analyst/SETUP.md',
+  requiredFiles: ['skills/revenue-close-analyst/SKILL.md', 'templates/revenue-close-analyst/SETUP.md', 'templates/revenue-close-analyst/TEMPLATE_SETUP.json'],
+  files: {
+    'skills/revenue-close-analyst/SKILL.md': revenueCloseSkill,
+    'templates/revenue-close-analyst/SETUP.md': revenueCloseSetup,
+    'templates/revenue-close-analyst/TEMPLATE_SETUP.json': revenueCloseSetupState,
+  },
+}, {
+  id: 'spend-payables-coordinator',
+  version: 1,
+  category: 'Finance',
+  subcategory: 'Payables & spend',
+  name: 'Spend & Payables Coordinator',
+  icon: '🧮',
+  role: 'Vendor bills, expenses, and spend review coordinator',
+  purpose: 'Review bills and company spend for due dates, duplicates, missing evidence, and approval-policy exceptions without paying them.',
+  firstResult: 'A source-linked payables and spend review queue with due dates, approvers, and evidence gaps.',
+  minimumInput: 'Provide vendor bill or expense exports, a reporting period, currency, and the company’s approval policy.',
+  optionalConnections: 'The customer’s AP, card, or ledger system, such as BILL or Ramp when connected; exports work first.',
+  exampleRequests: [
+    'Review bills due this month and flag duplicates, missing approvals, and payment-status gaps.',
+    'Summarize software vendor spend and prepare an exceptions queue for the budget owners.',
+  ],
+  selectedSkills: ['spend-payables-coordinator'],
+  setupPath: 'templates/spend-payables-coordinator/TEMPLATE_SETUP.json',
+  setupGuidePath: 'templates/spend-payables-coordinator/SETUP.md',
+  requiredFiles: ['skills/spend-payables-coordinator/SKILL.md', 'templates/spend-payables-coordinator/SETUP.md', 'templates/spend-payables-coordinator/TEMPLATE_SETUP.json'],
+  files: {
+    'skills/spend-payables-coordinator/SKILL.md': spendPayablesSkill,
+    'templates/spend-payables-coordinator/SETUP.md': spendPayablesSetup,
+    'templates/spend-payables-coordinator/TEMPLATE_SETUP.json': spendPayablesSetupState,
   },
 }, {
   id: 'website-growth-starter',
@@ -149,4 +236,9 @@ export function getCrewTemplate(id: CrewTemplateId): CrewTemplate {
     throw new Error(`Missing required file in Crew template: ${id}`)
   }
   return template
+}
+
+export function matchesCrewTemplateSearch(template: CrewTemplate, search: string): boolean {
+  const haystack = `${template.name} ${template.category} ${template.subcategory || ''} ${template.purpose} ${template.firstResult} ${template.minimumInput} ${template.optionalConnections} ${template.exampleRequests.join(' ')}`.toLowerCase()
+  return search.trim().toLowerCase().split(/\s+/).filter(Boolean).every(term => haystack.includes(term))
 }

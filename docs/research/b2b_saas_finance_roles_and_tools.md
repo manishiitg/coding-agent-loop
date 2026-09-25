@@ -41,8 +41,8 @@ The bundled MCP configuration currently lists **Stripe, Paddle, and PayPal**; th
 ## Recommended catalog shape
 
 1. Keep **Finance Analyst** as the default entry point for analysis, SaaS metrics, Stripe/Paddle account checks, cash planning, and exports. Add selected capability packs with independent setup checks.
-2. Add **Billing Operations Coordinator** for customer-facing invoices, failed payments, refunds, and disputes. Its first run prepares a queue and drafts; sending, retrying, and refunding require separate reviewed actions.
-3. Add **Revenue & Close Analyst** and **Spend & Payables Coordinator** as distinct Agent Playbooks once their source model, checklists, and first artifacts are built. They should be suggested when accounting or payment access belongs to another person or team.
+2. **Billing Operations Coordinator** now has a v1 Crew template for customer-facing invoices, failed payments, refunds, and disputes. Its first run prepares a queue and drafts; sending, retrying, and refunding require separate reviewed actions.
+3. **Revenue & Close Analyst** and **Spend & Payables Coordinator** now have v1 Crew templates with local skills, export-first setup checks, and reviewable first artifacts. Suggest them when accounting or payment access belongs to another person or team. Their corresponding Agent Playbook proposal and Automation binding remain future work.
 4. Keep **Tax Export Preparer** as a supporting pack. Offer **Tax Compliance Coordinator**, **Payroll Review Coordinator**, and **Cash & Treasury Analyst** later as optional specialist roles with distinct access and owner requirements.
 5. Offer one **Finance Operations Review** Automation Playbook only after at least two distinct ready Crews need a handoff. Example: Billing Operations Coordinator produces a source-linked exception queue; Revenue & Close Analyst verifies ledger impact; Finance Analyst reports cash/forecast implications. A weekly brief from one Crew stays a Crew schedule.
 

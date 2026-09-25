@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { AlertCircle, ArrowLeft, ArrowRight, Check, FolderKanban, Loader2, Plus, Search, Sparkles, X } from 'lucide-react'
-import { crewTemplates, type CrewTemplate, type CrewTemplateId } from './crewTemplates'
+import { crewTemplates, matchesCrewTemplateSearch, type CrewTemplate, type CrewTemplateId } from './crewTemplates'
 
 const RESULT_PAGE_SIZE = 12
 
@@ -24,7 +24,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error, 
   const searchTerms = templateSearch.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const matchingTemplates = templates.filter(item =>
     (templateCategory === 'all' || item.category === templateCategory)
-    && searchTerms.every(term => `${item.name} ${item.category} ${item.firstResult} ${item.purpose}`.toLowerCase().includes(term)),
+    && matchesCrewTemplateSearch(item, templateSearch),
   ).sort((a, b) => a.name.localeCompare(b.name))
   const visibleTemplates = matchingTemplates.slice(0, visibleCount)
   const selectedTemplateHidden = !!template && !visibleTemplates.some(item => item.id === template.id)
@@ -113,7 +113,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error, 
                 <label key={item.id} className={`relative flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors focus-within:ring-2 focus-within:ring-primary/30 ${templateId === item.id ? 'border-primary bg-primary/[0.07]' : 'border-border hover:border-primary/40 hover:bg-muted/40'}`}>
                   <input data-testid={`work-template-${item.id}`} type="radio" name="crew-template" checked={templateId === item.id} onChange={() => chooseTemplate(item.id)} className="sr-only" />
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-muted text-lg" aria-hidden="true">{item.icon}</span>
-                  <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-1.5"><strong className="text-sm font-semibold text-foreground">{item.name}</strong><span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{item.category}</span></span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{item.firstResult}</span></span>
+                  <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-1.5"><strong className="text-sm font-semibold text-foreground">{item.name}</strong><span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{item.category}{item.subcategory ? ` · ${item.subcategory}` : ''}</span></span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{item.firstResult}</span></span>
                   {templateId === item.id ? <Check className="mt-1 h-4 w-4 shrink-0 text-primary" /> : null}
                 </label>
               ))}
@@ -131,6 +131,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error, 
             {template ? (
               <div className="rounded-xl border border-border bg-muted/30 p-4">
                 <div className="flex items-center gap-2.5"><span className="text-xl" aria-hidden="true">{template.icon}</span><strong className="text-sm text-foreground">{template.name}</strong></div>
+                {template.subcategory ? <p className="mt-1 text-[11px] font-medium text-primary">{template.category} · {template.subcategory}</p> : null}
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{template.firstResult}</p>
                 <div className="mt-3 grid gap-2 border-t border-border pt-3 text-xs leading-5 lg:grid-cols-2">
                   <div><span className="font-semibold text-foreground">To get started</span><p className="mt-0.5 text-muted-foreground">{template.minimumInput}</p></div>

@@ -22,7 +22,7 @@ import type { PresetLLMConfig, WorkFolderGrant } from '../../services/api-types'
 import { loadWorkSessions } from './workSessions'
 import { isWorkIdentityTabEnabled } from './workViewGating'
 import { WorkModelsPanel } from './WorkModelsPanel'
-import { crewTemplates, type CrewTemplateId } from './crewTemplates'
+import { crewTemplates, matchesCrewTemplateSearch, type CrewTemplateId } from './crewTemplates'
 import type { WorkRuntimeSelection } from './workTabs'
 
 export type WorkIdentityTab = 'general' | 'secrets' | 'folders' | 'models'
@@ -68,7 +68,7 @@ function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, proje
   }, [projectIdentity?.name, projectIdentity?.icon, projectIdentity?.role, projectPurpose])
 
   const displayName = nameDraft.trim() || projectTitle
-  const availableTemplates = crewTemplates.filter(item => !projectTemplates.some(installed => installed.id === item.id) && `${item.name} ${item.category} ${item.firstResult}`.toLowerCase().includes(templateSearch.toLowerCase()))
+  const availableTemplates = crewTemplates.filter(item => !projectTemplates.some(installed => installed.id === item.id) && matchesCrewTemplateSearch(item, templateSearch))
   const dirty = nameDraft.trim() !== (projectIdentity?.name ?? '')
     || iconDraft.trim() !== (projectIdentity?.icon ?? '')
     || roleDraft.trim() !== (projectIdentity?.role ?? '')
@@ -106,11 +106,11 @@ function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, proje
       >
         {projectTemplates.length ? <div className="space-y-2">{projectTemplates.map(installed => {
           const template = crewTemplates.find(item => item.id === installed.id && item.version === installed.version)
-          return <div key={installed.id} className="rounded-md border border-border p-2"><p className="text-sm font-semibold text-foreground">{template?.icon} {template?.name || installed.id}</p><p className="text-xs text-muted-foreground">{template?.category ? `${template.category} · ` : ''}Version {installed.version} · setup status in chat</p></div>
+          return <div key={installed.id} className="rounded-md border border-border p-2"><p className="text-sm font-semibold text-foreground">{template?.icon} {template?.name || installed.id}</p><p className="text-xs text-muted-foreground">{template?.category ? `${template.category}${template.subcategory ? ` / ${template.subcategory}` : ''} · ` : ''}Version {installed.version} · setup status in chat</p></div>
         })}</div> : <p className="text-xs text-muted-foreground">No templates installed yet.</p>}
         <Input aria-label="Search Crew templates" placeholder="Search templates" value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} className="mt-3" />
         <div className="mt-2 max-h-52 space-y-2 overflow-y-auto">{availableTemplates.map(template => <div key={template.id} className="flex items-center gap-2 rounded-md border border-border p-2">
-          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground">{template.icon} {template.name}</p><p className="text-xs text-muted-foreground">{template.category} · {template.firstResult}</p></div>
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground">{template.icon} {template.name}</p><p className="text-xs text-muted-foreground">{template.category}{template.subcategory ? ` / ${template.subcategory}` : ''} · {template.firstResult}</p></div>
           <Button type="button" disabled={Boolean(installingId)} onClick={() => { setInstallingId(template.id); setError(null); void onInstallTemplate(template.id).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not install template.')).finally(() => setInstallingId(null)) }}>{installingId === template.id ? 'Adding…' : 'Add'}</Button>
         </div>)}</div>
       </SettingsCard>

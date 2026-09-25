@@ -81,14 +81,43 @@ describe('CreateWorkProjectDialog', () => {
     await act(async () => {
       root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
     })
-    expect(container.textContent).toContain('Website Growth Starter')
     expect(container.textContent).toContain('Website Growth')
+    const search = container.querySelector('[aria-label="Search Crew templates"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Website Growth Starter')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(container.textContent).toContain('Website Growth Starter')
     await act(async () => {
       (container!.querySelector('[data-testid="work-template-website-growth-starter"]') as HTMLInputElement).click()
     })
     expect((container.querySelector('[data-testid="work-create-project-name-input"]') as HTMLInputElement).value).toBe('Website Growth Starter')
     await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
     expect(onCreate).toHaveBeenCalledWith('Website Growth Starter', expect.stringContaining('Audit the business website'), '🌱', 'website-growth-starter')
+    await act(async () => { root.unmount() })
+  })
+
+  it('finds a finance specialist by a tool the customer already uses', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onCreate = vi.fn()
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
+    })
+
+    const search = container.querySelector('[aria-label="Search Crew templates"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Ramp')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(container.textContent).toContain('1 result')
+    await act(async () => {
+      (container!.querySelector('[data-testid="work-template-spend-payables-coordinator"]') as HTMLInputElement).click()
+    })
+    expect(container.textContent).toContain('exports work first')
+    await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
+    expect(onCreate).toHaveBeenCalledWith('Spend & Payables Coordinator', expect.stringContaining('Review bills'), '🧮', 'spend-payables-coordinator')
     await act(async () => { root.unmount() })
   })
 

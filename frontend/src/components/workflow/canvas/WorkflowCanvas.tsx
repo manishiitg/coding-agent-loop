@@ -2439,7 +2439,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   if (flowShell === 'loading') {
     return (
-      <div className="flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900">
+      <div className="relative flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900">
+        <div className="absolute right-3 top-3 z-20"><WorkspacePanelGuideButton topic="Plan" /></div>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-gray-400 dark:border-gray-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm text-gray-500 dark:text-gray-400">
@@ -2488,6 +2489,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           </div>
           <div className="flex items-center gap-2">
             {assistantControl}
+            <WorkspacePanelGuideButton topic="Plan" />
             <button
               onClick={() => {
                 loadPlanRefresh()

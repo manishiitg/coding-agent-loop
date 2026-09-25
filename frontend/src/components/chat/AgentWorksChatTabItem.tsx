@@ -104,7 +104,7 @@ export const AgentWorksChatTabItem = React.memo<AgentWorksChatTabItemProps>(({
       ) : (
         <span
           className="min-w-0 max-w-[14rem] truncate whitespace-nowrap"
-          title={displayName !== tab.name ? tab.name : undefined}
+          title={tab.name || displayName}
         >
           {displayName}
         </span>

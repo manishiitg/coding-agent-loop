@@ -183,6 +183,7 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
     slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
     slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
     slackConnHasChanges, saveWorkflowSlackConnection, testWorkflowSlackConnection, slackAppDefaultName,
+    slackError,
   } = bots
   const own = slackSelection.own
   const inviteHint = <>Invite it to a channel with <code className="rounded bg-muted px-1 font-mono">/invite @{own?.display_name || 'YourBot'}</code>, then @mention it. No channel setup needed here.</>
@@ -235,6 +236,9 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
           </Button>
         )}
       </div>
+      {/* Repeated beside the buttons: the tab's top banner is scrolled out of
+          view by the time Save is pressed (#201 sub-issue 6). */}
+      {slackError && <StatusBanner tone="error">{slackError}</StatusBanner>}
       {slackConnTestResult && <SlackChecksView result={slackConnTestResult} />}
     </FormSection>
   )

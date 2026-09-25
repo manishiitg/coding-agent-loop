@@ -122,3 +122,42 @@ func TestBotErrorAndTerminalCompletionNotifyOnceP0(t *testing.T) {
 		}
 	}
 }
+
+// A restored session's relaunch replays terminal output before the turn's
+// user message, at a different hierarchy level than the turn itself. That
+// preamble must not calibrate "main": the turn's reply was skipped as a
+// sub-agent on RTS 2026-09-25 (preamble level 0, turn level 3).
+func TestBotPreambleEventsDoNotCalibrateMainLevel(t *testing.T) {
+	connector := &testBotConnector{}
+	filter := NewBotEventFilter(connector, ThreadID{Platform: "slack"}, "session-1", "", "user-1")
+	ctx := context.Background()
+	filter.processEvent(ctx, BotEventData{Type: "status_line", Data: &events.AgentEvent{HierarchyLevel: 0}})
+	if !filter.isMainLevel(BotEventData{Data: &events.AgentEvent{HierarchyLevel: 0}}) {
+		t.Fatal("preamble did not calibrate provisionally")
+	}
+	filter.processEvent(ctx, BotEventData{Type: "user_message", Data: &events.AgentEvent{HierarchyLevel: 3}})
+	filter.processEvent(ctx, BotEventData{Type: "unified_completion", Data: &events.AgentEvent{HierarchyLevel: 3, Data: &events.UnifiedCompletionEvent{FinalResult: "Rechecking via the Debug route; I'll follow up here."}}})
+	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "Rechecking via the Debug route") {
+		t.Fatalf("turn reply not sent after a preamble calibration: %q", connector.sent)
+	}
+}
+
+// The "Working on…" placeholder is removed when the reply lands, and no new
+// one appears afterwards for background work the reply already announced.
+func TestBotReplyClearsPlaceholderAndStopsHeartbeat(t *testing.T) {
+	connector := &testBotConnector{}
+	filter := NewBotEventFilter(connector, ThreadID{Platform: "slack"}, "session-1", "", "user-1")
+	filter.baseHierarchySet, filter.baseHierarchy = true, 0
+	ctx := context.Background()
+	filter.sendProgressMessage(ctx, "_Working on the request…_")
+	if filter.progressMessageID == "" {
+		t.Skip("test connector does not support progress messages")
+	}
+	filter.sendMainText(ctx, "Debug recheck is running; I'll update this thread.")
+	if filter.progressMessageID != "" {
+		t.Fatal("placeholder left in the thread after the reply")
+	}
+	if !filter.HasSentMainText() {
+		t.Fatal("reply not recorded")
+	}
+}

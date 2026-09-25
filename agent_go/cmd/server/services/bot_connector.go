@@ -2921,6 +2921,11 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 		return false
 	}
 
+	if filter != nil {
+		// The reply supersedes the "Working on…" placeholder; left in place,
+		// it sat above the answer and the heartbeat kept editing it.
+		filter.ClearProgress()
+	}
 	if _, err := connector.SendThreadMessage(context.Background(), threadID, message); err != nil {
 		log.Printf("[BOT_MANAGER] Synthetic final fallback failed for %s: %v", sessionID, err)
 		return false

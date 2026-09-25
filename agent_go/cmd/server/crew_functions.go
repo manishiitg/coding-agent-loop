@@ -267,13 +267,20 @@ type crewFunctionCall struct {
 	// reply ({"answer": ...}) and return_function_result is optional.
 	FreeText     bool                   `json:"free_text,omitempty"`
 	ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
+	// TimedOut marks a call whose caller stopped waiting while the target
+	// may still be working; the target's answer is still accepted (Late)
+	// and delivered to the caller.
+	TimedOut  bool      `json:"timed_out,omitempty"`
+	Late      bool      `json:"late,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	target triggerTarget
 	caller triggerLinkCaller
 	done   chan struct{}
 	closed bool
+	// onLate tells the caller's chat about a late answer.
+	onLate func()
 	// poll is captured at start so a supervisor never reads the package
 	// interval after it changes.
 	poll time.Duration
@@ -284,14 +291,140 @@ var crewFunctionCalls = struct {
 	m map[string]*crewFunctionCall
 }{m: map[string]*crewFunctionCall{}}
 
+// lookupCrewFunctionCall returns a call by ID: from memory, or after a
+// server restart from its saved record.
 func lookupCrewFunctionCall(id string) *crewFunctionCall {
+	id = strings.TrimSpace(id)
+	crewFunctionCalls.Lock()
+	call := crewFunctionCalls.m[id]
+	crewFunctionCalls.Unlock()
+	if call != nil {
+		return call
+	}
+	return loadSavedCrewFunctionCall(id)
+}
+
+// crewFunctionCallIndexPath points from a call ID to its target, so a call
+// saved under the target can be found again after a restart.
+func crewFunctionCallIndexPath(id string) string {
+	return "_system/function_calls/" + id + ".json"
+}
+
+type crewFunctionCallIndex struct {
+	TargetPath string `json:"target_path"`
+	UserID     string `json:"user_id"`
+}
+
+// loadSavedCrewFunctionCall reads a call saved before a restart. A call that
+// was still open lost its supervisor with the old process, so it is settled
+// as interrupted; its progress is kept.
+func loadSavedCrewFunctionCall(id string) *crewFunctionCall {
+	if !strings.HasPrefix(id, "fn-") || strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, exists, err := readFileFromWorkspace(ctx, crewFunctionCallIndexPath(id))
+	if err != nil || !exists {
+		return nil
+	}
+	var index crewFunctionCallIndex
+	if json.Unmarshal([]byte(raw), &index) != nil || strings.TrimSpace(index.TargetPath) == "" {
+		return nil
+	}
+	raw, exists, err = readFileFromWorkspace(ctx, strings.TrimSuffix(index.TargetPath, "/")+"/functions/calls/"+id+".json")
+	if err != nil || !exists {
+		return nil
+	}
+	call := &crewFunctionCall{}
+	if json.Unmarshal([]byte(raw), call) != nil || call.ID != id {
+		return nil
+	}
+	call.UserID, call.done, call.closed = index.UserID, make(chan struct{}), true
+	close(call.done)
+	if !call.terminalLocked() || (call.TimedOut && !call.Late) {
+		call.Status = "failed"
+		call.Error = "interrupted: the server restarted while this call was open (its last progress is kept); call the function again if you still need it"
+		call.TimedOut = false
+		call.UpdatedAt = time.Now().UTC()
+		call.persist()
+	}
 	crewFunctionCalls.Lock()
 	defer crewFunctionCalls.Unlock()
-	return crewFunctionCalls.m[strings.TrimSpace(id)]
+	if existing := crewFunctionCalls.m[id]; existing != nil {
+		return existing
+	}
+	crewFunctionCalls.m[id] = call
+	return call
+}
+
+func (c *crewFunctionCall) saveIndex() {
+	encoded, err := json.Marshal(crewFunctionCallIndex{TargetPath: c.TargetPath, UserID: c.UserID})
+	if err != nil {
+		return
+	}
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: c.UserID})
+	if err := writeFileToWorkspace(ctx, crewFunctionCallIndexPath(c.ID), string(encoded)+"\n"); err != nil {
+		log.Printf("[CREW_FUNCTION] could not index call %s: %v", c.ID, err)
+	}
 }
 
 func (c *crewFunctionCall) terminalLocked() bool {
 	return c.Status == "completed" || c.Status == "failed"
+}
+
+// acceptsLateLocked reports whether the caller stopped waiting but the
+// target may still report progress and deliver its answer.
+func (c *crewFunctionCall) acceptsLateLocked() bool {
+	return c.TimedOut && !c.Late
+}
+
+// timeOut releases the caller's wait without closing the call to the target.
+func (c *crewFunctionCall) timeOut(reason string) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.TimedOut = true
+	c.mu.Unlock()
+	c.finish("failed", nil, reason)
+}
+
+// settleLate records the target's answer after the caller's wait timed out,
+// and tells the caller's chat.
+func (c *crewFunctionCall) settleLate(status string, result interface{}, errText string) bool {
+	c.mu.Lock()
+	if !c.acceptsLateLocked() {
+		c.mu.Unlock()
+		return false
+	}
+	c.Status, c.Result, c.Error, c.Late, c.UpdatedAt = status, result, errText, true, time.Now().UTC()
+	onLate := c.onLate
+	c.mu.Unlock()
+	c.persist()
+	if onLate != nil {
+		go onLate()
+	}
+	return true
+}
+
+// settle finishes the call, or records a late answer after a timeout.
+func (c *crewFunctionCall) settle(status string, result interface{}, errText string) bool {
+	return c.finish(status, result, errText) || c.settleLate(status, result, errText)
+}
+
+// crewFunctionHardCap bounds how long a call may run while its target keeps
+// showing activity: four idle timeouts, never beyond the maximum timeout.
+func crewFunctionHardCap(timeout time.Duration) time.Duration {
+	limit := 4 * timeout
+	if limit > triggerTargetMaxTimeout {
+		limit = triggerTargetMaxTimeout
+	}
+	if limit < timeout {
+		limit = timeout
+	}
+	return limit
 }
 
 // finish records the outcome once and releases every waiter.
@@ -329,6 +462,13 @@ func (c *crewFunctionCall) snapshot() map[string]interface{} {
 	}
 	if c.FinalReply != "" {
 		out["final_reply"] = c.FinalReply
+	}
+	if c.acceptsLateLocked() {
+		out["timed_out"] = true
+		out["note"] = "The wait timed out but the target may still be working. Its answer is still accepted and is sent to the caller's chat when it arrives; ask_function_update still reaches it."
+	}
+	if c.Late {
+		out["late"] = true
 	}
 	return out
 }
@@ -552,6 +692,7 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 			crewFunctionCalls.Unlock()
 			return nil, fmt.Errorf("ask needs a message")
 		}
+		call.saveIndex()
 		call.persist()
 		go api.runWorkflowAsk(call, target, caller, message, timeout)
 		return call, nil
@@ -580,6 +721,7 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	call.mu.Lock()
 	call.RunID, call.RunIDs = delivery.RunID, []string{delivery.RunID}
 	call.mu.Unlock()
+	call.saveIndex()
 	call.persist()
 	go api.superviseCrewFunctionCall(call, timeout)
 	return call, nil
@@ -588,20 +730,28 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 // superviseCrewFunctionCall watches the call's trigger run. A workflow run's
 // outcome is the result. A Crew run must deliver its result through
 // return_function_result; one that ends without it gets one retry turn,
-// then the call fails. Timeouts fail the call.
+// then the call fails.
+//
+// The timeout counts from the target's last sign of life (a progress report
+// or any event in its session), bounded by crewFunctionHardCap. When it
+// fires the caller stops waiting, but supervision continues until the run
+// ends so a late answer still reaches the caller.
 func (api *StreamingAPI) superviseCrewFunctionCall(call *crewFunctionCall, timeout time.Duration) {
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: call.UserID})
-	deadline := time.Now().Add(timeout)
+	started := time.Now()
+	hardCap := crewFunctionHardCap(timeout)
+	lastSign := started
 	ticker := time.NewTicker(call.poll)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-call.done:
+		if call.settled() {
 			return
-		default:
 		}
 		call.mu.Lock()
 		runID := call.RunID
+		if call.UpdatedAt.After(lastSign) {
+			lastSign = call.UpdatedAt
+		}
 		call.mu.Unlock()
 		state, err := api.readTriggerTargetRun(ctx, call.UserID, call.caller, call.target, call.TriggerID, runID)
 		if err == nil {
@@ -614,56 +764,88 @@ func (api *StreamingAPI) superviseCrewFunctionCall(call *crewFunctionCall, timeo
 				if api.settleCrewFunctionRun(ctx, call, state) {
 					return
 				}
+			} else if at := api.crewFunctionLastEventAt(crewTargetRunSessionID(state)); at.After(lastSign) {
+				lastSign = at
 			}
 		}
-		if time.Now().After(deadline) {
-			call.finish("failed", nil, fmt.Sprintf("timed out after %s waiting for %s %q", timeout, call.TargetKind, call.TargetLabel))
+		now := time.Now()
+		if now.Sub(started) > hardCap {
+			if !call.settleLate("failed", nil, fmt.Sprintf("%s %q was still not done after %s; stopped waiting for a late answer", call.TargetKind, call.TargetLabel, hardCap)) {
+				call.timeOut(fmt.Sprintf("%s %q was still not done after %s (the limit for a call that keeps showing activity)", call.TargetKind, call.TargetLabel, hardCap))
+			}
 			return
 		}
-		select {
-		case <-call.done:
-			return
-		case <-ticker.C:
+		if now.Sub(lastSign) > timeout {
+			call.timeOut(fmt.Sprintf("no progress or activity from %s %q for %s; stopped waiting. It may still finish: a late answer is sent to you automatically", call.TargetKind, call.TargetLabel, timeout))
 		}
+		<-ticker.C
 	}
 }
 
+// settled reports whether nothing more can change the call's outcome.
+func (c *crewFunctionCall) settled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed && !c.acceptsLateLocked()
+}
+
+// crewFunctionLastEventAt is when the target session last produced an event
+// (streamed text, a tool call, a status change): its latest sign of life.
+func (api *StreamingAPI) crewFunctionLastEventAt(sessionID string) time.Time {
+	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
+		return time.Time{}
+	}
+	latest, ok := api.eventStore.GetLatestEventIndex(sessionID)
+	if !ok || latest < 0 {
+		return time.Time{}
+	}
+	events := api.eventStore.GetEvents(sessionID, storeEvents.GetEventsOptions{SinceIndex: latest - 1, IncludeStreaming: true}).Events
+	if len(events) == 0 {
+		return time.Time{}
+	}
+	return events[len(events)-1].Timestamp
+}
+
 // settleCrewFunctionRun handles a terminal trigger run. It returns true when
-// the call is settled (or already was).
+// the call is settled (or already was). After a timeout the outcome is
+// recorded as a late answer.
 func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFunctionCall, state triggerTargetRunState) bool {
-	select {
-	case <-call.done:
+	if call.settled() {
 		return true
-	default:
 	}
 	if call.TargetKind == triggerCallerWorkflow {
 		if state.Failed {
-			return call.finish("failed", nil, truncateTriggerTargetResult(state.Result))
+			call.settle("failed", nil, truncateTriggerTargetResult(state.Result))
+			return true
 		}
 		if call.FreeText {
-			return call.finish("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(state.Result)}, "")
+			call.settle("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(state.Result)}, "")
+			return true
 		}
 		var decoded interface{}
 		if json.Unmarshal([]byte(state.Result), &decoded) != nil {
 			decoded = state.Result
 		}
-		return call.finish("completed", decoded, "")
+		call.settle("completed", decoded, "")
+		return true
 	}
 	// Give a result delivered at the very end of the turn a moment to land.
-	select {
-	case <-call.done:
+	time.Sleep(minDuration(call.poll, 2*time.Second))
+	if call.settled() {
 		return true
-	case <-time.After(minDuration(call.poll, 2*time.Second)):
 	}
 	if state.Failed {
-		return call.finish("failed", nil, fmt.Sprintf("%s %q run ended %s: %s", call.TargetKind, call.TargetLabel, state.Status, truncateTriggerTargetResult(state.Result)))
+		call.settle("failed", nil, fmt.Sprintf("%s %q run ended %s: %s", call.TargetKind, call.TargetLabel, state.Status, truncateTriggerTargetResult(state.Result)))
+		return true
 	}
 	if call.FreeText {
 		answer := strings.TrimSpace(state.Result)
 		if answer == "" {
-			return call.finish("failed", nil, "the target finished without a reply")
+			call.settle("failed", nil, "the target finished without a reply")
+			return true
 		}
-		return call.finish("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(answer)}, "")
+		call.settle("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(answer)}, "")
+		return true
 	}
 	call.mu.Lock()
 	retried := call.Retried
@@ -677,7 +859,8 @@ func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFu
 			call.mu.Unlock()
 			reason += "; its final reply is included"
 		}
-		return call.finish("failed", nil, reason)
+		call.settle("failed", nil, reason)
+		return true
 	}
 	retry := map[string]interface{}{
 		"task": fmt.Sprintf("[Function call %[1]s — result missing] You finished the %[2]q call from %[3]q without calling return_function_result. Call return_function_result(call_id=%[1]q, result=...) now with the result of the work you already did (or error=\"...\" if it failed). Do not redo the work.", call.ID, call.Function, call.CallerLabel),
@@ -688,7 +871,8 @@ func (api *StreamingAPI) settleCrewFunctionRun(ctx context.Context, call *crewFu
 	}
 	delivery, err := api.dispatchTargetTrigger(ctx, call.UserID, call.caller, call.target, call.TriggerID, call.ID+"-retry", crewFunctionEvent, retry)
 	if err != nil {
-		return call.finish("failed", nil, "the target finished without a result and the retry could not be sent: "+err.Error())
+		call.settle("failed", nil, "the target finished without a result and the retry could not be sent: "+err.Error())
+		return true
 	}
 	call.mu.Lock()
 	call.RunID = delivery.RunID
@@ -706,14 +890,44 @@ func minDuration(a, b time.Duration) time.Duration {
 }
 
 // startCrewFunctionWatch resumes the caller's chat with the call's outcome
-// through the auto-notification pipeline.
+// through the auto-notification pipeline. A call that times out and later
+// gets its answer resumes the chat again with that late answer.
 func (api *StreamingAPI) startCrewFunctionWatch(parentReq QueryRequest, sessionID, userID string, call *crewFunctionCall, timeout time.Duration) (string, error) {
+	notifier, executionID, name, runCtx, cancel, err := api.beginCrewFunctionNotification(parentReq, sessionID, userID, call, crewFunctionHardCap(timeout)+time.Minute)
+	if err != nil {
+		return "", err
+	}
+	call.mu.Lock()
+	call.onLate = func() {
+		lateNotifier, lateID, lateName, _, lateCancel, lateErr := api.beginCrewFunctionNotification(parentReq, sessionID, userID, call, time.Minute)
+		if lateErr != nil {
+			log.Printf("[CREW_FUNCTION] late answer for call %s could not reach the caller: %v", call.ID, lateErr)
+			return
+		}
+		defer lateCancel()
+		completeCrewFunctionNotification(lateNotifier, lateID, lateName, call)
+	}
+	call.mu.Unlock()
+	go func() {
+		defer cancel()
+		select {
+		case <-call.done:
+		case <-runCtx.Done():
+			notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("function call %s did not settle; check it with get_function_call", call.ID))
+			return
+		}
+		completeCrewFunctionNotification(notifier, executionID, name, call)
+	}()
+	return executionID, nil
+}
+
+func (api *StreamingAPI) beginCrewFunctionNotification(parentReq QueryRequest, sessionID, userID string, call *crewFunctionCall, limit time.Duration) (*workshopExecutionBgNotifier, string, string, context.Context, context.CancelFunc, error) {
 	if api == nil || api.bgAgentRegistry == nil {
-		return "", fmt.Errorf("auto-notification is unavailable in this chat")
+		return nil, "", "", nil, nil, fmt.Errorf("auto-notification is unavailable in this chat")
 	}
 	name := "Function " + call.TargetLabel + "." + call.Function
 	executionID := "function-call-" + api.bgAgentRegistry.NextID(name)
-	runCtx, cancel := context.WithTimeout(context.Background(), timeout+time.Minute)
+	runCtx, cancel := context.WithTimeout(context.Background(), limit)
 	parentExecutionID := api.currentConversationTurnExecutionID(sessionID)
 	if strings.TrimSpace(parentExecutionID) == "" {
 		parentExecutionID = "session:" + sessionID
@@ -735,27 +949,26 @@ func (api *StreamingAPI) startCrewFunctionWatch(parentReq QueryRequest, sessionI
 	registered := api.bgAgentRegistry.Get(sessionID, executionID)
 	if registered == nil || registered.GetStatus() == BGAgentCanceled {
 		cancel()
-		return "", fmt.Errorf("auto-notification could not be registered")
+		return nil, "", "", nil, nil, fmt.Errorf("auto-notification could not be registered")
 	}
-	go func() {
-		defer cancel()
-		select {
-		case <-call.done:
-		case <-runCtx.Done():
-			notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("function call %s did not settle; check it with get_function_call", call.ID))
-			return
-		}
-		snapshot := call.snapshot()
-		header := fmt.Sprintf("Function call %s (%s %q, %s)", call.ID, call.TargetKind, call.TargetLabel, call.Function)
-		if snapshot["status"] == "failed" {
-			errText, _ := snapshot["error"].(string)
-			notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("%s failed: %s%s", header, errText, crewFunctionFailureDetail(snapshot)))
-			return
-		}
-		encoded, _ := json.MarshalIndent(snapshot["result"], "", "  ")
-		notifier.OnExecutionComplete(executionID, name, header+" completed.\n\nResult:\n"+truncateTriggerTargetResult(string(encoded)), nil, nil)
-	}()
-	return executionID, nil
+	return notifier, executionID, name, runCtx, cancel, nil
+}
+
+// completeCrewFunctionNotification resumes the caller's chat with the call's
+// current outcome.
+func completeCrewFunctionNotification(notifier *workshopExecutionBgNotifier, executionID, name string, call *crewFunctionCall) {
+	snapshot := call.snapshot()
+	header := fmt.Sprintf("Function call %s (%s %q, %s)", call.ID, call.TargetKind, call.TargetLabel, call.Function)
+	if late, _ := snapshot["late"].(bool); late {
+		header += " — late answer, after your wait had timed out"
+	}
+	if snapshot["status"] == "failed" {
+		errText, _ := snapshot["error"].(string)
+		notifier.OnExecutionComplete(executionID, name, "", nil, fmt.Errorf("%s failed: %s%s", header, errText, crewFunctionFailureDetail(snapshot)))
+		return
+	}
+	encoded, _ := json.MarshalIndent(snapshot["result"], "", "  ")
+	notifier.OnExecutionComplete(executionID, name, header+" completed.\n\nResult:\n"+truncateTriggerTargetResult(string(encoded)), nil, nil)
 }
 
 // --- activity tail ---
@@ -1136,7 +1349,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			return "", fmt.Errorf("question is required")
 		}
 		call.mu.Lock()
-		terminal, runID := call.terminalLocked(), call.RunID
+		terminal, runID := call.terminalLocked() && !call.acceptsLateLocked(), call.RunID
 		call.mu.Unlock()
 		if terminal {
 			return "", fmt.Errorf("function call %s already finished; read it with get_function_call", call.ID)
@@ -1177,7 +1390,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			entry.Percent = &percent
 		}
 		call.mu.Lock()
-		if call.terminalLocked() {
+		if call.terminalLocked() && !call.acceptsLateLocked() {
 			call.mu.Unlock()
 			return "", fmt.Errorf("function call %s already finished", call.ID)
 		}
@@ -1212,7 +1425,7 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			return "", fmt.Errorf("only the target of function call %s can return its result", call.ID)
 		}
 		if errText, _ := args["error"].(string); strings.TrimSpace(errText) != "" {
-			if !call.finish("failed", nil, strings.TrimSpace(errText)) {
+			if !call.settle("failed", nil, strings.TrimSpace(errText)) {
 				return "", fmt.Errorf("function call %s already finished", call.ID)
 			}
 			return jsonOut(map[string]interface{}{"call_id": call.ID, "status": "failed"})
@@ -1238,12 +1451,12 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			call.mu.Unlock()
 			reason := "result does not match the result schema: " + strings.Join(problems, "; ")
 			if invalid >= crewFunctionMaxInvalidResults {
-				call.finish("failed", nil, "the target returned invalid results twice; last: "+reason)
+				call.settle("failed", nil, "the target returned invalid results twice; last: "+reason)
 				return "", fmt.Errorf("%s. The call has now failed", reason)
 			}
 			return "", fmt.Errorf("%s. Your submission is kept for the caller; fix the shape and call return_function_result again (put anything that doesn't fit, like extra links, into an existing string field or error)", reason)
 		}
-		if !call.finish("completed", result, "") {
+		if !call.settle("completed", result, "") {
 			return "", fmt.Errorf("function call %s already finished", call.ID)
 		}
 		return jsonOut(map[string]interface{}{"call_id": call.ID, "status": "completed"})

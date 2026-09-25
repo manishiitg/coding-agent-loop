@@ -10,6 +10,8 @@ Each template must work as a useful interactive Crew after the user provides its
 
 The catalog has **37 Crew templates in six categories**. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales from Marketing & Growth and uses clearer Finance and Customer Support labels. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
+The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
+
 ## Finance
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |

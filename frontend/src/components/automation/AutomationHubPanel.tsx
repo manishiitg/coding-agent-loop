@@ -139,6 +139,7 @@ export function AutomationHubPanel({
       <WorkspaceViewHeader
         icon={Zap}
         title="Automation"
+        helpTopic={`Automation · ${SECTION_DEFS.find(item => item.id === section)?.label ?? 'Chats'}`}
         subtitle="Chat history and the channels that can start work."
         actions={headerActions}
         context={

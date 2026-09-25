@@ -185,6 +185,99 @@ const CREW_GUIDES: Record<string, GuideCopy> = {
   },
 }
 
+// These views keep one header while changing the body with tabs. The header's
+// walkthrough follows the active tab instead of repeating the umbrella copy.
+const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> = {
+  'Automation · Chats': surface => ({
+    purpose: `Review earlier conversations with this ${surface === 'crew' ? 'Crew member' : 'automation'}.`,
+    howTo: 'Open a conversation to see what was asked and what happened. Refresh after new chats finish.',
+  }),
+  'Automation · Schedules': surface => ({
+    purpose: surface === 'crew' ? 'Start this Crew member with a saved instruction at chosen times.' : 'Start this workflow automatically at chosen times.',
+    howTo: 'Review the next run and history, then create, edit, pause, or resume a schedule.',
+  }),
+  'Automation · Webhooks': surface => ({
+    purpose: surface === 'crew' ? 'Send a saved instruction to Crew when an external event arrives.' : 'Start a workflow run when an external event arrives.',
+    howTo: 'Review authenticated endpoints and delivery history. Create or edit a webhook for the event you need.',
+  }),
+  'Automation · Functions': surface => ({
+    purpose: surface === 'crew' ? 'Expose typed actions that other Crews and workflows can call.' : 'Expose typed entry points that other work can call.',
+    howTo: 'Review each function’s inputs and status, then create or change one when another system needs a defined action.',
+  }),
+  'Automation · Bots': surface => ({
+    purpose: `Let connected messaging bots reach this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Review the bot connections and routing. Use Integrations to change which messaging services are connected.',
+  }),
+  'Knowledge · Learnings': () => ({
+    purpose: 'Review observations this automation kept from earlier runs.',
+    howTo: 'Read what it learned, then ask AI to correct stale or missing information.',
+  }),
+  'Knowledge · Knowledgebase': () => ({
+    purpose: 'Browse background notes and topics saved for this automation.',
+    howTo: 'Choose a source or topic to read its notes. Refresh after new knowledge is added.',
+  }),
+  'Knowledge · Database': () => ({
+    purpose: 'Inspect structured records stored by this automation.',
+    howTo: 'Choose a table and inspect its rows. Ask AI to explain or update records.',
+  }),
+  'Identity · General': surface => ({
+    purpose: surface === 'crew' ? 'Set this Crew member’s name, icon, role, and purpose.' : 'Set this workflow’s name, icon, objective, and success criteria.',
+    howTo: 'Review the current identity, then save changes that describe what this work should accomplish.',
+  }),
+  'Identity · Secrets': surface => ({
+    purpose: `Choose saved credentials this ${surface === 'crew' ? 'Crew project' : 'workflow'} may use.`,
+    howTo: 'Select only the secrets needed for its work. Secret values remain hidden; do not paste them into chat.',
+  }),
+  'Identity · File access': surface => ({
+    purpose: `Control which outside folders and references this ${surface === 'crew' ? 'Crew member' : 'workflow'} can read or change.`,
+    howTo: 'Review attached sources and their access level. Add a source when the work needs information outside its own files.',
+  }),
+  'Identity · Models': surface => ({
+    purpose: `Choose the coding agent and model used by this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Compare the available options and their costs, then save the configuration that fits this work.',
+  }),
+  'Identity · Upgrades': () => ({
+    purpose: 'Review available updates for this AgentWorks workflow.',
+    howTo: 'Inspect what an upgrade changes before applying it to the workflow.',
+  }),
+  'Integrations · MCPs': surface => ({
+    purpose: `Choose app connections this ${surface === 'crew' ? 'Crew member' : 'workflow'} can use.`,
+    howTo: 'Review connected services and select the tools needed for this work.',
+  }),
+  'Integrations · Skills': surface => ({
+    purpose: `Choose reusable skills that guide this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Review available skills and enable or create one for a repeatable procedure.',
+  }),
+  'Integrations · Slack': surface => ({
+    purpose: `Connect Slack conversations to this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Review the bot and its routing, then configure which Slack conversations it should answer.',
+  }),
+  'Integrations · WhatsApp': surface => ({
+    purpose: `Connect WhatsApp messages to this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Review the connected number and routing, then configure where messages should go.',
+  }),
+  'Integrations · Gmail': surface => ({
+    purpose: `Configure Gmail access for this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'Review the connected account and email settings before changing how messages are handled.',
+  }),
+  'Integrations · Connect': () => ({
+    purpose: 'Connect a command line tool or another AI assistant to this AgentWorks installation.',
+    howTo: 'Follow the sign-in and bridge instructions, then verify the connection before using it.',
+  }),
+  'Access · This workflow': () => ({
+    purpose: 'Control who can view, run, edit, and share this workflow.',
+    howTo: 'Review people and roles, then grant only the access each person needs.',
+  }),
+  'Access · Users': () => ({
+    purpose: 'Manage accounts and roles across this AgentWorks deployment.',
+    howTo: 'Review existing users before inviting someone or changing a role.',
+  }),
+  'Access · Slack': () => ({
+    purpose: 'Inspect the deployment’s shared Slack bot and workflow bot routing.',
+    howTo: 'Review the shared connection and each workflow bot before changing access or routing.',
+  }),
+}
+
 const GROUPS: Record<WorkspacePanelSurface, Record<WorkspacePanelGroup, readonly string[]>> = {
   agentworks: {
     'Main toolbar': ['Automation', 'Automation Schedules', 'Browser', 'Dashboard', 'Plan', 'Pulse', 'Schedules', 'Webhooks'],
@@ -207,8 +300,9 @@ function groupFor(surface: WorkspacePanelSurface, topic: string): WorkspacePanel
 
 export function getWorkspacePanelGuide(topic: string, surface: WorkspacePanelSurface = 'agentworks'): WorkspacePanelGuide {
   const key = topic.startsWith('Schedules for ') ? 'Schedules' : topic
-  const copy = (surface === 'crew' ? CREW_GUIDES : AGENTWORKS_GUIDES)[key]
-  const group = groupFor(surface, key)
+  const parentTopic = key.split(' · ')[0]
+  const copy = TAB_GUIDES[key]?.(surface) ?? (surface === 'crew' ? CREW_GUIDES : AGENTWORKS_GUIDES)[key]
+  const group = groupFor(surface, parentTopic)
   return copy
     ? { title: topic, surface, group, ...copy }
     : {

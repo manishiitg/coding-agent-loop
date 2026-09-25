@@ -61,6 +61,7 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
       <WorkspaceViewHeader
         icon={ShieldCheck}
         title="Access"
+        helpTopic={`Access · ${visibleTabs.find(option => option.value === activeTab)?.label ?? 'This workflow'}`}
         subtitle={activeTab === 'users'
           ? 'Accounts and roles for this deployment.'
           : activeTab === 'slack'

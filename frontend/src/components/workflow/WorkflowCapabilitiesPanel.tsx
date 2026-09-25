@@ -308,6 +308,11 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
         <WorkspaceViewHeader
           icon={SectionIcon}
           title={copy.title}
+          helpTopic={section === 'mcp'
+            ? `Integrations · ${mcpTabs.find(option => option.value === activeMcpTab)?.label ?? 'MCPs'}`
+            : section === 'identity'
+              ? `Identity · ${IDENTITY_TABS.find(option => option.value === identityTab)?.label ?? 'General'}`
+              : undefined}
           subtitle={copy.description}
           actions={(
             <WorkspaceViewActions

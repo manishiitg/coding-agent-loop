@@ -24,6 +24,8 @@ type WorkspaceViewHeaderProps = {
   title: ReactNode
   /** Guide topic when the visible title is dynamic or omitted. */
   helpTopic?: string
+  /** A parent toolbar can provide the walkthrough inside its own action pair. */
+  showWalkthrough?: boolean
   /** Inline context next to the title: counts, timestamps, badges. */
   context?: ReactNode
   /** Muted line under the title row. */
@@ -91,6 +93,7 @@ export function WorkspaceViewHeader({
   icon,
   title,
   helpTopic,
+  showWalkthrough = true,
   context,
   subtitle,
   actions,
@@ -103,7 +106,7 @@ export function WorkspaceViewHeader({
 }: WorkspaceViewHeaderProps) {
   const tabExtra = tabs ? tabActions?.[tabs.value] : undefined
   const guideTopic = helpTopic ?? (typeof title === 'string' ? title : '')
-  const walkthrough = guideTopic ? <WorkspacePanelGuideButton key="walkthrough" topic={guideTopic} /> : null
+  const walkthrough = showWalkthrough && guideTopic ? <WorkspacePanelGuideButton key="walkthrough" topic={guideTopic} /> : null
   const renderIcon = () => {
     if (!icon) return null
     if (isValidElement(icon)) return icon

@@ -49,7 +49,7 @@ const PAGE_SIZES = [
   { value: '1280x800', label: 'Wide page · 1280 × 800' },
 ]
 
-export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow', minimal = false }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project'; minimal?: boolean }) {
+export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow', minimal = false, showGuide = true }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project'; minimal?: boolean; showGuide?: boolean }) {
   const [sessions, setSessions] = useState<BrowserSession[]>([])
   const [session, setSession] = useState('')
   const [selection, setSelection] = useState('')
@@ -519,7 +519,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
               {PAGE_SIZES.map(size => <option key={size.value} value={size.value}>{size.label.replace(' page', '')}</option>)}
             </select>}
             {toolbar}
-            <WorkspacePanelGuideButton topic="Browser" />
+            {showGuide && <WorkspacePanelGuideButton topic="Browser" />}
           </div>
         </div>
       ) : slim ? (
@@ -540,12 +540,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           {expandToggle}
           {overflowMenu}
           {toolbar}
-          <WorkspacePanelGuideButton topic="Browser" />
+          {showGuide && <WorkspacePanelGuideButton topic="Browser" />}
         </div>
       ) : (
         <WorkspaceViewHeader
           icon={Monitor}
           title="Browser"
+          showWalkthrough={showGuide}
           subtitle={browserPicker ?? (sessions.length ? undefined : 'See what your helper does in its browser. Take control anytime.')}
           context={<span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}{singleBrowserLabel && <span className="text-muted-foreground/80">· {singleBrowserLabel}</span>}{lastAction && <span className="text-muted-foreground/80">·</span>}{lastAction}</span>}
           actions={<>

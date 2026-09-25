@@ -291,6 +291,7 @@ export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescript
       <WorkspaceViewHeader
         icon={Fingerprint}
         title="Identity"
+        helpTopic={`Identity · ${visibleTabs.find(option => option.value === activeTab)?.label ?? 'General'}`}
         subtitle="Name, icon, purpose, secrets, file access, and models for this project."
         actions={(
           <WorkspaceViewActions

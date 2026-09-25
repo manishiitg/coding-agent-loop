@@ -70,4 +70,9 @@ describe('WorkspaceViewHeader', () => {
     expect(bare).not.toContain('<header')
     expect(bare).toContain('>Costs<')
   })
+
+  it('lets a nested toolbar own the walkthrough without duplicating it', () => {
+    const html = renderToStaticMarkup(<WorkspaceViewHeader title="Browser" showWalkthrough={false} actions={<button type="button">Toolbar actions</button>} />)
+    expect(html).not.toContain('Walkthrough: Browser')
+  })
 })

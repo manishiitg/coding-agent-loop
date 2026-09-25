@@ -1,9 +1,13 @@
 // @vitest-environment happy-dom
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { WorkspacePanelGuideContext } from './WorkspacePanelGuideContext'
+import { WorkspaceViewActions } from './WorkspaceViewActions'
+import { BrowserWorkspacePanel } from './BrowserWorkspacePanel'
+import { TooltipProvider } from '../ui/tooltip'
 import { getWorkspacePanelGuide } from './workspacePanelGuides'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -80,5 +84,61 @@ describe('Panel walkthroughs', () => {
       await act(async () => root.unmount())
       host.remove()
     }
+  })
+
+  it('explains the active tab inside a shared panel header', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(
+        <WorkspacePanelGuideContext.Provider value="crew">
+          <WorkspaceViewHeader title="Automation" helpTopic="Automation · Chats" />
+        </WorkspacePanelGuideContext.Provider>,
+      ))
+      await act(async () => (host.querySelector('[aria-label="Walkthrough: Automation · Chats"]') as HTMLButtonElement).click())
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('earlier conversations')
+
+      await act(async () => root.render(
+        <WorkspacePanelGuideContext.Provider value="crew">
+          <WorkspaceViewHeader title="Automation" helpTopic="Automation · Schedules" />
+        </WorkspacePanelGuideContext.Provider>,
+      ))
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('saved instruction')
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Crew · Main toolbar')
+      expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
+      expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('places Browser help between Ask AI and Refresh exactly once', () => {
+    const html = renderToStaticMarkup(
+      <WorkspacePanelGuideContext.Provider value="crew">
+        <TooltipProvider>
+          <BrowserWorkspacePanel
+            workspacePath={null}
+            browserMode="auto"
+            onBrowserModeChange={() => {}}
+            cdpPort={9222}
+            onCdpPortChange={() => {}}
+            cdpConnected={null}
+            cdpError={null}
+            cdpChecking={false}
+            onCheckCdpConnection={() => {}}
+            assistantControl={<WorkspaceViewActions workspacePath={null} message="Browser help" onRefresh={() => {}} />}
+          />
+        </TooltipProvider>
+      </WorkspacePanelGuideContext.Provider>,
+    )
+    const ask = html.indexOf('aria-label="Ask AI"')
+    const walkthrough = html.indexOf('aria-label="Walkthrough: Browser"')
+    const refresh = html.indexOf('aria-label="Refresh view"')
+    expect(ask).toBeGreaterThanOrEqual(0)
+    expect(ask).toBeLessThan(walkthrough)
+    expect(walkthrough).toBeLessThan(refresh)
+    expect(html.match(/aria-label="Walkthrough: Browser"/g)).toHaveLength(1)
   })
 })

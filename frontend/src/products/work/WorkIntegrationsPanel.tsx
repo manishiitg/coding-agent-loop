@@ -193,6 +193,7 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
       <WorkspaceViewHeader
         icon={Server}
         title="Integrations"
+        helpTopic={`Integrations · ${visibleTabs.find(option => option.value === activeTab)?.label ?? 'MCPs'}`}
         subtitle="Choose connected apps, skills, and bots for this project."
         actions={(
           <WorkspaceViewActions

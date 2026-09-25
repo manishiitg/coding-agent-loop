@@ -56,11 +56,15 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
         setSnapshot(next)
       } else {
         // A settled pane has no stream to retain its output, so fetch its final
-        // history once instead of on every poll.
+        // history once per revision instead of on every poll. A retained agent
+        // (e.g. Cursor on tmux) reuses this pane for later turns; a turn that
+        // starts and settles between two polls is visible only as a new
+        // chunk_index, and without refetching on it the view froze on old output.
         const needsFinalHistory = !previous ||
           previous.terminal_id !== metadata.terminal_id ||
           previous.active ||
-          !previous.content
+          !previous.content ||
+          previous.chunk_index !== metadata.chunk_index
         if (needsFinalHistory) {
           const settled = await agentApi.getMainTerminal(sessionId, { content: 'history', lines: MAIN_AGENT_TERMINAL_HISTORY_LINES })
           snapshotRef.current = settled

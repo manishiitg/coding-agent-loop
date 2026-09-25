@@ -360,8 +360,8 @@ reason). Pass `reviewed_through_change_id` as the latest
 `planning/changelog/` `change_id` you actually read for this step, so the
 next review resumes exactly where this one left off. This call always fully
 replaces the step's prior evidence. It clears `needs_review` only when every
-check is `pass` or `fixed`; any `fail` keeps Plan Drift due and therefore keeps
-the other review modules deferred on later Pulse cycles. There is no partial update.
+check is `pass` or `fixed`; any `fail` keeps Plan Drift due, which keeps
+Architecture deferred on later Pulse cycles. There is no partial update.
 
 ### 7. Close out
 

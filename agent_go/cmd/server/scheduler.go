@@ -2732,10 +2732,10 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			} else if planDriftDue {
 				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
 			}
-			// Plan Drift is a prerequisite for platform upkeep: Architecture and
-			// Technical resume on the next Pulse cycle rather than judging a plan
-			// already known to drift. Goal Work still runs (without its Run
-			// permission, enforced in the background review scope).
+			// Plan Drift is a prerequisite for Architecture only, which resumes
+			// on the next Pulse cycle rather than judging a plan already known
+			// to drift. Technical and Goal Work still run after it (Goal Work
+			// without its Run permission, enforced in the background review scope).
 			for _, module := range pulsemodules.PostDriftExecutionOrder() {
 				if planDriftDue && !pulsemodules.RunsWhileDriftDue(module) {
 					continue

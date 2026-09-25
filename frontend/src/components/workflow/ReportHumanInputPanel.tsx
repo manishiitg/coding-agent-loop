@@ -11,6 +11,7 @@ import {
   reportHumanInputStatusLabel,
 } from '../../utils/reportHumanInputFormatting'
 import { delegateReportHumanInputActionToChat, sendReportHumanInputQuestionToChat } from '../../utils/reportHumanInputChat'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { PlainMarkdown } from '../ui/PlainMarkdown'
 import { WORKFLOW_DECISIONS_REFRESH_EVENT } from './workflowEvents'
@@ -216,11 +217,23 @@ export function ReportHumanInputPanel({
     }
     updateDraft(input.id, { submitting: true })
     try {
-      await agentApi.answerReportHumanInput(workspacePath, input.id, {
+      const response = await agentApi.answerReportHumanInput(workspacePath, input.id, {
         selected_option_id: selectedOptionId,
         note,
       })
-      useChatStore.getState().addToast('Decision saved. Any approved action will run separately.', 'success')
+      // Apply the answer now, in the Builder chat where the user can watch it.
+      // If this send fails, the next run's pre-run step still applies it.
+      const applyMessage = response.apply_message?.trim()
+      if (applyMessage) {
+        try {
+          await sendWorkspacePaneMessageToChat({ workspacePath, message: applyMessage })
+          useChatStore.getState().addToast('Decision saved. Applying it in chat now.', 'success')
+        } catch {
+          useChatStore.getState().addToast('Decision saved. It will be applied at the next run.', 'success')
+        }
+      } else {
+        useChatStore.getState().addToast('Decision saved.', 'success')
+      }
 		setHistoryOpen(historyMode === 'expanded')
 		requestRefresh()
     } catch (err) {
@@ -335,7 +348,7 @@ export function ReportHumanInputPanel({
 			{(input.status === 'answered' || input.status === 'claimed') && (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-400/[0.06] px-2 py-1.5 text-amber-100">
                     <Clock3 className="h-3.5 w-3.5 shrink-0" />
-				<span>{input.status === 'claimed' ? 'The saved decision is being processed.' : 'Decision saved — any approved action runs separately.'}</span>
+				<span>{input.status === 'claimed' ? 'The saved decision is being processed.' : 'Decision saved — being applied in chat, or at the next run.'}</span>
                   </div>
                 )}
                 {input.outcome_summary && (

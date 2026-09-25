@@ -468,6 +468,8 @@ export interface ReportHumanInputResponse {
   success: boolean
   input: ReportHumanInput
   error?: string
+  /** Set on answer: the message to send to the Builder chat to apply it now. */
+  apply_message?: string
 }
 
 export interface PulseModuleState {

@@ -1288,7 +1288,13 @@ func (api *StreamingAPI) handleAnswerReportHumanInput(w http.ResponseWriter, r *
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "input": input})
+	// apply_message lets the UI send the answer to the Builder chat so it is
+	// applied now, where the user can watch (decision_apply_chat.go).
+	var applyMessage string
+	if input != nil {
+		applyMessage = decisionApplyChatMessage(*input)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "input": input, "apply_message": applyMessage})
 }
 
 func (api *StreamingAPI) handleDismissReportHumanInput(w http.ResponseWriter, r *http.Request) {

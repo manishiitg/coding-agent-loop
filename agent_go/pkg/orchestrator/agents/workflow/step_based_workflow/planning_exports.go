@@ -341,6 +341,7 @@ type WorkshopChatSession struct {
 	llmToolsFuncs          *LLMToolsCallbacks
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 	resolveSecretValues    func(ctx context.Context, names []string) map[string]string
+	secretsAttached        func(set map[string]string, removed []string)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier      SubAgentNotifier
@@ -635,6 +636,10 @@ type WorkshopConfig struct {
 	// the returned map - never an error. Used by update_workflow_config to refresh the
 	// workshop shell's SECRET_* env vars mid-session without a session restart.
 	ResolveSecretValues func(ctx context.Context, names []string) map[string]string
+	// SecretsAttached pushes attached secret values (and removals) into the
+	// builder chat's live shell, whose environment was captured at turn start.
+	// Without it an attached secret stays unset until the next turn.
+	SecretsAttached func(set map[string]string, removed []string)
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -804,6 +809,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		llmToolsFuncs:          cfg.LLMToolsFuncs,
 		listAvailableSecrets:   cfg.ListAvailableSecrets,
 		resolveSecretValues:    cfg.ResolveSecretValues,
+		secretsAttached:        cfg.SecretsAttached,
 		workshopNotifier:       wsn,
 	}, nil
 }
@@ -995,6 +1001,7 @@ func RegisterWorkshopChatTools(
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
 		resolveSecretValues:    session.resolveSecretValues,
+		secretsAttached:        session.secretsAttached,
 		executionNotifier:      session.executionNotifier,
 		hasPendingCompletions:  session.hasPendingCompletions,
 		hasRunningAgents:       session.hasRunningAgents,

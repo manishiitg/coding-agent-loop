@@ -11175,6 +11175,15 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		}
 		return out
 	}
+	cfg.SecretsAttached = func(set map[string]string, removed []string) {
+		for name, value := range set {
+			virtualtools.SetSessionShellEnv(sessionID, "SECRET_"+name, value)
+		}
+		for _, name := range removed {
+			virtualtools.DeleteSessionShellEnv(sessionID, "SECRET_"+name)
+		}
+		log.Printf("[SECRETS] Synced %d attached / %d removed SECRET_* into live shell clients for session %s", len(set), len(removed), sessionID)
+	}
 
 	return cfg, nil
 }

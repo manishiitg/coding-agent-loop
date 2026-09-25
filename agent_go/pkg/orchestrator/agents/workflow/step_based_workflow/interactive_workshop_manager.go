@@ -1152,6 +1152,7 @@ type InteractiveWorkshopManager struct {
 	llmToolsFuncs          *LLMToolsCallbacks                          // LLM management callbacks from server.go
 	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
 	resolveSecretValues    func(ctx context.Context, names []string) map[string]string
+	secretsAttached        func(set map[string]string, removed []string)
 	executionNotifier      WorkshopExecutionNotifier // optional: notifies server when executions start/complete
 	hasPendingCompletions  func() bool               // optional: true if completions are queued for delivery
 	hasRunningAgents       func() bool               // optional: true if server still has running background agents
@@ -5360,6 +5361,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						iwm.controller.UnlockWorkspaceEnv()
 						logger.Info(fmt.Sprintf("Refreshed workshop shell env with %d SECRET_* entries", len(currentSecrets)))
 					}
+					// The builder chat's own shell captured its environment at turn
+					// start; push the change there too so the next shell command in
+					// this same turn sees it (RTS 2026-09-25: an attached
+					// SENTRY_AUTH_TOKEN stayed unset until the user sent another message).
+					notifySecretsAttached(iwm.secretsAttached, currentSecrets, removeSecrets)
 
 					anyChanged = true
 					sb.WriteString("\n### Secrets (updated)\n")
@@ -9188,4 +9194,19 @@ func validateStepLLMConfig(label, publishedID, provider, modelID string) string 
 		return fmt.Sprintf("%s sets model_id %q, which is the provider name repeated in the model slot — that is never a real model and the step will fail at turn 1 with \"all LLMs failed\". %s", label, modelID, hint)
 	}
 	return ""
+}
+
+// notifySecretsAttached hands the attached secrets that have a value, and the
+// removed names, to the live-shell sync callback.
+func notifySecretsAttached(callback func(set map[string]string, removed []string), secrets []orchestrator.SecretEntry, removed []string) {
+	if callback == nil {
+		return
+	}
+	set := make(map[string]string, len(secrets))
+	for _, secret := range secrets {
+		if secret.Name != "" && secret.Value != "" {
+			set[secret.Name] = secret.Value
+		}
+	}
+	callback(set, removed)
 }

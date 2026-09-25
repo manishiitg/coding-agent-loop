@@ -1,6 +1,6 @@
 import type { ReportHumanInput } from '../services/api-types'
 import type { WorkspacePaneChatResult } from './workspacePaneChat'
-import { sendWorkspacePaneMessageToChat } from './workspacePaneChat'
+import { openWorkspacePaneChatWithDraft, sendWorkspacePaneMessageToChat } from './workspacePaneChat'
 
 function sourceName(source: string): string {
   if (['technical_review', 'engineering_review', 'ops_review'].includes(source)) return 'Technical Review'
@@ -41,7 +41,7 @@ export function buildReportHumanInputChatMessage(
     lines.push('', `Evidence: ${input.evidence.trim()}`)
   }
 
-  lines.push('', 'My question:', userQuestion.trim())
+  lines.push('', userQuestion.trim() ? `My question:\n${userQuestion.trim()}` : 'My question: ')
   return lines.join('\n')
 }
 
@@ -59,7 +59,7 @@ export function buildReportHumanInputDelegatedActionMessage(
   const lines = [
     `I delegate this pending ${sourceName(input.source)} decision to you. Analyze the current evidence, workflow goal, constraints, and the available options; choose the best supported option and take the resulting safe workflow action.`,
     'Do not ask me to choose between the listed options. Use current evidence and tools to resolve uncertainty where practical. If no option is defensible, do not invent one or take an unsafe action: explain the blocker and leave the decision pending.',
-    'After choosing, call answer_human_input_request with the exact decision and option IDs below. Then implement only the authorized workflow action, verify it proportionately, and report the decision, evidence, action, and remaining risk concisely. Do not mark the decision consumed yourself.',
+    'After choosing, call answer_human_input_request with the exact decision and option IDs below, then apply the answer as the tool result describes and report the decision, evidence, action, and remaining risk in plain words.',
     '',
     `Automation: ${workspacePath}`,
     `Decision ID: ${input.id}`,
@@ -111,5 +111,65 @@ export async function delegateReportHumanInputActionToChat({
   return sendWorkspacePaneMessageToChat({
     workspacePath,
     message: buildReportHumanInputDelegatedActionMessage(input, workspacePath),
+  })
+}
+
+/**
+ * Opens the automation chat with this decision placed in the composer, ending
+ * in "My question: ", so the user reads it, types their question and sends.
+ */
+export async function openReportHumanInputQuestionInChat({
+  input,
+  workspacePath,
+}: {
+  input: ReportHumanInput
+  workspacePath: string
+}): Promise<{ tabId: string }> {
+  return openWorkspacePaneChatWithDraft({
+    workspacePath,
+    message: buildReportHumanInputChatMessage(input, workspacePath, ''),
+  })
+}
+
+/**
+ * The composer text for answering a decision in chat: the choice (or, for a
+ * written-answer question, "My answer: "), and the instruction to record it
+ * with answer_human_input_request and apply it in the same turn. The caret
+ * lands after "Note (optional): " (or "My answer: ") for the user's words.
+ */
+export function buildReportHumanInputAnswerMessage(
+  input: ReportHumanInput,
+  workspacePath: string,
+  option?: { id: string; title: string },
+): string {
+  const record = option
+    ? `Record it with answer_human_input_request(workspace_path="${workspacePath}", input_id="${input.id}", selected_option_id="${option.id}", note=<my note, if any>), then apply it now as the tool result describes and tell me in one or two plain sentences what changed.`
+    : `Record it with answer_human_input_request(workspace_path="${workspacePath}", input_id="${input.id}", note=<my answer>), then apply it now as the tool result describes and tell me in one or two plain sentences what changed.`
+  const lines = [
+    option
+      ? `My answer to this ${sourceName(input.source)} decision: "${option.title}".`
+      : `My answer to this ${sourceName(input.source)} question is below.`,
+    record,
+    '',
+    `Decision: ${input.question.trim()}`,
+    '',
+    option ? 'Note (optional): ' : 'My answer: ',
+  ]
+  return lines.join('\n')
+}
+
+/** Opens the automation chat with the answer pre-filled for the user to send. */
+export async function openReportHumanInputAnswerInChat({
+  input,
+  workspacePath,
+  option,
+}: {
+  input: ReportHumanInput
+  workspacePath: string
+  option?: { id: string; title: string }
+}): Promise<{ tabId: string }> {
+  return openWorkspacePaneChatWithDraft({
+    workspacePath,
+    message: buildReportHumanInputAnswerMessage(input, workspacePath, option),
   })
 }

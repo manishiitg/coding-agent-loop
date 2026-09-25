@@ -5,6 +5,9 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { activateTab } from './activateTab'
 import { selectWorkflowPreset } from './workflowNavigation'
 
+/** Asks the active chat composer to take focus with the caret at the end. */
+export const CHAT_FOCUS_COMPOSER_EVENT = 'chat-focus-composer'
+
 function normalizeWorkspacePath(value?: string | null): string {
   return (value || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase()
 }
@@ -103,14 +106,11 @@ type WorkspacePaneChatRequest = {
  * Dashboard HTML, human decisions, Ask AI, Pulse, and Work-project panes all
  * resolve their destination here and then use the same durable chat queue.
  */
-export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatRequest): Promise<WorkspacePaneChatResult> {
-  const { message, viewMode = 'formatted' } = request
+async function resolveWorkspacePaneChatTab(request: WorkspacePaneChatRequest): Promise<{ tabId: string; targetTab: ChatTab; reused: boolean }> {
   const workspacePath = 'workspacePath' in request ? request.workspacePath : undefined
   const requestedTabId = 'tabId' in request ? request.tabId : undefined
   const profileId = 'profileId' in request ? request.profileId : undefined
   const conversationKey = 'conversationKey' in request ? request.conversationKey : undefined
-  if (!message.trim()) throw new Error('Write a message before opening chat.')
-
   let targetTab: ChatTab | undefined
   let tabId: string
   let reused = false
@@ -148,6 +148,13 @@ export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatR
     }
     if (!targetTab) throw new Error('Failed to open a chat for this message.')
   }
+  return { tabId, targetTab, reused }
+}
+
+export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatRequest): Promise<WorkspacePaneChatResult> {
+  const { message, viewMode = 'formatted' } = request
+  if (!message.trim()) throw new Error('Write a message before opening chat.')
+  const { tabId, targetTab, reused } = await resolveWorkspacePaneChatTab(request)
 
   const queuedBehindRunningTurn = targetTab.isStreaming
   const chatStore = useChatStore.getState()
@@ -172,4 +179,27 @@ export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatR
 
   window.setTimeout(() => window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom')), 50)
   return { tabId, reused, queuedBehindRunningTurn }
+}
+
+/**
+ * Opens the pane's chat with text placed in the composer for the user to
+ * finish and send, instead of sending it. An existing unsent draft is kept
+ * below the new text.
+ */
+export async function openWorkspacePaneChatWithDraft(request: WorkspacePaneChatRequest): Promise<{ tabId: string }> {
+  const draft = request.message.trim()
+  if (!draft) throw new Error('Nothing to put in the chat.')
+  const { tabId, targetTab } = await resolveWorkspacePaneChatTab(request)
+  const chatStore = useChatStore.getState()
+  const existing = (chatStore.getTabConfig(tabId)?.inputText || '').trim()
+  chatStore.setTabConfig(tabId, { inputText: existing ? `${request.message}\n\n${existing}` : request.message })
+  activateTab(tabId)
+  if (targetTab.metadata?.mode === 'workflow') {
+    const workflowStore = useWorkflowStore.getState()
+    workflowStore.setShowChatArea(true)
+    workflowStore.setShowWorkspacePane(true)
+    workflowStore.setFocusedPane('chat')
+  }
+  window.setTimeout(() => window.dispatchEvent(new CustomEvent(CHAT_FOCUS_COMPOSER_EVENT)), 50)
+  return { tabId }
 }

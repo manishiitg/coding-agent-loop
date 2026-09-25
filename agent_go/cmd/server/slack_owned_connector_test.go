@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -86,4 +87,28 @@ func TestSlackNoOwnedConnectionDoesNotRegister(t *testing.T) {
 	if slackBotConnectorWantedAtStartup(nil, nil) {
 		t.Fatal("startup wants the connector with no config and no service")
 	}
+}
+
+// One Slack app can be connected once: Slack delivers each Socket Mode event
+// over only one of the app's connections, so a second connection with the
+// same token would answer mentions at random.
+func TestSlackTokenCannotBeConnectedTwice(t *testing.T) {
+	api, _ := setupSlackConnectionWorld(t)
+	createSlackConnectionForTest(t, api, "alice", `{"display_name":"Alpha App","bot_token":"xoxb-alpha","app_token":"xapp-alpha","enabled":true,"workspace_path":"Workflow/alpha"}`)
+	for _, body := range []string{
+		`{"display_name":"Copy","bot_token":"xoxb-alpha","app_token":"xapp-other","enabled":true,"workspace_path":"Workflow/alpha"}`,
+		`{"display_name":"Copy","bot_token":"xoxb-other","app_token":"xapp-alpha","enabled":true,"workspace_path":"Workflow/alpha"}`,
+	} {
+		w := httptest.NewRecorder()
+		createSlackConnectionHandler(api)(w, slackConnectionRequest(t, "POST", "alice", body))
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `already connected as "Alpha App" (the workflow Workflow/alpha)`) {
+			t.Fatalf("reused token: status %d body %s", w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	createSlackConnectionHandler(api)(w, slackConnectionRequest(t, "POST", "admin-1", `{"display_name":"Platform","bot_token":"xoxb-alpha","app_token":"xapp-plat","enabled":true}`))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("the shared bot must not reuse a workflow's token either: %d %s", w.Code, w.Body.String())
+	}
+	createSlackConnectionForTest(t, api, "alice", `{"display_name":"Second App","bot_token":"xoxb-second","app_token":"xapp-second","enabled":true,"workspace_path":"Workflow/alpha"}`)
 }

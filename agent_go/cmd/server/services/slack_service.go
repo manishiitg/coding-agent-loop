@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1225,6 +1226,9 @@ func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackCon
 		return SlackConnection{}, err
 	}
 	return s.modifySlackRegistry(ctx, func(cfg *SlackConfig) (SlackConnection, error) {
+		if err := slackTokensInUse(cfg, "", input.BotToken, input.AppToken); err != nil {
+			return SlackConnection{}, err
+		}
 		taken := make(map[string]bool, len(cfg.Connections))
 		for _, conn := range cfg.Connections {
 			taken[conn.ID] = true
@@ -1241,6 +1245,37 @@ func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackCon
 		cfg.Connections = append(cfg.Connections, conn)
 		return conn, nil
 	})
+}
+
+// ErrSlackTokenInUse refuses a Slack token that another connection already
+// uses. Slack delivers each Socket Mode event over only one of an app's open
+// connections, so one app saved on two connections (e.g. two workflows)
+// would answer each mention from a random one of them.
+var ErrSlackTokenInUse = errors.New("slack token already in use")
+
+// slackTokensInUse reports a bot or app token already used by a connection
+// other than exceptID, naming where it is connected.
+func slackTokensInUse(cfg *SlackConfig, exceptID, botToken, appToken string) error {
+	botToken, appToken = strings.TrimSpace(botToken), strings.TrimSpace(appToken)
+	for _, other := range cfg.Connections {
+		if other.ID == exceptID {
+			continue
+		}
+		sameBot := botToken != "" && strings.TrimSpace(other.BotToken) == botToken
+		sameApp := appToken != "" && strings.TrimSpace(other.AppToken) == appToken
+		if !sameBot && !sameApp {
+			continue
+		}
+		where := "the shared platform bot"
+		switch {
+		case other.ProfileID != "" && other.WorkspacePath != "":
+			where = "the Crew at " + other.WorkspacePath
+		case other.WorkspacePath != "":
+			where = "the workflow " + other.WorkspacePath
+		}
+		return fmt.Errorf("%w: this Slack app is already connected as %q (%s). Each Slack app can be connected once; to serve several workflows with one bot, use the shared bot with channel routes", ErrSlackTokenInUse, other.DisplayName, where)
+	}
+	return nil
 }
 
 // UpdateSlackConnection edits one registry entry. Empty or masked tokens
@@ -1270,6 +1305,9 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 				conn.AppToken = strings.TrimSpace(input.AppToken)
 			}
 			if err := validateSlackConnectionTokens(conn.BotToken, conn.AppToken); err != nil {
+				return SlackConnection{}, err
+			}
+			if err := slackTokensInUse(cfg, conn.ID, conn.BotToken, conn.AppToken); err != nil {
 				return SlackConnection{}, err
 			}
 			conn.Enabled = input.Enabled

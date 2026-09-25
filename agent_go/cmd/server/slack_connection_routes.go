@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -352,7 +353,11 @@ func createSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ProfileID:     profileID,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, services.ErrSlackTokenInUse) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		registerSlackBotConnectorForOwnedConnections(api, svc)
@@ -418,7 +423,11 @@ func updateSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ProfileID:     profileID,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, services.ErrSlackTokenInUse) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		registerSlackBotConnectorForOwnedConnections(api, svc)

@@ -100,6 +100,9 @@ caller's conversation appears in the Crew's **Chats** list.
   the caller stops waiting and is told so. The target can still report
   progress and return its answer, and `ask_function_update` still reaches
   it. The answer is then sent to the caller's chat as a *late answer*.
+- **The same applies to `ask` on a workflow.** A timeout releases the caller
+  but the assistant's turn keeps running, and its reply arrives as a late
+  answer.
 - **A restart interrupts open calls.** Every call is saved under the
   target's `functions/calls/` folder and indexed in `_system/function_calls/`.
   After a restart, `get_function_call` still finds the call. A call that was

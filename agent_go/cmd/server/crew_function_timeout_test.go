@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -174,5 +175,60 @@ func TestCrewFunctionCallSurvivesRestartAsInterrupted(t *testing.T) {
 	}
 	if lookupCrewFunctionCall("fn-does-not-exist") != nil || lookupCrewFunctionCall("fn-../../etc") != nil {
 		t.Fatal("unknown or unsafe IDs must not resolve")
+	}
+}
+
+// A workflow ask that outlives its timeout releases the caller but keeps the
+// assistant's turn running; its reply arrives as a late answer.
+func TestWorkflowAskTimeoutKeepsTurnAndDeliversLateAnswer(t *testing.T) {
+	env := newCrewFunctionEnv(t)
+	release := make(chan struct{})
+	turnCtxErr := make(chan error, 1)
+	previous := workflowAskTurn
+	workflowAskTurn = func(_ *StreamingAPI, ctx context.Context, _ map[string]interface{}, _, _ string) (internalSessionTurnResult, error) {
+		<-release
+		turnCtxErr <- ctx.Err()
+		return internalSessionTurnResult{FinalResponse: "Ran review_pr on #149: passed."}, nil
+	}
+	t.Cleanup(func() { workflowAskTurn = previous })
+
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	target, err := resolveTriggerTarget(ctx, &UserClaims{UserID: "owner"}, "#workflow:Reports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := crewTriggerLinkCaller(linkAlphaPath)(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := env.api.startCrewFunctionCall(ctx, "owner", caller, target, workflowAskFunction(), map[string]interface{}{"message": "review PR 149"}, 200*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-call.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a quiet workflow ask never timed out")
+	}
+	if snapshot := call.snapshot(); snapshot["timed_out"] != true {
+		t.Fatalf("timed-out ask = %v", snapshot)
+	}
+	close(release)
+	if err := <-turnCtxErr; err != nil {
+		t.Fatalf("the assistant's turn was cancelled by the caller's timeout: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		snapshot := call.snapshot()
+		if snapshot["late"] == true {
+			if snapshot["status"] != "completed" || !strings.Contains(fmt.Sprint(snapshot["result"]), "passed") {
+				t.Fatalf("late ask = %v", snapshot)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("late answer not recorded: %v", snapshot)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

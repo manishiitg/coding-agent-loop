@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -1949,7 +1950,7 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 	for _, sr := range refs {
 		session, ok := indexedLocalChatHistorySession(index, sr.ref)
 		if !ok {
-			data, err := os.ReadFile(sr.ref.convPath)
+			data, err := readConversationFileDirect(sr.ref.convPath)
 			if err != nil {
 				continue
 			}
@@ -2288,7 +2289,7 @@ func resolveLocalWorkflowDir(workflowPath string) (string, bool) {
 }
 
 func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, file localChatHistoryFile) (ChatHistorySession, bool) {
-	data, err := os.ReadFile(file.convPath)
+	data, err := readConversationFileDirect(file.convPath)
 	if err != nil {
 		return ChatHistorySession{}, false
 	}
@@ -3084,7 +3085,7 @@ func readChatHistoryConversationDataFromPath(normalizedPath string) ([]byte, boo
 		return nil, false, nil
 	}
 	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalizedPath))
-	if localData, err := os.ReadFile(localPath); err == nil {
+	if localData, err := readConversationFileDirect(localPath); err == nil {
 		return localData, true, nil
 	} else if !os.IsNotExist(err) {
 		return nil, false, err
@@ -3426,7 +3427,7 @@ func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMe
 			if err != nil || info.IsDir() {
 				continue
 			}
-			data, err := os.ReadFile(match)
+			data, err := readConversationFileDirect(match)
 			if err != nil {
 				return nil, true, err
 			}
@@ -3439,7 +3440,7 @@ func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMe
 	if latest == nil {
 		return nil, false, nil
 	}
-	data, err := os.ReadFile(latest.path)
+	data, err := readConversationFileDirect(latest.path)
 	if err != nil {
 		return nil, true, err
 	}
@@ -3580,7 +3581,7 @@ func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath st
 	if latest == nil {
 		return nil, false, nil
 	}
-	data, err := os.ReadFile(latest.path)
+	data, err := readConversationFileDirect(latest.path)
 	if err != nil {
 		return nil, true, err
 	}
@@ -3958,7 +3959,7 @@ func chatHistoryFileCleanupCandidate(convPath string, cutoff time.Time) (bool, e
 		return false, nil
 	}
 
-	data, err := os.ReadFile(convPath)
+	data, err := readConversationFileDirect(convPath)
 	if err != nil {
 		return false, err
 	}
@@ -4170,4 +4171,14 @@ func runtimeFromRecord(record map[string]interface{}) *ChatHistoryAgentRuntime {
 		return nil
 	}
 	return &runtime
+}
+
+// readConversationFileDirect reads a chat conversation straight from disk in
+// its legacy single-record form (assembled from header + history log when it
+// is stored in that format); any other file is read as-is.
+func readConversationFileDirect(path string) ([]byte, error) {
+	if chatlog.IsConversationPath(path) {
+		return chatlog.Load(path)
+	}
+	return os.ReadFile(path)
 }

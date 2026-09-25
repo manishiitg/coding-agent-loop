@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
+	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 	"github.com/spf13/cobra"
 )
 
@@ -119,7 +121,7 @@ func dedupeChatHistories(docsRoot, stateRoot string, force, dryRun bool) (chatDe
 		if !strings.HasSuffix(entry.Name(), "-conversation.json") {
 			return nil
 		}
-		if info, err := entry.Info(); err == nil && info.Size() >= chatDedupeMinBytes {
+		if chatConversationDiskSize(path) >= chatDedupeMinBytes {
 			paths = append(paths, path)
 		}
 		return nil
@@ -167,11 +169,11 @@ type chatDedupeFileResult struct {
 }
 
 type chatDedupeRow struct {
-	key      string
-	system   bool
-	callIDs  []string
-	parts    int
-	size     int
+	key     string
+	system  bool
+	callIDs []string
+	parts   int
+	size    int
 }
 
 func dedupeChatHistoryFile(path, backupPath, lockKey string, dryRun bool) (chatDedupeFileResult, error) {
@@ -180,15 +182,14 @@ func dedupeChatHistoryFile(path, backupPath, lockKey string, dryRun bool) (chatD
 	lock.Lock()
 	defer lock.Unlock()
 
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return result, err
 	}
-	result.bytesBefore = info.Size()
+	result.bytesBefore = chatConversationDiskSize(path)
 
 	// Pass 1: one small record per row.
 	var rows []chatDedupeRow
-	err = streamChatConversation(path, nil, func(index int, raw json.RawMessage) error {
+	err := streamChatConversation(path, nil, func(index int, raw json.RawMessage) error {
 		row, err := describeChatDedupeRow(raw)
 		if err != nil {
 			return err
@@ -236,34 +237,25 @@ func dedupeChatHistoryFile(path, backupPath, lockKey string, dryRun bool) (chatD
 	if err := copyChatDedupeBackup(path, backupPath); err != nil {
 		return result, fmt.Errorf("backup: %w", err)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".dedupe-*.json")
-	if err != nil {
+	if _, err := os.Stat(chatlog.HistoryLogPath(path)); err == nil {
+		if err := copyChatDedupeBackup(chatlog.HistoryLogPath(path), chatlog.HistoryLogPath(backupPath)); err != nil {
+			return result, fmt.Errorf("backup: %w", err)
+		}
+	}
+	var output bytes.Buffer
+	if err := writeDedupedChatConversation(&output, fields, keep, kept); err != nil {
 		return result, err
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	writer := bufio.NewWriterSize(temporary, 1<<20)
-	if err := writeDedupedChatConversation(writer, fields, keep, kept); err != nil {
-		temporary.Close()
+	// Chat conversations are written in the header + history-log format
+	// (converting old single-file records); anything else is replaced as-is.
+	if chatlog.IsConversationPath(path) {
+		if err := chatlog.Save(path, output.Bytes()); err != nil {
+			return result, err
+		}
+	} else if err := writeFileAtomically(path, output.Bytes()); err != nil {
 		return result, err
 	}
-	if err := writer.Flush(); err != nil {
-		temporary.Close()
-		return result, err
-	}
-	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
-		temporary.Close()
-		return result, err
-	}
-	if err := temporary.Close(); err != nil {
-		return result, err
-	}
-	if after, err := os.Stat(temporaryPath); err == nil {
-		result.bytesAfter = after.Size()
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return result, err
-	}
+	result.bytesAfter = chatConversationDiskSize(path)
 	result.rewritten = true
 	return result, nil
 }
@@ -368,12 +360,23 @@ type chatDedupeField struct {
 // conversation_history element; when fields is non-nil it also collects the
 // other top-level fields in order.
 func streamChatConversation(path string, fields *[]chatDedupeField, onRow func(int, json.RawMessage) error) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
+	var source io.Reader
+	if _, err := os.Stat(chatlog.HistoryLogPath(path)); err == nil {
+		// Header + history-log format: assemble (such records are small).
+		record, err := chatlog.Load(path)
+		if err != nil {
+			return err
+		}
+		source = bytes.NewReader(record)
+	} else {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		source = file
 	}
-	defer file.Close()
-	decoder := json.NewDecoder(bufio.NewReaderSize(file, 1<<20))
+	decoder := json.NewDecoder(bufio.NewReaderSize(source, 1<<20))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return errors.New("not a JSON object")
 	}
@@ -497,4 +500,38 @@ func copyChatDedupeBackup(from, to string) error {
 		return err
 	}
 	return target.Close()
+}
+
+// chatConversationDiskSize is a conversation's size on disk, header and
+// history log together.
+func chatConversationDiskSize(path string) int64 {
+	var size int64
+	if info, err := os.Stat(path); err == nil {
+		size += info.Size()
+	}
+	if info, err := os.Stat(chatlog.HistoryLogPath(path)); err == nil {
+		size += info.Size()
+	}
+	return size
+}
+
+func writeFileAtomically(path string, content []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".dedupe-*.json")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if _, err := temporary.Write(content); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 )
 
 func TestChatHistoryDedupeRemovesCopiesKeepsRealRepeats(t *testing.T) {
@@ -53,7 +55,13 @@ func TestChatHistoryDedupeRemovesCopiesKeepsRealRepeats(t *testing.T) {
 		Runtime  map[string]interface{}   `json:"runtime"`
 		History  []map[string]interface{} `json:"conversation_history"`
 	}
-	raw, _ := os.ReadFile(path)
+	raw, err := chatlog.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(chatlog.HistoryLogPath(path)); statErr != nil {
+		t.Fatalf("cleaned chat should be stored with a history log: %v", statErr)
+	}
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}

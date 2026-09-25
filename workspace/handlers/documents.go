@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 	"github.com/manishiitg/coding-agent-loop/workspace/models"
 	"github.com/manishiitg/coding-agent-loop/workspace/parsers"
 	"github.com/manishiitg/coding-agent-loop/workspace/utils"
@@ -833,8 +835,20 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Read file
-	content, err := os.ReadFile(filePath)
+	// Read file. A chat conversation is assembled from its header and history
+	// log; ?tail=N returns only its last N messages (never to be saved back).
+	var content []byte
+	if chatlog.IsConversationPath(filePath) {
+		if tail := c.Query("tail"); tail != "" {
+			n := 0
+			_, _ = fmt.Sscanf(tail, "%d", &n)
+			content, err = chatlog.LoadTail(filePath, n)
+		} else {
+			content, err = chatlog.Load(filePath)
+		}
+	} else {
+		content, err = os.ReadFile(filePath)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
@@ -875,7 +889,7 @@ func GetDocument(c *gin.Context) {
 		Content:  contentStr, // Include content for read_workspace_file tool
 		IsImage:  isImage,
 		IsBinary: isBinary,
-		Size:     info.Size(),
+		Size:     int64(len(content)),
 		MimeType: mimeType,
 		Encoding: encoding,
 	}
@@ -987,6 +1001,21 @@ func GetRawDocument(c *gin.Context) {
 		return
 	}
 
+	if chatlog.IsConversationPath(filePath) {
+		content, err := chatlog.Load(filePath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to read file",
+				Error:   err.Error(),
+			})
+			return
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filepath.Base(filePath)))
+		c.Data(http.StatusOK, "application/json", content)
+		return
+	}
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
@@ -1066,8 +1095,23 @@ func UpdateDocument(c *gin.Context) {
 		}
 	}
 
-	// Write content (create or update)
-	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
+	// Write content (create or update). A chat conversation goes to its
+	// header and history log, appending when only new messages were added.
+	var writeErr error
+	if chatlog.IsConversationPath(filePath) {
+		writeErr = chatlog.Save(filePath, []byte(req.Content))
+		if errors.Is(writeErr, chatlog.ErrPartialRecord) {
+			c.JSON(http.StatusConflict, models.APIResponse[any]{
+				Success: false,
+				Message: "Refusing to save a partial conversation",
+				Error:   writeErr.Error(),
+			})
+			return
+		}
+	} else {
+		writeErr = os.WriteFile(filePath, []byte(req.Content), 0644)
+	}
+	if err := writeErr; err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to write document",
@@ -1151,6 +1195,8 @@ func DeleteDocument(c *gin.Context) {
 	// and plain Remove for files (faster, no risk of accidentally nuking a tree).
 	if info.IsDir() {
 		err = os.RemoveAll(filePath)
+	} else if chatlog.IsConversationPath(filePath) {
+		err = chatlog.Remove(filePath)
 	} else {
 		err = os.Remove(filePath)
 	}
@@ -1291,8 +1337,12 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Move file
-	if err := os.Rename(sourceFilePath, destinationFilePath); err != nil {
+	// Move file (a chat conversation's history log moves with it)
+	moveFile := os.Rename
+	if chatlog.IsConversationPath(sourceFilePath) {
+		moveFile = chatlog.Move
+	}
+	if err := moveFile(sourceFilePath, destinationFilePath); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to move document",
@@ -2217,6 +2267,10 @@ func HandleDocumentRequest(c *gin.Context) {
 			filePathParam = strings.TrimSuffix(filePathParam, "/move")
 			c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}
 			MoveDocument(c)
+		} else if strings.HasSuffix(path, "/append-history") {
+			filePathParam = strings.TrimSuffix(filePathParam, "/append-history")
+			c.Params = []gin.Param{{Key: "filepath", Value: filePathParam}}
+			AppendConversationHistory(c)
 		} else {
 			c.JSON(http.StatusMethodNotAllowed, models.APIResponse[any]{
 				Success: false,

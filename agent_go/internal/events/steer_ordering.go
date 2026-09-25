@@ -16,6 +16,14 @@ import (
 
 var deferredSteerHoldTimeout = 20 * time.Second
 
+// deferredSteerInFlightCap bounds the wait while the session is still
+// answering the previous message. A CLI takes a message sent mid-answer only
+// when that answer ends, which can take minutes; the 20s timeout above starts
+// at that end, not at the send. Counting from the send wrote the second
+// message into the middle of the first answer (msg1, msg2, rest of reply1,
+// reply2) although the CLI ran msg1 -> reply1 -> msg2 -> reply2.
+var deferredSteerInFlightCap = 30 * time.Minute
+
 type pendingSteer struct {
 	event   Event
 	written bool
@@ -65,10 +73,21 @@ func (es *EventStore) BeginDeferredSteer(sessionID string, user Event) {
 		state.holds[sessionID] = hold
 	}
 	hold.pending = append(hold.pending, &pendingSteer{event: user})
+	es.armSteerHoldTimerLocked(sessionID, hold)
+}
+
+// armSteerHoldTimerLocked (re)starts the hold's timeout: the short one once
+// the in-flight answer has ended, the long cap while it is still streaming.
+// Callers hold state.mu.
+func (es *EventStore) armSteerHoldTimerLocked(sessionID string, hold *deferredSteerHold) {
 	if hold.timer != nil {
 		hold.timer.Stop()
 	}
-	hold.timer = time.AfterFunc(deferredSteerHoldTimeout, func() { es.timeoutSteerHold(sessionID) })
+	wait := deferredSteerHoldTimeout
+	if !hold.boundaryPassed {
+		wait = deferredSteerInFlightCap
+	}
+	hold.timer = time.AfterFunc(wait, func() { es.timeoutSteerHold(sessionID) })
 }
 
 // CompleteDeferredSteer writes the user row at the CLI's ack (unless a timeout
@@ -187,6 +206,7 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 	if hold == nil || !answerRow {
 		if hold != nil && ends && !hold.boundaryPassed {
 			hold.boundaryPassed = true
+			es.armSteerHoldTimerLocked(sessionID, hold)
 		}
 		return false
 	}
@@ -199,6 +219,7 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 		// Rows up to the in-flight answer's end belong to that answer.
 		if ends {
 			hold.boundaryPassed = true
+			es.armSteerHoldTimerLocked(sessionID, hold)
 		}
 		return false
 	}

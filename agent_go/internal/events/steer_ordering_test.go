@@ -147,3 +147,48 @@ func TestDeferredSteerDoesNotHoldOtherSessionsOrChildRows(t *testing.T) {
 	expectIDs(t, store, "chat", "child")
 	expectIDs(t, store, "other", "other-answer")
 }
+
+// A message sent while the previous answer is still streaming is taken by
+// the CLI only when that answer ends. The short timeout must count from that
+// end: counted from the send, it wrote the second message into the middle of
+// the first answer (msg1, msg2, rest of reply1, reply2) although the CLI ran
+// msg1 -> reply1 -> msg2 -> reply2.
+func TestDeferredSteerTimeoutStartsWhenTheInFlightAnswerEnds(t *testing.T) {
+	previous := deferredSteerHoldTimeout
+	deferredSteerHoldTimeout = 50 * time.Millisecond
+	defer func() { deferredSteerHoldTimeout = previous }()
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", steerUser("user:a"))
+	store.AddEvent("chat", transcriptMessage("answer-a1", "first part"))
+
+	user := steerUser("user:b")
+	store.BeginDeferredSteer("chat", user)
+	// The first answer keeps streaming well past the short timeout.
+	time.Sleep(150 * time.Millisecond)
+	store.AddEvent("chat", transcriptMessage("answer-a2", "second part"))
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "answer-a2")
+	store.AddEvent("chat", steerCompletion("completion-a"))
+
+	// Now the CLI takes message b; its ack arrives before the short timeout.
+	store.CompleteDeferredSteer("chat", user)
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to b"))
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "answer-a2", "completion-a", "user:b", "answer-b")
+}
+
+// Without an ack, the user row still appears, but after the first answer.
+func TestDeferredSteerTimeoutAfterTheAnswerKeepsOrder(t *testing.T) {
+	previous := deferredSteerHoldTimeout
+	deferredSteerHoldTimeout = 50 * time.Millisecond
+	defer func() { deferredSteerHoldTimeout = previous }()
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", steerUser("user:a"))
+	store.AddEvent("chat", transcriptMessage("answer-a1", "first part"))
+	store.BeginDeferredSteer("chat", steerUser("user:b"))
+	time.Sleep(120 * time.Millisecond)
+	store.AddEvent("chat", steerCompletion("completion-a"))
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to b"))
+	waitForIDs(t, store, "chat", 5)
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "completion-a", "user:b", "answer-b")
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Sales v1 artifacts and lead-to-research-to-follow-up references.
+"""Validate Sales artifacts from qualification through observed booking.
 
 The checks block malformed or out-of-scope handoffs. They do not prove
 source truth or authorization to contact a person.
@@ -8,11 +8,13 @@ source truth or authorization to contact a person.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 class InvalidArtifact(ValueError):
@@ -154,17 +156,88 @@ def validate_followup(raw: object, qualification_raw: object, research_raw: obje
     items(draft.get("limitations"), "limitations", allow_empty=True)
 
 
+def draft_fingerprint(draft: dict) -> str:
+    """Bind a review to the exact recipient and message, not a mutable draft ID."""
+    approved_fields = {key: draft[key] for key in ("draft_id", "recipient_ref", "channel", "subject", "body")}
+    serialized = json.dumps(approved_fields, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def validate_delivery(raw: object, qualification_raw: object, followup_raw: object, research_raw: object | None = None) -> dict:
+    receipt = base(raw, "sales-delivery-receipt")
+    qualification = validate_qualification(qualification_raw)
+    validate_followup(followup_raw, qualification_raw, research_raw)
+    require_ready_for_handoff(qualification)
+    require(qualification["contact_policy_status"] == "approved", "delivery requires approved contact policy")
+    for field in ("action_id", "owner", "approval_request_id", "approved_by", "provider", "provider_message_id", "booking_url"):
+        text(receipt.get(field), field)
+    booking_url = urlparse(receipt["booking_url"])
+    require(booking_url.scheme == "https" and bool(booking_url.netloc), "booking_url must be HTTPS")
+    require(receipt["booking_url"] in followup_raw["body"], "booking URL differs from reviewed message")
+    require(receipt.get("source_brief_id") == qualification["brief_id"], "delivery cites a different qualification brief")
+    require(receipt.get("source_draft_id") == followup_raw["draft_id"], "delivery cites a different draft")
+    require(receipt.get("lead_id") == qualification["lead_id"], "delivery cites a different lead")
+    require(receipt.get("recipient_ref") == followup_raw["recipient_ref"], "delivery recipient differs from reviewed draft")
+    require(receipt.get("channel") == followup_raw["channel"], "delivery channel differs from reviewed draft")
+    require(receipt.get("draft_fingerprint") == draft_fingerprint(followup_raw), "delivery message differs from reviewed draft")
+    require(receipt.get("state") == "sent", "delivery needs a provider-confirmed sent state")
+    for field in ("approved_at", "preflight_checked_at", "sent_at"):
+        timestamp(receipt.get(field), field)
+    require(receipt.get("preflight_duplicate_state") == "none", "delivery blocked by duplicate state")
+    require(receipt.get("preflight_contact_policy_status") == "approved", "delivery blocked by contact policy")
+    require(receipt.get("preflight_reply_state") == "none", "delivery blocked by a lead reply")
+    require(receipt.get("preflight_meeting_state") == "none", "delivery blocked by an existing meeting")
+    references(receipt.get("source_refs"), "delivery.source_refs")
+    receipt_uris = [ref["uri"] for ref in receipt["source_refs"]]
+    require(any(receipt["approval_request_id"] in uri for uri in receipt_uris), "delivery lacks approval reference")
+    require(any(receipt["provider_message_id"] in uri for uri in receipt_uris), "delivery lacks provider message reference")
+    require(datetime.fromisoformat(receipt["approved_at"].replace("Z", "+00:00")) <= datetime.fromisoformat(receipt["sent_at"].replace("Z", "+00:00")), "approval must precede send")
+    require(datetime.fromisoformat(receipt["preflight_checked_at"].replace("Z", "+00:00")) <= datetime.fromisoformat(receipt["sent_at"].replace("Z", "+00:00")), "preflight must precede send")
+    return receipt
+
+
+def validate_meeting(raw: object, qualification_raw: object, delivery_raw: object | None = None, followup_raw: object | None = None, research_raw: object | None = None) -> None:
+    meeting = base(raw, "sales-meeting-outcome")
+    qualification = validate_qualification(qualification_raw)
+    require_ready_for_handoff(qualification)
+    require(qualification["contact_policy_status"] == "approved", "meeting requires an approved booking policy")
+    require(meeting.get("lead_id") == qualification["lead_id"], "meeting cites a different lead")
+    mode = meeting.get("booking_mode")
+    require(mode in {"booking_link", "instant"}, "meeting booking_mode is invalid")
+    if mode == "booking_link":
+        require(delivery_raw is not None and followup_raw is not None, "booking-link meeting requires delivery and draft")
+        receipt = validate_delivery(delivery_raw, qualification_raw, followup_raw, research_raw)
+        require(meeting.get("source_action_id") == receipt["action_id"], "meeting cites a different delivery action")
+    else:
+        require(delivery_raw is None and followup_raw is None, "instant booking must not cite an email delivery")
+        require(meeting.get("source_brief_id") == qualification["brief_id"], "instant meeting cites a different qualification brief")
+        text(meeting.get("booking_session_id"), "booking_session_id")
+    require(meeting.get("state") == "booked", "meeting must have a confirmed booked state")
+    for field in ("meeting_id", "owner", "provider", "provider_event_id"):
+        text(meeting.get(field), field)
+    timestamp(meeting.get("starts_at"), "starts_at")
+    timestamp(meeting.get("observed_at"), "observed_at")
+    references(meeting.get("source_refs"), "meeting.source_refs")
+    require(any(meeting["provider_event_id"] in ref["uri"] for ref in meeting["source_refs"]), "meeting lacks provider event reference")
+    if mode == "booking_link":
+        require(datetime.fromisoformat(meeting["observed_at"].replace("Z", "+00:00")) >= datetime.fromisoformat(receipt["sent_at"].replace("Z", "+00:00")), "meeting observation predates delivery")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=("qualification", "research", "followup"))
+    parser.add_argument("kind", choices=("qualification", "research", "followup", "delivery", "meeting"))
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--qualification", type=Path)
     parser.add_argument("--research", type=Path)
+    parser.add_argument("--followup", type=Path)
+    parser.add_argument("--delivery", type=Path)
     parser.add_argument("--require-ready", action="store_true", help="block a qualification handoff unless fit, duplicate, and contact states are ready")
     args = parser.parse_args()
-    if args.kind in {"research", "followup"} and args.qualification is None:
+    if args.kind in {"research", "followup", "delivery", "meeting"} and args.qualification is None:
         parser.error(f"{args.kind} validation requires --qualification")
-    if args.kind == "qualification" and (args.qualification or args.research):
+    if args.kind == "delivery" and args.followup is None:
+        parser.error("delivery validation requires --followup")
+    if args.kind == "qualification" and (args.qualification or args.research or args.followup or args.delivery):
         parser.error("qualification validation accepts no handoff files")
     if args.kind == "research" and args.research:
         parser.error("--research is only for followup validation")
@@ -174,14 +247,20 @@ def main() -> int:
         artifact = json.loads(args.artifact.read_text())
         qualification = json.loads(args.qualification.read_text()) if args.qualification else None
         research = json.loads(args.research.read_text()) if args.research else None
+        followup = json.loads(args.followup.read_text()) if args.followup else None
+        delivery = json.loads(args.delivery.read_text()) if args.delivery else None
         if args.kind == "qualification":
             brief = validate_qualification(artifact)
             if args.require_ready:
                 require_ready_for_handoff(brief)
         elif args.kind == "research":
             validate_research(artifact, qualification)
-        else:
+        elif args.kind == "followup":
             validate_followup(artifact, qualification, research)
+        elif args.kind == "delivery":
+            validate_delivery(artifact, qualification, followup, research)
+        else:
+            validate_meeting(artifact, qualification, delivery, followup, research)
     except (OSError, json.JSONDecodeError, InvalidArtifact) as exc:
         print(f"INVALID {args.kind}: {exc}", file=sys.stderr)
         return 1

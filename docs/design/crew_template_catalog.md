@@ -1,6 +1,6 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Five Finance, ten Website Growth, and three Sales v1 Crew templates are available in the Crew creation dialog and through Builder's trusted `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-25. Five Finance, ten Website Growth, and three Sales Crew templates are available in the Crew creation dialog and through Builder's trusted `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
 
 ## Product model
 
@@ -62,18 +62,18 @@ Tax Export keeps its own setup checklist, so a Finance Analyst can be ready for 
 
 For a B2B SaaS company receiving enquiries from a new website, start with **Lead Intake & Qualifier** and **Sales Follow-up Coordinator**. Use **Account Researcher** when sourced company context will improve the seller's response or call preparation. These are reusable Crew templates, not a requirement to create three separate Crews for every company. If one owner can safely handle the entire job in one Crew, use chat or a Crew schedule. A distinct owner or access boundary justifies a multi-Crew route.
 
-The **Inbound Lead-to-Meeting Review** Automation Playbook is an installable chat proposal. Builder inspects existing Crews and lead sources, then proposes qualification → validated handoff → owner-reviewed follow-up. Optional account research has its own validated handoffs. Its ten checks require a real inbound source, fit and contact policy, current prior-contact state, Crew binding, validator steps, a reviewed plan, and a real manual first run. The example artifacts are fictional contract samples. A draft is not a sent message or a booked meeting; a separate authorized channel and outcome source are required before those states can be reported.
+The **Inbound Lead-to-Meeting Review** Automation Playbook is an installable chat proposal. Builder inspects existing Crews, lead sources, booking route and connections, then proposes qualification → validated handoff → owner-reviewed booking offer. Optional account research has its own validated handoffs. Its ten checks require a real inbound source, fit and contact policy, current prior-contact state, Crew binding, validator steps, a reviewed plan, and a real manual first run. A separate approved action may send through a verified provider and save a delivery receipt; a calendar or CRM event is required to record a booking. The example artifacts are fictional contract samples. Instant on-page booking requires a separate website integration.
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
 | **Lead Intake & Qualifier** — available v1 | Deduplicate and assess an inbound request against owner-defined fit rules; return a sourced lead brief and next owner decision. | Inbound enquiry/export, ideal-customer criteria, routing owner and contact policy. | Inbound Lead-to-Meeting Review |
 | **Account Researcher** — available v1, optional specialist | Prepare verified company context, labeled hypotheses and seller questions without assuming purchase intent. | Company/domain, approved research scope and offer. | Optional research slot in Inbound Lead-to-Meeting Review |
-| **Sales Follow-up Coordinator** — available v1 | Prepare a cited, unsent reply draft and action ledger for a qualified lead after checking contact rules and prior touches. | Validated lead brief, approved offer, voice/contact policy and owner. | Inbound Lead-to-Meeting Review |
+| **Sales Follow-up Coordinator** — available v2 | Prepare a cited booking offer, then track an approved provider send and observed booking when the customer connects those routes. | Validated lead brief, approved offer, voice/contact policy, owner, booking URL and outcome source. | Inbound Lead-to-Meeting Review |
 | **Sales Call Briefing Assistant** | Assemble account context, likely questions, and a meeting brief. | Meeting details, CRM notes or files, product material. | Pre-meeting Brief |
 | **Proposal Drafter** | Turn discovery notes into a scoped proposal draft with open questions and evidence. | Discovery notes, pricing rules, approved proposal format. | Proposal Preparation |
 | **Pipeline Analyst** | Explain pipeline movement, stale deals, and forecast risks with record links. | Pipeline export or authorized CRM, stage definitions, reporting period. | Pipeline Health Review |
 
-Use the customer's CRM or form export for a first read-only result. HubSpot and Salesforce are relevant provider examples, not connected accounts by default; an email or calendar connection is optional until an owner approves delivery and outcome tracking. The [Sales v1 implementation guide](sales_inbound_lead_to_meeting.md) records the exact handoff, validation, and setup boundaries.
+Use the customer's CRM or form export for a first read-only result. HubSpot and Salesforce are relevant provider examples, not connected accounts by default; an email or calendar connection is needed for approved delivery and outcome tracking. The [Sales implementation guide](sales_inbound_lead_to_meeting.md) records the handoff, validation, and setup boundaries.
 
 ## Website Growth
 

@@ -4,6 +4,7 @@ export type SalesSpecialistId = 'lead-intake-qualifier' | 'account-researcher' |
 
 type SalesSpecialist = {
   id: SalesSpecialistId
+  version: number
   name: string
   icon: string
   subcategory: string
@@ -22,7 +23,7 @@ type SalesSpecialist = {
 
 const specialists: readonly SalesSpecialist[] = [
   {
-    id: 'lead-intake-qualifier', name: 'Lead Intake & Qualifier', icon: '📥', subcategory: 'Inbound leads',
+    id: 'lead-intake-qualifier', version: 1, name: 'Lead Intake & Qualifier', icon: '📥', subcategory: 'Inbound leads',
     role: 'Inbound lead intake and qualification coordinator',
     purpose: 'Turn an authorized inbound enquiry into a deduplicated, evidence-linked qualification brief and owner decision.',
     firstResult: 'A lead qualification brief with fit reasons, source references, missing details, and a proposed owner.',
@@ -46,7 +47,7 @@ Use the owner's actual ideal-customer profile and disqualification rules. A miss
 On repeat intake, use the lead source ID and stable brief ID to check whether the record, owner, or stage changed. Report the delta and avoid opening a second case for the same enquiry.`,
   },
   {
-    id: 'account-researcher', name: 'Account Researcher', icon: '🔎', subcategory: 'Account intelligence',
+    id: 'account-researcher', version: 1, name: 'Account Researcher', icon: '🔎', subcategory: 'Account intelligence',
     role: 'Evidence-led B2B account researcher',
     purpose: 'Prepare a short, sourced account brief that helps a seller understand an approved prospect without fabricating buyer intent.',
     firstResult: 'A dated account research brief with verified facts, relevant hypotheses, and questions for the seller.',
@@ -68,26 +69,26 @@ On repeat intake, use the lead source ID and stable brief ID to check whether th
 Prefer the account's own current site and the customer's approved CRM over unsourced directory summaries. Check a company-domain match before attaching a finding to a lead. Do not turn a job posting, funding announcement, or technology guess into a claimed purchase need. If the public site is sparse, return a short brief with explicit unknowns and discovery questions. Recheck time-sensitive facts before a later run.`,
   },
   {
-    id: 'sales-followup-coordinator', name: 'Sales Follow-up Coordinator', icon: '✉️', subcategory: 'Follow-up',
+    id: 'sales-followup-coordinator', version: 2, name: 'Sales Follow-up Coordinator', icon: '✉️', subcategory: 'Follow-up',
     role: 'Human-reviewed B2B lead follow-up coordinator',
-    purpose: 'Prepare relevant follow-up drafts and an owner action ledger from qualified inbound leads without sending messages automatically.',
+    purpose: 'Prepare reviewed booking offers and track authorized delivery and meeting outcomes for qualified inbound leads.',
     firstResult: 'A reviewable follow-up draft with cited claims, recipient reference, owner, and next-check date.',
     minimumInput: 'Validated lead brief, offer and voice guidance, contact policy, owner, and any prior-contact history.',
-    optionalConnections: 'Approved CRM and email or calendar connection for separately reviewed delivery and meeting tracking; a draft needs no live connection.',
-    exampleRequests: ['Draft a useful reply to this qualified demo request for my review. Do not send it.', 'Review follow-ups due this week and flag duplicate contact or missing approval.'],
+    optionalConnections: 'Approved CRM/form source, verified booking URL, email sender, and calendar outcome source. A draft needs no live connection; delivery and booking tracking do.',
+    exampleRequests: ['Draft a booking-link reply to this qualified demo request for my review. Do not send it.', 'Review follow-ups due this week and flag duplicate contact or missing approval.'],
     method: [
-      'Confirm lead owner, current stage, contact channel and policy, allowed claims, message voice, and what outcome counts as a useful meeting.',
+      'Confirm lead owner, current stage, contact channel and policy, allowed claims, message voice, owner-specific booking URL, and what outcome counts as a useful meeting.',
       'Read the validated lead brief and approved research if present. Check prior messages, replies, opt-outs, and already-booked meetings before proposing another touch.',
       'Draft one short response tied to the prospect’s actual enquiry. Cite support for factual claims and mark any uncertain personalization for review.',
       'Create an action ledger entry with stable lead/action IDs, recipient reference, proposed send time, approval state, owner, and next-check date.',
-      'Ask the owner to review the draft and timing. Only a separately configured, authorized sending route may deliver it and record a provider receipt.',
+      'Ask the owner to review the exact recipient, message, booking URL and timing. A separately configured action may send only after fresh checks, then record provider delivery and calendar or CRM booking evidence.',
     ],
     evidence: 'The draft links to the exact lead brief, prior-contact evidence, approved offer material, and any account research it uses.',
     boundary: 'Do not email, message, enroll a sequence, update CRM, schedule a meeting, or mark a draft as sent without a separately approved action and verified current state.',
-    handoff: 'For Inbound Lead-to-Meeting Review, emit plain JSON `sales-followup-draft/v1` linked to the qualification brief and optional validated research. Keep `send_state` as `not_sent` and `approval_required` true. The Workflow validates before presenting it to the owner.',
+    handoff: 'For Inbound Lead-to-Meeting Review, emit plain JSON `sales-followup-draft/v1` linked to the qualification brief and optional validated research. Keep `send_state` as `not_sent` and `approval_required` true. A separate approved action may create `sales-delivery-receipt/v1` from a real provider response; later observed calendar or CRM events may create `sales-meeting-outcome/v1`. Never infer these outcomes from a draft.',
     deeperMethod: `## Contact and repeat-run rules
 
-An inbound request is not blanket consent for every channel or cadence. Follow the customer's policy and current suppression state. Stop a draft when the lead is not qualified, contact is blocked, a relevant reply already arrived, or a meeting is already booked. If CRM or inbox access is absent, state that duplicate-contact checks are incomplete and keep the result an internal proposal. On a repeat run, re-read the lead, contact history, and action ledger; use stable IDs so retries cannot produce duplicate sends.`,
+An inbound request is not blanket consent for every channel or cadence. Follow the customer's policy and current suppression state. Stop a draft when the lead is not qualified, contact is blocked, a relevant reply already arrived, or a meeting is already booked. If CRM or inbox access is absent, state that duplicate-contact checks are incomplete and keep the result an internal proposal. For an approved send, re-read the durable decision and exact message fingerprint, lead, suppression, reply and meeting state; use a stable action ID and provider receipt so retries cannot produce duplicate sends. Report booked only from a matched calendar or CRM event.`,
   },
 ]
 
@@ -100,10 +101,10 @@ function checklist(spec: SalesSpecialist): string {
     { id: 'policy', title: 'Agree on qualification and contact policy', instructions: 'Confirm actual fit criteria, routing owner, contact/suppression rules, and the distinction between a draft and an approved send. Mark unresolved policy as a blocker.' },
     { id: 'first_result', title: 'Produce the first result', instructions: `Produce ${spec.firstResult} ${spec.evidence} Use actual authorized data; a fictional example alone does not complete this check.` },
     { id: 'review', title: 'Review the first result', instructions: 'Show a representative output to the owner and record corrections, decision, and next action before completing setup.' },
-    { id: 'delivery', title: 'Decide on delivery', optional: true, instructions: 'Choose chat-only or a separately approved CRM/email/calendar route. Chat-only is a completed decision. No outbound action or CRM mutation is enabled by this template.' },
+    { id: 'delivery', title: 'Decide on delivery', optional: true, instructions: spec.id === 'sales-followup-coordinator' ? 'Choose chat-only or a separately approved sending and booking-tracking route. Verify the actual sending account/grants, owner-specific booking URL, meeting source, review gate and provider receipt before enabling delivery. Chat-only is a completed decision; this template itself enables no outbound action.' : 'Choose chat-only or a separately approved CRM/email/calendar route. Chat-only is a completed decision. No outbound action or CRM mutation is enabled by this template.' },
     { id: 'recurrence', title: 'Decide on recurrence', optional: true, instructions: 'Choose manual-only or a separately reviewed schedule, authenticated trigger, callable function, or Automation. Manual-only completes this decision; test any configured route before activation.' },
   ]
-  return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2)}\n`
+  return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: spec.version, checks, completed_steps: [] }, null, 2)}\n`
 }
 
 function skill(spec: SalesSpecialist): string {
@@ -141,7 +142,7 @@ ${spec.boundary} Never copy another Crew's connection or credentials. Installing
 function guide(spec: SalesSpecialist): string {
   return `# ${spec.name} setup
 
-Template \`${spec.id}\` version 1. Progress lives in \`templates/${spec.id}/TEMPLATE_SETUP.json\` and is verified through Crew chat.
+Template \`${spec.id}\` version ${spec.version}. Progress lives in \`templates/${spec.id}/TEMPLATE_SETUP.json\` and is verified through Crew chat.
 
 ## First result
 
@@ -165,7 +166,7 @@ export const salesSpecialists: readonly CrewTemplate[] = specialists.map(spec =>
   const setupGuidePath = `${base}/SETUP.md`
   const setupPath = `${base}/TEMPLATE_SETUP.json`
   return {
-    id: spec.id, version: 1, category: 'Sales', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: spec.version, category: 'Sales', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

@@ -109,7 +109,7 @@ func TestSalesPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := workspace + "/skills/" + skill + "/"
-	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_sales_artifact.py", "examples/lead-qualification-brief.json", "examples/account-research-brief.json", "examples/sales-followup-draft.json"} {
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "references/booking-and-delivery.md", "scripts/validate_sales_artifact.py", "examples/lead-qualification-brief.json", "examples/account-research-brief.json", "examples/sales-followup-draft.json", "examples/sales-delivery-receipt.json", "examples/sales-meeting-outcome.json", "examples/sales-instant-meeting-outcome.json"} {
 		if mock.files[base+relative] == "" {
 			t.Fatalf("sales playbook installation lacks %s", relative)
 		}

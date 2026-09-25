@@ -39,6 +39,7 @@ describe('small-team catalog', () => {
   it('exposes the Sales route with required qualification and follow-up and optional research', () => {
     const sales = PLAYBOOK_CATALOG.find(item => item.id === 'inbound-lead-to-meeting-review')
     expect(sales?.category).toBe('Sales')
+    expect(sales?.version).toBe('0.2.0')
     expect(sales?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual(['lead-intake-qualifier', 'sales-followup-coordinator'])
     expect(sales?.agentSlots?.find(slot => slot.id === 'research')?.required).toBe(false)
     expect(sales?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('lead-qualification-brief/v1')

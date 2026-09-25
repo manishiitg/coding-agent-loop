@@ -48,6 +48,12 @@ export type BotRouteTarget = {
 
 export function useWorkflowBots(workspacePath: string | null, target?: BotRouteTarget, section: 'bots' | 'email' | 'all' = 'all') {
   // ── Workflow identity ─────────────────────────────────────────────────────
+  // Crew passes a fresh target object when chat state changes. Effects must
+  // depend on its values so typing does not reload the Slack setup panel.
+  const targetProfileId = target?.profileId
+  const targetConversationKey = target?.conversationKey
+  const targetLabel = target?.label
+  const hasTarget = target !== undefined
   const workflows = useWorkflowManifestStore(state => state.workflows)
   const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
   const updateWorkflow = useWorkflowManifestStore(state => state.updateWorkflow)
@@ -55,12 +61,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     () => (workspacePath ? workflows.find(w => w.workspace_path === workspacePath) : undefined),
     [workflows, workspacePath],
   )
-  const workflowId = target?.conversationKey || workflow?.manifest.id || null
+  const workflowId = targetConversationKey || workflow?.manifest.id || null
   const workflowLabel = (id: string) => workflows.find(w => w.manifest.id === id)?.manifest.label || id
   // Every write here lands in shared connector config immediately -- there's
   // no Save step for the panel to gate -- so each mutating control disables.
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
-  const readOnly = target ? false : !canWriteWorkflow
+  const readOnly = hasTarget ? false : !canWriteWorkflow
   // Slack apps are owner-managed (writers get a 403 server-side); readers see
   // everything disabled through readOnly as usual.
   const canManageWorkflowSlack = !readOnly && (workflow?.my_access || 'owner') === 'owner'
@@ -71,21 +77,21 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const canManageOwnWhatsAppDevices: boolean = true
 
   const routeMatchesTarget = useCallback((route: ChannelRoute | WaRoute) => {
-    if (target) {
-      return route.profile_id === target.profileId && route.conversation_key === target.conversationKey
+    if (hasTarget) {
+      return route.profile_id === targetProfileId && route.conversation_key === targetConversationKey
     }
     return route.workflow_id === workflowId
-  }, [target, workflowId])
+  }, [hasTarget, targetProfileId, targetConversationKey, workflowId])
 
-  const routeForTarget = useCallback((): ChannelRoute => target ? {
+  const routeForTarget = useCallback((): ChannelRoute => hasTarget ? {
     workspace_path: workspacePath || '',
-    profile_id: target.profileId,
-    conversation_key: target.conversationKey,
-    profile_label: target.label,
+    profile_id: targetProfileId,
+    conversation_key: targetConversationKey,
+    profile_label: targetLabel,
   } : {
     workflow_id: workflowId || '',
     workspace_path: workflow?.workspace_path || '',
-  }, [target, workflowId, workflow?.workspace_path, workspacePath])
+  }, [hasTarget, targetProfileId, targetConversationKey, targetLabel, workflowId, workflow?.workspace_path, workspacePath])
 
   useEffect(() => {
     if (workflows.length === 0) void refreshWorkflows()
@@ -217,9 +223,9 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       const data = await agentApi.getSlackFeedbackConfig()
       setSlackConfig(data)
       setSlackOriginal(data)
-      if (target && workspacePath) {
+      if (hasTarget && workspacePath) {
         try {
-          const selection = await agentApi.getProjectSlackSelection(target.profileId, workspacePath)
+          const selection = await agentApi.getProjectSlackSelection(targetProfileId || '', workspacePath)
           setProjectSlackSelectionId(selection.slack_connection_id || '')
         } catch {
           setProjectSlackSelectionId('')
@@ -230,7 +236,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } finally {
       setSlackLoading(false)
     }
-  }, [target, workspacePath])
+  }, [hasTarget, targetProfileId, workspacePath])
 
   const loadWaStatus = useCallback(async () => {
     try {
@@ -508,11 +514,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     () => resolveWorkflowSlackConnection(
       slackOriginal.connections,
       workspacePath,
-      target ? projectSlackSelectionId : workflow?.manifest.capabilities.slack_connection_id,
+      hasTarget ? projectSlackSelectionId : workflow?.manifest.capabilities.slack_connection_id,
       slackOriginal.default_connection_id,
-      target ? target.profileId : null,
+      targetProfileId ?? null,
     ),
-    [slackOriginal.connections, slackOriginal.default_connection_id, target, workspacePath, projectSlackSelectionId, workflow?.manifest.capabilities.slack_connection_id],
+    [slackOriginal.connections, slackOriginal.default_connection_id, hasTarget, targetProfileId, workspacePath, projectSlackSelectionId, workflow?.manifest.capabilities.slack_connection_id],
   )
   const slackOwnConnId = slackSelection.own?.id || null
   useEffect(() => {
@@ -674,7 +680,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // Show accessible workflow destinations in the shared connector overview.
   // Crew remains scoped to its selected project.
   const workflowRoutes = useMemo<WorkflowRoute[]>(() => {
-    const visible = (route: ChannelRoute | WaRoute) => routeMatchesTarget(route) || (!target && !!route.workflow_id && workflows.some(w => w.manifest.id === route.workflow_id))
+    const visible = (route: ChannelRoute | WaRoute) => routeMatchesTarget(route) || (!hasTarget && !!route.workflow_id && workflows.some(w => w.manifest.id === route.workflow_id))
     const describe = (route: ChannelRoute | WaRoute) => ({
       target_label: route.profile_id ? route.profile_label || route.conversation_key : workflows.find(w => w.manifest.id === route.workflow_id)?.manifest.label || route.workflow_id,
       current_target: routeMatchesTarget(route),
@@ -688,7 +694,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       .filter(([, route]) => visible(route))
       .map(([key, route]) => ({ kind: 'whatsapp' as const, key, ...describe(route) }))
     return [...slack, ...wa]
-  }, [slackOriginal.channel_routing, waRouting, workflows, target, routeMatchesTarget])
+  }, [slackOriginal.channel_routing, waRouting, workflows, hasTarget, routeMatchesTarget])
   const myRoutes = useMemo(() => workflowRoutes.filter(route => route.current_target), [workflowRoutes])
 
   // Slack channel routing writes: base on the last loaded config so unsaved

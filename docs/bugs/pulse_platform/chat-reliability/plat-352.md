@@ -1,14 +1,101 @@
 [← Pulse platform issue index](../../pulse_platform_issue_register.md)
 
-# PLAT-352 — Simplify chat render and restoration to one durable ordered log (design)
+# PLAT-352 — Chat reliability umbrella: durable log, turn delivery, continuity
 
 | Field | Value |
 |---|---|
-| Status | `complete on main; RTS verification of the final phase pending` |
-| Priority | P2 architecture |
+| Status | `umbrella: durable-log refactor complete on main (RTS verification pending); turn-delivery hardening diagnosed 2026-09-25, fix deferred` |
+| Priority | P0 reliability track |
 | Owner | platform (chat reliability) |
-| Reported | 2026-09-22 |
-| Related | PLAT-324 (retain conversations across reloads), PLAT-351 (retained-turn settle), commit `df8254c1a` (cursor-only restore) |
+| Reported | 2026-09-22 (umbrella declared 2026-09-25) |
+| Related | PLAT-324 (retain conversations across reloads), PLAT-351 (retained-turn settle), PLAT-178 (retained delivery/transcript recovery), PLAT-340 (Stop/resume bindings), commit `df8254c1a` (cursor-only restore) |
+
+## Umbrella scope
+
+PLAT-352 is the single home for chat-reliability work: every chat turn
+must execute exactly once, journal durably, and restore identically. It
+consolidates the formerly separate turn-delivery ticket (PLAT-359,
+folded in 2026-09-25 and deleted) and the duplicate Stop/resume record
+(chat-reliability PLAT-339, now a pointer to PLAT-340 — the number
+belongs to the security-sandbox Crew-invocation ticket). Member tickets
+with their own files stay linked, not duplicated: PLAT-324
+(continuity), PLAT-178 (delivery/transcript recovery), PLAT-340
+(Stop/resume bindings), PLAT-351 (retained-turn settle).
+
+## Turn delivery: no silent drops into dead retained runtimes (2026-09-25, fix deferred)
+
+Follow-up chat turns are short-circuited as retained live-input into a
+coding-agent CLI runtime that can no longer execute them. The request gets
+a 200 ack (`live_input_delivered`-family), but nothing runs: no agent
+rebuild, no events journaled (not even the user message), no error, and —
+on one rung — no log line at all. The chat looks stuck: the UI shows the
+optimistic bubble forever. There is no user escape: the workflow surface
+has no new-chat control (`showNewChatAction` is not passed;
+`clearSession` has zero UI callers), and the product `NewChatControl`
+never renders (`newConversationEnabled` is never set true).
+
+Two live reproductions, same signature:
+
+- **Confida, 2026-09-24 11:00–11:42 CEST.** Workflow builder session
+  `ca9a753b` (`Workflow/confida-login`, Saurabh). The watchdog killed the
+  pi-cli tmux on a provider wall and failed the session. Four follow-ups
+  returned 200/286B in ~280ms with zero agent activity and zero new
+  events; the event store confirms the user messages were never
+  journaled. A provider switch to `muse-cli` saved to the manifest in the
+  middle but never engaged — workflow mode ignores `req.Provider`, and no
+  new turn ever started.
+- **Local, 2026-09-25 08:03 IST.** Work product conversation
+  `work:project:2f63209f` (news-monitor), provider `muse-cli` per the
+  product registry. Two `POST /api/agent-profiles/work/query` returned
+  200/165B in ~130ms; server logs show nothing after `Request received`
+  (`[SHELL]` is the last line); event store ends at the 07:43 scheduled
+  briefing. The 4 live tmux sessions all belong to other conversations.
+
+Contributing mechanisms (all verified in code/logs):
+
+1. **Fingerprint check bypass.** `workflowRetainedPolicyCompatible`
+   (`agent_go/cmd/server/workflow_retained_policy.go:18`) compares the
+   manifest's current provider against the last-bound one and forces a
+   fresh turn on mismatch — but returns `true` immediately when the
+   request carries no `Workflow/` folder (line 22). Follow-ups that omit
+   it skip the check, so a manifest provider change never triggers the
+   designed rebind-and-new-turn.
+2. **Silent delivery rungs.** `deliverQueryAsLiveInputNow`
+   (`agent_go/cmd/server/server.go:9936`) has rungs that return
+   "handled" with no log line (cold retained fallback; queued/non-tmux
+   accept). Healthy retained turns log `[QUERY->LIVE] … provider=…
+   transport=tmux`; the dead turns log nothing, which is how they were
+   distinguished.
+3. **No liveness gate before retained delivery.** Neither the durable
+   mcpagent rung nor the cold fallback verifies the target tmux/CLI can
+   actually execute before claiming the message; a dead target yields an
+   ack into the void instead of falling through to a normal new turn.
+4. **Stopped-guard red herring (ruled out).** `clearSessionStopped`
+   (`server.go:4019`) runs on every real user message, and the runtime
+   coordinator boundary clears with it — the drop is downstream, in
+   retained delivery, not in session status.
+
+Authorized behavior: a chat is an open conversation that never
+dead-ends. Every turn resolves the session's effective provider/model
+(+connection for product chats) and compares it with the live runtime's
+fingerprint; on mismatch the stale CLI runtime is closed and the turn
+proceeds as a normal new turn in the same conversation (history is keyed
+by session). New tmux, same chat. Retained delivery verifies the target
+is live before claiming a message; a dead/stale target falls through to
+a new turn. Every retained-delivery decision logs one line. Product
+chats get a reachable new-conversation control; workflow chats get a
+new-chat/clear control, at minimum when the session's runtime is dead.
+Follow-ups that cannot execute surface a visible error with a recovery
+action, never a silent 200. Precedent: product chats already implement
+the rebind half (`bindRuntimeConfiguration` +
+`closeAllCodingCLIInteractiveSessionsForOwner` + runner relaunch).
+
+Acceptance: stale-provider follow-up starts a fresh turn in the same
+session; dead-target follow-up falls through (no silent ack); every
+accept path logs; re-run both reproductions above. Workarounds until
+fixed: server restart clears in-memory terminal/lease state;
+`POST /api/agent-profiles/{id}/conversation/new` rotates product
+conversations (API only); incognito yields a fresh client session id.
 
 ## Problem
 

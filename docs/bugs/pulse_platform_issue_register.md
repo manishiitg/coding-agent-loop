@@ -72,18 +72,18 @@ restricts them to chat plus Memory and a read-only file browser, and guards
 all manifest writes. Implemented and pushed to main; deployment and live
 acceptance on the Confida server pending.
 
-## Simplify chat render and restoration to one durable ordered log — PLAT-352
+## Chat reliability umbrella — PLAT-352
 
-[PLAT-352](pulse_platform/chat-reliability/plat-352.md) replaced the
-volatile-window plus durable-JSON reconciliation in chat restore with one
-chat-only SQLite journal per interactive session, read by sequence range for
-restore, resume and pagination. Shipped on main and deployed to RTS on
-2026-09-23 with its review fixes (cursor, deletes, per-session journal lock,
-startup import on every launch path, access-token carry-over, CORS, stream
-start cursor). The final phase adds stable client message IDs with
-delivery-time ordering, artifact storage for oversized rows (with a
-"Show full" view), and retention that keeps every chat while compacting old
-bulk under a size cap. Complete on main; RTS verification pending.
+[PLAT-352](pulse_platform/chat-reliability/plat-352.md) is the single home
+for chat-reliability work: every chat turn must execute exactly once,
+journal durably, and restore identically. It covers the durable-log
+restore refactor (shipped on main, RTS verification pending) and the
+turn-delivery hardening track (turns silently dropped into dead retained
+runtimes — diagnosed 2026-09-25 from Confida `ca9a753b` and local
+news-monitor repros; fingerprint rebind + dead-runtime guard fix
+deferred). Member tickets stay linked: PLAT-324 (continuity), PLAT-178
+(delivery/transcript recovery), PLAT-340 (Stop/resume bindings),
+PLAT-351 (retained-turn settle).
 
 ## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
 
@@ -138,13 +138,14 @@ the retained-chat `SendClaudeCodeInput` path. Fixed by moving retention to a
 shared lease (adapters keep no private timer state); pending RTS deployment.
 Typed cleanup reasons remain an observability follow-up.
 
-## Stopping a workflow response stranded the next message — PLAT-339
+## Stopping a workflow response stranded the next message — PLAT-340 (duplicate chat-reliability PLAT-339 removed)
 
-[PLAT-339](pulse_platform/chat-reliability/plat-339.md) records the confida
-2026-09-21 reproduction where pressing Stop then sending another message left
-the chat unusable: `live-input` returned 409 because the Stop teardown
-deleted `lastQueryRequests` and `sessionWorkspaceFolders`. Implemented
-locally with green regression tests; not pushed or deployed at filing time.
+The duplicate [chat-reliability record](pulse_platform/chat-reliability/plat-339.md)
+now points at [PLAT-340](pulse_platform/chat-reliability/plat-340.md),
+which carries the Confida 2026-09-21 Stop/resume reproduction and fix.
+(The PLAT-339 number belongs to the security-sandbox Crew-invocation
+ticket.) Tracked under the [PLAT-352](pulse_platform/chat-reliability/plat-352.md)
+chat-reliability umbrella.
 
 ## Retained-session workflow-open fan-out — PLAT-348
 

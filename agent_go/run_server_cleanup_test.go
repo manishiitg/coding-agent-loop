@@ -37,9 +37,11 @@ func TestRunServerRuntimeDiagnosticsAreControlledOnlyByFlag(t *testing.T) {
 	}
 	text := string(script)
 
-	// The gate must be applied after .env loading and explicitly clear both
-	// variables in the ordinary (no-flag) path. Otherwise a legacy .env entry
-	// silently enables the diagnostic terminal rail.
+	// The gate must be applied after .env loading and explicitly pin both
+	// variables to 0 in the ordinary (no-flag) path. Otherwise a legacy .env
+	// entry silently enables the diagnostic terminal rail: a plain unset is
+	// not enough because the server's godotenv.Load re-sets unset variables
+	// from .env at boot, while an explicit 0 is preserved (and reads off).
 	envLoad := strings.Index(text, "source_exported_env_file ../agent_go/.env")
 	gate := strings.Index(text, "# Runtime diagnostics are controlled only by the explicit command-line switch.")
 	if envLoad < 0 || gate < 0 || gate <= envLoad {
@@ -50,8 +52,8 @@ func TestRunServerRuntimeDiagnosticsAreControlledOnlyByFlag(t *testing.T) {
 		"if [ \"$ENABLE_CHAT_TERMINAL_DEBUGS\" = true ]; then",
 		"export AGENTWORKS_RUNTIME_DEBUG=1",
 		"export VITE_RUNTIME_DEBUG=1",
-		"unset AGENTWORKS_RUNTIME_DEBUG",
-		"unset VITE_RUNTIME_DEBUG",
+		"export AGENTWORKS_RUNTIME_DEBUG=0",
+		"export VITE_RUNTIME_DEBUG=0",
 	} {
 		if !strings.Contains(gateText, expected) {
 			t.Errorf("runtime diagnostics gate is missing %q", expected)

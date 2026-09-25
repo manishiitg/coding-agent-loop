@@ -908,14 +908,16 @@ fi
 export AGENT_BROWSER_SHARED_PROFILE="${AGENT_BROWSER_SHARED_PROFILE:-$HOME/.agentworks/browser-profile}"
 
 # Runtime diagnostics are controlled only by the explicit command-line switch.
-# Clear inherited or legacy .env values during ordinary product runs so a stale
-# local setting cannot expose the child/step terminal rail unexpectedly.
+# Pin both variables to 0 during ordinary product runs so a stale local .env
+# setting cannot expose the child/step terminal rail unexpectedly. A plain
+# unset is not enough: the server's godotenv.Load re-sets unset variables
+# from .env at boot, while an explicitly set 0 is preserved (and reads off).
 if [ "$ENABLE_CHAT_TERMINAL_DEBUGS" = true ]; then
     export AGENTWORKS_RUNTIME_DEBUG=1
     export VITE_RUNTIME_DEBUG=1
 else
-    unset AGENTWORKS_RUNTIME_DEBUG
-    unset VITE_RUNTIME_DEBUG
+    export AGENTWORKS_RUNTIME_DEBUG=0
+    export VITE_RUNTIME_DEBUG=0
 fi
 
 ensure_local_auth_secret

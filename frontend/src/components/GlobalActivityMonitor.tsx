@@ -24,7 +24,7 @@ import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '
 import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
-import { activityTypeLabels, crewActivityTitle, type ActivityType } from '../utils/globalActivityPresentation'
+import { activityTypeLabels, botPlatformLabel, crewActivityTitle, type ActivityType } from '../utils/globalActivityPresentation'
 import { useLiveRefetch } from '../hooks/useLiveRefetch'
 
 type ActivityMonitorItem =
@@ -50,12 +50,13 @@ const activityTypeIcons: Record<ActivityType, typeof Webhook> = {
   Chat: MessageSquare,
 }
 
-function ActivityTypeIcon({ type }: { type: ActivityType }) {
+function ActivityTypeIcon({ type, platform }: { type: ActivityType; platform?: string }) {
   const Icon = activityTypeIcons[type]
-  const label = activityTypeLabels[type]
+  const label = type === 'Bot' && platform ? `${platform} bot conversation` : activityTypeLabels[type]
   return (
-    <span className="inline-flex opacity-75" title={label} aria-label={label}>
+    <span className="inline-flex items-center gap-1 opacity-75" title={label} aria-label={label}>
       <Icon className="h-3 w-3" aria-hidden="true" />
+      {type === 'Bot' && platform && <span className="text-[10px] leading-none">{platform}</span>}
     </span>
   )
 }
@@ -499,7 +500,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                       ? <EntityIdentityIcon icon={tab?.metadata?.agentProfileProjectIcon} label={tab?.metadata?.agentProfileIdentityName || title} />
                       : null}
                   <span className="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200">{title}</span>
-                  <ActivityTypeIcon type={type} />
+                  <ActivityTypeIcon type={type} platform={type === 'Bot' ? botPlatformLabel(session.bot_platform, session.session_id) : undefined} />
                   <span className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{timeAgo(session.last_activity)}</span>
                 </button>
               )

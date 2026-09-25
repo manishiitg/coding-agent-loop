@@ -8,7 +8,7 @@ import {
   statusTone,
   visibleActivitySessions,
 } from '../utils/globalActivityMonitorStatus'
-import { activityTypeLabels, crewActivityTitle } from '../utils/globalActivityPresentation'
+import { activityTypeLabels, botPlatformLabel, crewActivityTitle } from '../utils/globalActivityPresentation'
 import type { ChatTab } from '../stores/useChatStore'
 
 function minimalSession(overrides: Partial<ActiveSessionInfo> = {}): ActiveSessionInfo {
@@ -101,6 +101,12 @@ describe('global activity monitor labels', () => {
     } as ChatTab
 
     expect(crewActivityTitle(tab, 'Agent chat')).toBe('Release crew')
+  })
+
+  it('names the bot platform from bot_platform or the session id', () => {
+    expect(botPlatformLabel('slack', 'x')).toBe('Slack')
+    expect(botPlatformLabel(undefined, 'bot-whatsapp--abc')).toBe('WhatsApp')
+    expect(botPlatformLabel('', 'chat-1')).toBe('')
   })
 
   it('labels every activity type so each row says what started it', () => {

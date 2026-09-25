@@ -4,8 +4,11 @@ import financeAnalystSetupState from './templates/finance-analyst/TEMPLATE_SETUP
 import taxExportSkill from './templates/tax-export/SKILL.md?raw'
 import taxExportSetup from './templates/tax-export/SETUP.md?raw'
 import taxExportSetupState from './templates/tax-export/TEMPLATE_SETUP.json?raw'
+import websiteGrowthSkill from './templates/website-growth-starter/SKILL.md?raw'
+import websiteGrowthSetup from './templates/website-growth-starter/SETUP.md?raw'
+import websiteGrowthSetupState from './templates/website-growth-starter/TEMPLATE_SETUP.json?raw'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export'
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'website-growth-starter'
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -88,6 +91,30 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'skills/tax-export/SKILL.md': taxExportSkill,
     'templates/tax-export/SETUP.md': taxExportSetup,
     'templates/tax-export/TEMPLATE_SETUP.json': taxExportSetupState,
+  },
+}, {
+  id: 'website-growth-starter',
+  version: 1,
+  category: 'Website Growth',
+  name: 'Website Growth Starter',
+  icon: '🌱',
+  role: 'Website growth strategist for this business',
+  purpose: 'Audit the business website, find evidence-backed opportunities for relevant traffic, and guide a measurable 30-day growth plan.',
+  firstResult: 'A sourced website audit and prioritized 30-day traffic growth plan.',
+  minimumInput: 'Public website URL or page export, target audience, and primary visitor action.',
+  optionalConnections: 'Search Console and analytics for measurement; a repository or CMS for reviewed page edits.',
+  exampleRequests: [
+    'Audit my newly launched website and propose the first five actions to attract relevant visitors.',
+    'Review our homepage and product page. What is blocking discovery, and what should we measure next?',
+  ],
+  selectedSkills: ['website-growth-starter'],
+  setupPath: 'templates/website-growth-starter/TEMPLATE_SETUP.json',
+  setupGuidePath: 'templates/website-growth-starter/SETUP.md',
+  requiredFiles: ['skills/website-growth-starter/SKILL.md', 'templates/website-growth-starter/SETUP.md', 'templates/website-growth-starter/TEMPLATE_SETUP.json'],
+  files: {
+    'skills/website-growth-starter/SKILL.md': websiteGrowthSkill,
+    'templates/website-growth-starter/SETUP.md': websiteGrowthSetup,
+    'templates/website-growth-starter/TEMPLATE_SETUP.json': websiteGrowthSetupState,
   },
 }]
 

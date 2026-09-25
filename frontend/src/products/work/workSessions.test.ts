@@ -147,6 +147,25 @@ describe('createWorkSession', () => {
     expect(session.selectedSkills).toEqual(['finance-analyst'])
   })
 
+  it('creates a Website Growth Starter with a separate setup checklist and no active connections', async () => {
+    updatePlannerFile.mockClear()
+    const session = await createWorkSession('Our Website Growth Crew', 'Grow relevant website visits.', '🌱', 'website-growth-starter')
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const product = JSON.parse(writes.get(`${session.workspacePath}/product.json`)!)
+    const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
+    const setup = JSON.parse(writes.get(`${session.workspacePath}/templates/website-growth-starter/TEMPLATE_SETUP.json`)!)
+
+    expect(product.templates).toEqual([{ id: 'website-growth-starter', version: 1 }])
+    expect(product.identity.role).toBe('Website growth strategist for this business')
+    expect(runtime.capabilities.selected_skills).toEqual(['website-growth-starter'])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(writes.get(`${session.workspacePath}/skills/website-growth-starter/SKILL.md`)).toContain('Website Growth Brief')
+    expect(setup).toMatchObject({ schema_version: 1, template_id: 'website-growth-starter', template_version: 1, completed_steps: [] })
+    expect(setup.checks).toHaveLength(10)
+  })
+
   it('adds Tax Export to Finance Analyst without changing identity, existing skill, or setup progress', async () => {
     const files = new Map<string, string>()
     updatePlannerFile.mockImplementation(async (path: string, content: string) => { files.set(path, content); return {} })

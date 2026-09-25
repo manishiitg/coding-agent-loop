@@ -1,6 +1,6 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Finance Analyst v1 and Tax Export Preparer v1 are available in the Crew creation dialog and can be installed together in one Crew. The other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-25. Finance Analyst v1, Tax Export Preparer v1, and Website Growth Starter v1 are available in the Crew creation dialog. They can be installed together in one Crew. The other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
 
 ## Product model
 
@@ -8,7 +8,7 @@ A **Crew template** provides a reusable capability pack: a local skill, starter 
 
 Each template must work as a useful interactive Crew after the user provides its minimum inputs. Connected accounts, schedules, outbound messages, payments, production changes, and other consequential actions require explicit setup and the product's normal permissions and approvals. Never prefill a customer's target metric with an illustrative website number.
 
-The catalog has **37 Crew templates in six categories**. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales from Marketing & Growth and uses clearer Finance and Customer Support labels. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
+The catalog has **44 Crew templates in seven categories**. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Marketing & Growth, and Website Growth for the specific new-site traffic journey. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
 The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
 
@@ -46,14 +46,30 @@ The creation picker is designed for a larger installed catalog: keep Blank Crew 
 | **Proposal Drafter** | Turn discovery notes into a scoped proposal draft with open questions and evidence. | Discovery notes, pricing rules, approved proposal format. | Proposal Preparation |
 | **Pipeline Analyst** | Explain pipeline movement, stale deals, and forecast risks with record links. | Pipeline export or authorized CRM, stage definitions, reporting period. | Pipeline Health Review |
 
+## Website Growth
+
+For a new company with a recently launched site, start with a result that can be produced from the public website and owner context. Add Search Console and analytics when available; a new site may not have enough history to support trend claims. One Crew can install several packs, while a separate Website Growth Loop Automation can revisit the agreed goal and measure whether actions shipped and useful traffic changed. The first pack is implemented; the specialists below are planned.
+
+| Crew template | Job and first useful output | Minimum user input | Suggested Automation |
+| --- | --- | --- | --- |
+| **Website Growth Starter** | Audit the public site and produce a source-linked 30-day plan for attracting relevant visitors. **Available v1.** | Site URL or page export, offer, target audience, primary visitor action. | Website Growth Loop |
+| **SEO Analyst** | Prioritize crawl, indexability, internal-link, and on-page issues with page-level evidence. | Site, approved crawl scope, Search Console if available. | SEO Intelligence |
+| **Search Opportunity Mapper** | Map buyer questions and search intent to existing pages and a ranked content gap list. | Offer, audience, market, site pages, optional search data. | Search Opportunity Review |
+| **Content Brief Writer** | Create a sourced page brief with audience, angle, claims to verify, and success signal. | Topic, buyer need, brand guide, source material. | Content Brief Queue |
+| **Content Page Builder** | Draft a useful, reviewable page with sources, internal links, and a clear next action. | Approved brief, existing site content, publishing format. | Content Page Queue |
+| **Search Console Optimizer** | Find pages with measurable query opportunities and propose natural title, copy, or link improvements. | Authorized Search Console property or export with page/query data. | Search Query Review |
+| **Traffic & Engagement Analyst** | Explain landing-page, source, and conversion changes with a prioritized action list. | Analytics export or connection, event definitions, comparison window. | Website Traffic Review |
+| **AI Visibility Analyst** | Test buyer questions across chosen answer engines and summarize citation gaps. | Brand, competitors, buyer questions, measurement method. | AI Visibility Intelligence |
+| **Landing Page Optimizer** | Audit one conversion path and prepare a bounded page test or revision for review. | Page URL, visitor intent, target action, available conversion data. | Landing Page Experiment Review |
+| **Content Distribution Coordinator** | Find relevant channels and prepare a reviewable distribution plan and outreach drafts. | Published asset, audience, approved channels, contact policy. | Content Distribution Review |
+
+Suggested sequence: **audit and baseline → choose audience/search opportunities → improve or create pages → distribute → measure and repeat**. The first Website Growth Brief must not claim a ranking or traffic increase that has not been observed. Installing a template never grants Search Console, analytics, CMS, repository, email, or outreach access.
+
 ## Marketing & Growth
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **SEO Analyst** | Prioritize technical and content opportunities with page-level evidence. | Site, search properties or exports, audience, approved crawl scope. | SEO Intelligence |
-| **AI Visibility Analyst** | Test buyer questions across chosen answer engines and summarize citation gaps. | Brand, competitors, buyer questions, measurement method. | AI Visibility Intelligence |
 | **Competitor Intelligence Analyst** | Track meaningful changes in competitor positioning, pricing, and launches with sources. | Competitor list, watch topics, alert threshold. | Competitor Watch |
-| **Content Brief Writer** | Create a sourced brief with audience, angle, claims to verify, and success measure. | Topic, audience, brand guide, source material. | Content Brief Queue |
 | **Campaign Performance Analyst** | Explain campaign results, anomalies, and the next test to run. | Campaign data, spend, conversion definitions, reporting window. | Campaign Review |
 | **Growth Experiment Planner** | Turn a growth hypothesis into a bounded experiment plan and decision rule. | Baseline, target audience, metric, constraints. | Growth Experiment Review |
 

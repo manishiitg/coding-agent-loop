@@ -73,6 +73,25 @@ describe('CreateWorkProjectDialog', () => {
     await act(async () => { root.unmount() })
   })
 
+  it('offers the Website Growth category and starter template', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onCreate = vi.fn()
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
+    })
+    expect(container.textContent).toContain('Website Growth Starter')
+    expect(container.textContent).toContain('Website Growth')
+    await act(async () => {
+      (container!.querySelector('[data-testid="work-template-website-growth-starter"]') as HTMLInputElement).click()
+    })
+    expect((container.querySelector('[data-testid="work-create-project-name-input"]') as HTMLInputElement).value).toBe('Website Growth Starter')
+    await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
+    expect(onCreate).toHaveBeenCalledWith('Website Growth Starter', expect.stringContaining('Audit the business website'), '🌱', 'website-growth-starter')
+    await act(async () => { root.unmount() })
+  })
+
   it('keeps a large catalog browsable without losing the selected template', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)

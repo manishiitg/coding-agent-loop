@@ -2644,14 +2644,14 @@ func runServer(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Register Slack as a bot connector when the platform switch is on or any
-	// owner-saved channel route exists. Per-message and per-route gates still
-	// silence unrouted channels while the platform switch is off.
+	// Register Slack as a bot connector when the platform switch is on, any
+	// owner-saved channel route exists, or any enabled workflow- or
+	// crew-owned Slack app exists (its own socket needs the handler).
+	// Per-message and per-route gates still silence unrouted channels while
+	// the platform switch is off.
 	if slackSvc != nil {
 		botConfig, _ := chatStore.GetBotConnectorConfig(context.Background(), "slack")
-		if botConfig != nil && (botConfig.BotMode || services.SlackBotConfigHasRoutes(botConfig)) {
-			botManager.RegisterConnector(slackSvc)
-			slackSvc.StartListening(context.Background())
+		if slackBotConnectorWantedAtStartup(botConfig, slackSvc) && registerSlackBotConnector(botManager, slackSvc) {
 			log.Printf("✅ Slack bot mode enabled")
 		}
 	}

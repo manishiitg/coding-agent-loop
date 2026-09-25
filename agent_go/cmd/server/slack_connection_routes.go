@@ -14,6 +14,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
 // Per-workflow and per-project Slack apps: CRUD over Slack app identities,
@@ -354,6 +355,7 @@ func createSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		registerSlackBotConnectorForOwnedConnections(api, svc)
 		w.WriteHeader(http.StatusCreated)
 		writeSlackConnection(w, svc, conn)
 	}
@@ -419,6 +421,7 @@ func updateSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		registerSlackBotConnectorForOwnedConnections(api, svc)
 		writeSlackConnection(w, svc, conn)
 	}
 }
@@ -665,6 +668,7 @@ func projectSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			registerSlackBotConnectorForOwnedConnections(api, services.GetSlackService())
 			selected, err := productSlackConnectionID(r.Context(), profileID, workspacePath)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("failed to read project Slack selection: %v", err), http.StatusInternalServerError)
@@ -782,4 +786,65 @@ func slackToolConnectionID(ctx context.Context, api *StreamingAPI, session strin
 		}
 	}
 	return slackConnectionIDForRoute(ctx, route)
+}
+
+// slackHasOwnedEnabledConnection reports whether any enabled Slack
+// connection is owned by a workflow or crew project. Such an app has its
+// own Socket Mode listener, so its @mentions need the bot manager's
+// handler even when the shared bot switch is off and no channel route
+// exists.
+func slackHasOwnedEnabledConnection(svc *services.SlackService) bool {
+	if svc == nil {
+		return false
+	}
+	for _, conn := range svc.ListConnections() {
+		if !conn.Enabled {
+			continue
+		}
+		if strings.TrimSpace(conn.WorkspacePath) != "" || strings.TrimSpace(conn.ProfileID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// registerSlackBotConnector registers Slack with the bot manager and starts
+// listening, unless it is already registered. Registration only wires the
+// message handler; per-message routing and ownership gates still decide
+// what each message may do. Reports whether it registered now.
+func registerSlackBotConnector(botManager *services.BotConversationManager, svc *services.SlackService) bool {
+	if botManager == nil || svc == nil || botManager.GetConnector("slack") != nil {
+		return false
+	}
+	botManager.RegisterConnector(svc)
+	svc.StartListening(context.Background())
+	return true
+}
+
+// registerSlackBotConnectorForOwnedConnections registers Slack when a
+// workflow- or crew-owned connection is enabled. Called after connection
+// saves; the shared-bot and route conditions are handled by the Slack
+// config save and startup as before.
+func registerSlackBotConnectorForOwnedConnections(api *StreamingAPI, svc *services.SlackService) {
+	if api == nil || !slackHasOwnedEnabledConnection(svc) {
+		return
+	}
+	if registerSlackBotConnector(api.botManager, svc) {
+		log.Printf("[SLACK] Owned Slack connection enabled — registered with bot manager")
+	} else if api.botManager != nil {
+		// Already registered: the root re-propagated its handler to the
+		// new or restarted child runtime on reload; resolve bot identities
+		// so the child strips its own @mention.
+		svc.StartListening(context.Background())
+	}
+}
+
+// slackBotConnectorWantedAtStartup mirrors the startup registration rule:
+// the platform switch, any owner-saved channel route, or any enabled
+// workflow- or crew-owned connection.
+func slackBotConnectorWantedAtStartup(botConfig *chathistory.BotConnectorConfig, svc *services.SlackService) bool {
+	if botConfig != nil && (botConfig.BotMode || services.SlackBotConfigHasRoutes(botConfig)) {
+		return true
+	}
+	return slackHasOwnedEnabledConnection(svc)
 }

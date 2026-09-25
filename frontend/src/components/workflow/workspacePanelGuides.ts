@@ -188,6 +188,14 @@ const CREW_GUIDES: Record<string, GuideCopy> = {
 // These views keep one header while changing the body with tabs. The header's
 // walkthrough follows the active tab instead of repeating the umbrella copy.
 const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> = {
+  'Pulse · For you': () => ({
+    purpose: 'Track progress toward this automation’s goal and see work that needs your decision.',
+    howTo: 'Review Goal Work, its focus areas, and open items. Run a Goal Work pass when you want Pulse to assess progress now.',
+  }),
+  'Pulse · Platform health': () => ({
+    purpose: 'Inspect the checks that keep this automation and its runtime healthy.',
+    howTo: 'Review Plan Drift, Technical, and Architecture checks. Open a maintenance issue to see its fix, verification, and activity.',
+  }),
   'Automation · Chats': surface => ({
     purpose: `Review earlier conversations with this ${surface === 'crew' ? 'Crew member' : 'automation'}.`,
     howTo: 'Open a conversation to see what was asked and what happened. Refresh after new chats finish.',

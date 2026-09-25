@@ -4,7 +4,10 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("./PulseWorkspace", () => ({
-  PulseWorkspace: () => <div data-testid="pulse-workspace" />,
+  PulseWorkspace: ({ onTabChange }: { onTabChange: (tab: 'for_you' | 'platform') => void }) => <div data-testid="pulse-workspace">
+    <button type="button" onClick={() => onTabChange('for_you')}>For you</button>
+    <button type="button" onClick={() => onTabChange('platform')}>Platform health</button>
+  </div>,
 }));
 vi.mock("./SoulViewer", () => ({
   WORKFLOW_SOUL_REFRESH_EVENT: "test-soul-refresh",
@@ -62,4 +65,14 @@ it.each([true, false])("shows the standard refresh with monitor %s", async (moni
   const refreshIndex = host.innerHTML.indexOf('aria-label="Refresh Pulse status"');
   expect(askIndex).toBeGreaterThanOrEqual(0);
   expect(askIndex).toBeLessThan(refreshIndex);
+});
+
+it('updates the header walkthrough when the Pulse tab changes', async () => {
+  const host = await renderView(true);
+  await act(async () => (host.querySelector('[aria-label="Walkthrough: Pulse · For you"]') as HTMLButtonElement).click());
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('progress toward this automation’s goal');
+
+  await act(async () => (host.querySelector('[data-testid="pulse-workspace"] button:last-child') as HTMLButtonElement).click());
+  expect(host.querySelector('[aria-label="Walkthrough: Pulse · Platform health"]')).not.toBeNull();
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Plan Drift, Technical, and Architecture');
 });

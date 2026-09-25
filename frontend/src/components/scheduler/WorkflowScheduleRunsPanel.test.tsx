@@ -200,10 +200,12 @@ describe('schedule panel views', () => {
     try {
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation channels"] button'))
       expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Triggers', 'Bots'])
+      expect(host.querySelector('[aria-label="Walkthrough: Automation · Schedules"]')).not.toBeNull()
       await act(async () => { tabs[1]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="product-webhooks"]')).not.toBeNull()
       await act(async () => { tabs[2]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="bots"]')).not.toBeNull()
+      expect(host.querySelector('[aria-label="Walkthrough: Automation · Bots"]')).not.toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 })

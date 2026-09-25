@@ -106,8 +106,9 @@ describe('Panel walkthroughs', () => {
       ))
       expect(host.querySelector('[role="dialog"]')?.textContent).toContain('saved instruction')
       expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Crew · Main toolbar')
-      expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
-      expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
+    expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
+    expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
+    expect(getWorkspacePanelGuide('Pulse · Platform health').group).toBe('Main toolbar')
     } finally {
       await act(async () => root.unmount())
       host.remove()

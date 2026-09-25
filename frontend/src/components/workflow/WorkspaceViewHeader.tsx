@@ -80,7 +80,7 @@ function insertWalkthrough(actions: ReactNode, walkthrough: ReactNode): ReactNod
     return cloneElement(actions, { walkthrough })
   }
   if (isValidElement<{ children?: ReactNode }>(actions) && actions.type === Fragment) {
-    const children = Children.toArray(actions.props.children)
+    const children: ReactNode[] = Children.toArray(actions.props.children)
     const refreshIndex = children.findIndex(isRefreshAction)
     if (refreshIndex >= 0) children.splice(refreshIndex, 0, walkthrough)
     else children.push(walkthrough)

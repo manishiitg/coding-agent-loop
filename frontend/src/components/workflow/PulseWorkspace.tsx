@@ -90,6 +90,8 @@ const REVIEW_HISTORY_MODULES = [
   { id: 'strategic_review', label: 'Strategic' },
 ] as const
 
+export type PulseWorkspaceTab = 'for_you' | 'platform'
+
 function reviewRunDate(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime())
@@ -134,6 +136,8 @@ export function manualPulseReviewMessage(module: string, workspacePath = '<this 
 }
 
 export function PulseWorkspace({
+  activeTab,
+  onTabChange,
   workspacePath,
   moduleStates,
   planDriftDue = false,
@@ -153,6 +157,8 @@ export function PulseWorkspace({
   focusSaving = false,
   onSaveFocusAreas,
 }: {
+  activeTab?: PulseWorkspaceTab
+  onTabChange?: (tab: PulseWorkspaceTab) => void
   workspacePath: string
   moduleStates: PulseModuleState[]
   planDriftDue?: boolean
@@ -185,7 +191,12 @@ export function PulseWorkspace({
   const [moduleFilter, setModuleFilter] = useState<string | null>(null)
   // For you = Goal Work (Pulse's main job); Platform health = Drift,
   // Technical and Architecture upkeep (docs/design/pulse_goal_work.md).
-  const [tab, setTab] = useState<'for_you' | 'platform'>('for_you')
+  const [internalTab, setInternalTab] = useState<PulseWorkspaceTab>('for_you')
+  const tab = activeTab ?? internalTab
+  const setTab = useCallback((next: PulseWorkspaceTab) => {
+    setInternalTab(next)
+    onTabChange?.(next)
+  }, [onTabChange])
   const [selectedReviewModule, setSelectedReviewModule] = useState<string>('')
   const [manualReviewStarting, setManualReviewStarting] = useState<string | null>(null)
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null)
@@ -275,7 +286,7 @@ export function PulseWorkspace({
     setImpact({ interventions: [], observations: [], assessments: [] })
     setPlaybookFocuses([])
     void load()
-  }, [load])
+  }, [load, setTab])
 
   const runReviewNow = useCallback(async (module: string) => {
     if (manualReviewStarting) return

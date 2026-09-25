@@ -33,3 +33,31 @@ func TestSlackCLIMissingScopeGuidance(t *testing.T) {
 		t.Fatalf("missing scope guidance: %v", err)
 	}
 }
+
+// Read methods reject a JSON body (invalid_arguments): flat parameters are
+// form-encoded; structured ones (blocks) keep a JSON body.
+func TestSlackCLISendsReadParametersAsForm(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "slack")
+	record := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + record + "\nprintf '%s\\n' '{\"ok\":true}'\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	args := func() string {
+		raw, _ := os.ReadFile(record)
+		return string(raw)
+	}
+	if _, err := executeSlackCLI(context.Background(), binary, "xoxb-test-token", "conversations.replies", map[string]interface{}{"channel": "C0AFT3HBWMS", "ts": "1790286994.260769", "limit": float64(50)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := args(); !strings.Contains(got, "--data\nchannel=C0AFT3HBWMS&limit=50&ts=1790286994.260769\n") || strings.Contains(got, "--json") {
+		t.Fatalf("read call args = %q", got)
+	}
+	if _, err := executeSlackCLI(context.Background(), binary, "xoxb-test-token", "chat.postMessage", map[string]interface{}{"channel": "C1", "blocks": []interface{}{map[string]interface{}{"type": "section"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := args(); !strings.Contains(got, "--json\n") {
+		t.Fatalf("structured call args = %q", got)
+	}
+}

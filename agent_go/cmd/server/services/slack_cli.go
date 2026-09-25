@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -60,10 +62,48 @@ func (b *slackCLIOutput) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
+
+// slackCLIBodyArgs chooses how parameters reach Slack. Read methods
+// (conversations.replies/info/history, users.info, ...) reject a JSON body
+// with invalid_arguments, so flat parameters are form-encoded; a JSON body is
+// kept only when a parameter is structured (e.g. blocks on a post), which
+// only write methods take. (RTS 2026-09-25: the QA bot could not read the
+// Slack thread it was asked about.)
+func slackCLIBodyArgs(parameters map[string]interface{}) ([]string, error) {
+	form := url.Values{}
+	for key, value := range parameters {
+		switch v := value.(type) {
+		case nil:
+		case string:
+			form.Set(key, v)
+		case bool:
+			form.Set(key, strconv.FormatBool(v))
+		case float64:
+			form.Set(key, strconv.FormatFloat(v, 'f', -1, 64))
+		case int:
+			form.Set(key, strconv.Itoa(v))
+		case int64:
+			form.Set(key, strconv.FormatInt(v, 10))
+		case json.Number:
+			form.Set(key, v.String())
+		default:
+			body, err := json.Marshal(parameters)
+			if err != nil {
+				return nil, fmt.Errorf("invalid Slack API parameters")
+			}
+			return []string{"--json", string(body)}, nil
+		}
+	}
+	if len(form) == 0 {
+		return nil, nil
+	}
+	return []string{"--data", form.Encode()}, nil
+}
+
 func executeSlackCLI(ctx context.Context, binary, token, method string, parameters map[string]interface{}) (string, error) {
-	body, err := json.Marshal(parameters)
+	bodyArgs, err := slackCLIBodyArgs(parameters)
 	if err != nil {
-		return "", fmt.Errorf("invalid Slack API parameters")
+		return "", err
 	}
 	dir, err := os.MkdirTemp("", "agentworks-slack-cli-")
 	if err != nil {
@@ -72,7 +112,8 @@ func executeSlackCLI(ctx context.Context, binary, token, method string, paramete
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "--skip-update", "--no-color", "--config-dir", dir, "api", method, "--json", string(body))
+	args := append([]string{"--skip-update", "--no-color", "--config-dir", dir, "api", method}, bodyArgs...)
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + dir, "SLACK_BOT_TOKEN=" + token}
 	var out, stderr slackCLIOutput

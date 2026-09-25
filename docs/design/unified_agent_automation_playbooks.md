@@ -67,8 +67,8 @@ The installed Automation records actual Crew IDs for those slots and setup state
 ### B. Install a multi-agent Automation
 
 1. Pick an Automation Playbook. Before installation, show its outcome, required agent roster, example handoffs, required data, approvals, expected run cadence, and likely cost.
-2. Create an Automation in **draft**. Pin the Playbook version/digest. Ask the owner for the actual goal, metric, baseline or baseline-first decision, scope, and budget.
-3. For each required agent slot, offer **Use existing Crew** or **Create from Agent Playbook**. Inspect a selected Crew's identity, installed capabilities, setup status, and callable contract. Do not infer readiness from its name alone.
+2. Create an Automation in **draft** and pin the Playbook version/digest. The installer deterministically expands the Playbook into its required team slots and proposed Workflow plan; the Builder does not have to invent the roster. Ask the owner for the actual goal, metric, baseline or baseline-first decision, scope, and budget.
+3. Match existing Crews to required slots where their capabilities and access fit. Show the proposed team before provisioning: **Reuse this Crew** or **Create this specialist** for each slot, with **Create all missing specialists** as the default action. After the owner accepts the proposed team, create all missing Crews from their pinned Agent Playbooks as one resumable setup operation. Inspect a selected Crew's identity, installed capabilities, setup status, and output contract. Do not infer readiness from its name alone or silently create duplicates.
 4. Resolve shared inputs once in the Automation (for example site URL, audience, and conversion goal). Give each Crew only the inputs and connection scopes its step needs. Existing account connections are selected and tested per Crew; credentials are never copied from a Playbook or another Crew.
 5. Set up missing agent capabilities through each Crew's chat checklist. Register any proposed typed function only after reviewing and testing its contract. Mark the Automation team ready only when all required slots and handoffs pass.
 6. Configure the schedule or authenticated event source, timezone, concurrency, retry, notification, approval, and spending limits. Start with these paused.
@@ -172,6 +172,7 @@ The proposed server operations are:
 | `listPlaybooks` / `getPlaybook` | Kind, category, search, cursor or ID/version. | Published metadata/preview only; no customer secrets. |
 | `installAgentPlaybook` | Source ID/version, target new/existing Crew, idempotency key. | Draft receipt and Crew ID; owner access, primary-role conflict, file digest, and skill availability checked. |
 | `installAutomationPlaybook` | Source ID/version, target new/existing Workflow, idempotency key. | Draft receipt and Workflow ID; owner edit rights and package validity checked. |
+| `provisionAutomationTeam` | Installation ID, reviewed slot choices (reuse or create), idempotency key, expected state revision. | Creates all missing required Crews from pinned Agent Playbooks, binds reused Crews, returns each Crew ID and pending setup checks; retry resumes without duplicates. |
 | `setAutomationGoal` / `bindAgentSlot` | Installation ID, customer decisions or slot/Crew IDs, expected state revision. | Updated draft and exact missing checks; binding verifies Crew access and capability contract. |
 | `resolveCapability` / `recordCheckEvidence` | Installation/check ID, selected resource or evidence ref, expected state revision. | New check state after a server-side probe or authorized owner decision; arbitrary chat text cannot set `verified`. |
 | `proposePlan` / `testInstallation` | Installation ID and expected state revision. | Reviewable plan diff or bounded test run ID; side effects stay within approved test scope. |
@@ -244,6 +245,7 @@ The single **Playbooks** catalog is reachable from both Crew and Automations. Th
 1. Preview outcome, team diagram/list, first result, required information and integrations, handoff sequence, approvals, cadence options, and a cost/budget estimate range when available.
 2. Create a draft Automation with the pinned Playbook receipt. Collect the business goal, audience/scope, metric, baseline or baseline-first choice, named owner, spending ceiling, and excluded actions. Do not auto-enable a trigger or schedule.
 3. For each slot, show matching existing Crews and **Create specialist**. Matching uses actual owner access, Playbook/capability IDs, output contract, and setup state. If the owner chooses a matching Crew that lacks one optional tool, show the reduced behavior honestly.
+   The default is a complete proposed team: reuse verified matches and create every missing required specialist together after review. Provisioning creates Crew identities and Agent Playbook receipts; it does not grant tools or mark their setup complete.
 4. Reuse shared business context once. Resolve each Crew's MCP, skills, secrets, folders, and channels under its own permissions. Explicitly review any additional read/write scope before attaching it. Existing Crew accounts stay with that Crew; no credential is copied to the Automation or other Crews.
 5. Generate a proposed Workflow plan with Crew steps and deterministic validation/approval steps. Save it as a draft. Show exactly which Crew will receive which input and what artifact it must return.
 6. Run setup checks in Builder chat. Where checks belong to a Crew, link to that Crew's chat and bring completion status back to the Automation. Test each required handoff with bounded data and inspect schemas and source references.
@@ -251,6 +253,8 @@ The single **Playbooks** catalog is reachable from both Crew and Automations. Th
 8. Present a final review card: team, bindings, scopes, cadence, estimated cost, first run, open decisions. Enable only when the owner activates the reviewed Automation. The owner can pause, resume, replace a slot, or update the Playbook later.
 
 The Automation setup screen has five compact sections: **Goal**, **Team**, **Access**, **Test**, and **Run policy**. Each section shows ready/needs attention and opens the relevant chat or control. It should never be a 100-field form. The chat handles discovery; the screen makes progress, evidence, and decisions inspectable. The team view displays bound Crew names and a one-line handoff between them. If a Crew is reused by another Automation, each Automation owns its own run policy and slot binding.
+
+**Division of work:** the installer owns deterministic provisioning (Automation draft, required Crew creation/reuse, pinned Playbook receipts, proposed slot bindings, and proposed plan). The Builder owns customer-specific adaptation through chat (goal, context, tool/account choice, exceptions, plan adjustments, checks, and test evidence). The user should never have to describe the team from scratch in chat after choosing an Automation Playbook. A user who wants a custom team can still edit the proposal before activation.
 
 ### Capability and security resolution
 

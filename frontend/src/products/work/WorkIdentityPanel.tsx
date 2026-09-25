@@ -374,7 +374,7 @@ function NativeAgentToolsSetting({ enabled, onChange }: { enabled: boolean; onCh
     <SettingsCard title="Agent tools" ariaLabel="Native agent tools">
       <ToggleRow
         label="Native agent tools"
-        description="Let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Applies to Claude Code, Codex, Cursor and Muse."
+        description="On by default. Let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Applies to Claude Code, Codex, Cursor and Muse."
         checked={enabled}
         disabled={!onChange || saving}
         disabledTitle={onChange ? 'Saving…' : 'Only the Crew owner can change this.'}

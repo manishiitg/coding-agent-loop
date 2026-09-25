@@ -741,8 +741,9 @@ type productProjectManifest struct {
 		UseCodeExecutionMode bool     `json:"use_code_execution_mode,omitempty"`
 		// NativeAgentTools ("Native agent tools" in the crew UI) runs the crew's
 		// coding agents in agent_tools mode hybrid: native read/search, skills,
-		// todos and subagents; shell and writes stay on AgentWorks tools.
-		NativeAgentTools bool `json:"native_agent_tools,omitempty"`
+		// todos and subagents; shell and writes stay on AgentWorks tools. On
+		// by default: nil means on, only an explicit false turns it off.
+		NativeAgentTools *bool `json:"native_agent_tools,omitempty"`
 	} `json:"capabilities,omitempty"`
 }
 
@@ -865,7 +866,7 @@ func resolveProductProjectBindingWithStore(
 			ProjectSelectedServers:      append([]string(nil), manifest.Capabilities.SelectedServers...),
 			ProjectSelectedSkills:       append([]string(nil), manifest.Capabilities.SelectedSkills...),
 			ProjectWorkflowContextPaths: append([]string(nil), firstNonEmptyStrings(manifest.WorkflowContextPaths, manifest.Capabilities.WorkflowContextPaths)...),
-			ProjectNativeAgentTools:     manifest.Capabilities.NativeAgentTools,
+			ProjectNativeAgentTools:     nativeAgentToolsEnabled(manifest.Capabilities.NativeAgentTools),
 		}
 		// Only the legacy/default project chat is tied to product.json's one
 		// session_id. Additional tabs are independent and live solely in the

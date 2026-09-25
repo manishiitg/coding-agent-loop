@@ -11,7 +11,7 @@ A coding CLI runs in one of two tool modes, set by the agent profile's
 
 | Mode | UI name | What the CLI gets |
 |---|---|---|
-| `mcp_only` (default) | off | Native web search only. Everything else goes through the MCP bridge. |
+| `mcp_only` | off | Native web search only. Everything else goes through the MCP bridge. |
 | `hybrid` | **Native agent tools** | The bridge, plus the CLI's own read, search, skill, todo and subagent tools. |
 
 **Native writes are never allowed, in either mode** (user decision, 2026-09-24).
@@ -43,15 +43,25 @@ Where the lists live:
 
 `api_transport: native_shell` is still rejected by `validate.go`.
 
-## Turning it on for a crew
+## On by default (since 2026-09-25)
+
+**Native agent tools is on for every workflow and crew** unless its owner turns
+it off (user decision, 2026-09-25). `capabilities.native_agent_tools` is a
+tri-state: unset or `true` means on, only an explicit `false` means off. The
+server reads it through `nativeAgentToolsEnabled` (`workflow_manifest.go`), the
+frontend through `utils/nativeAgentTools.ts`. Before this, unset meant off and
+turning the switch off deleted the key, so an earlier "off" was not recorded and
+those workflows and crews are now on.
+
+## The crew switch
 
 Crew page → **Models** tab → **Native agent tools** toggle. This writes
-`capabilities.native_agent_tools: true` to the crew's `workflow.json`.
+`capabilities.native_agent_tools: true|false` to the crew's `workflow.json`.
 `resolveAgentProfileForQuery` (`agent_go/cmd/server/agent_profile_runtime.go`)
 then sets `hybrid` on a copy of the resolved profile, and only when the owner
 runs the crew. Live-checked on and off through `/api/agent-profiles/work/query`.
 
-## Turning it on for a workflow
+## The workflow switch
 
 A workflow has the same switch: **Identity → Models → Agent tools → Native
 agent tools**, stored as `capabilities.native_agent_tools` in `workflow.json`.

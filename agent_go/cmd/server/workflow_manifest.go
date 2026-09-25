@@ -633,8 +633,21 @@ type WorkflowCapabilities struct {
 	// search, skills, todos and subagents; shell and file changes stay on
 	// AgentWorks tools. Interactive chats of owners and editors only: step
 	// agents, schedules, webhooks, bots and read-only users keep
-	// AgentWorks-only tools.
-	NativeAgentTools bool `json:"native_agent_tools,omitempty"`
+	// AgentWorks-only tools. On by default: nil means on and only an explicit
+	// false turns it off. Read it through NativeAgentToolsEnabled.
+	NativeAgentTools *bool `json:"native_agent_tools,omitempty"`
+}
+
+// NativeAgentToolsEnabled reports the "Native agent tools" switch, which is on
+// unless it was explicitly turned off.
+func (c WorkflowCapabilities) NativeAgentToolsEnabled() bool {
+	return nativeAgentToolsEnabled(c.NativeAgentTools)
+}
+
+// nativeAgentToolsEnabled applies the on-by-default rule shared by workflows
+// and crew projects.
+func nativeAgentToolsEnabled(setting *bool) bool {
+	return setting == nil || *setting
 }
 
 // WorkflowNotificationConfig contains only safe references. Credential values

@@ -34,6 +34,7 @@ import { getIdentityTabAskAIMessage, getIntegrationTabAskAIMessage, getWorkspace
 import WorkflowIdentityPanel from './WorkflowIdentityPanel'
 import WorkflowFolderAccessView from './WorkflowFolderAccessView'
 import WorkflowUpdatesView from './WorkflowUpdatesView'
+import { nativeAgentToolsEnabled } from '../../utils/nativeAgentTools'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
 // panel only carries the per-section copy.
@@ -604,8 +605,8 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                     <SettingsCard title="Agent tools" ariaLabel="Native agent tools">
                       <ToggleRow
                         label="Native agent tools"
-                        description="In this workflow's Builder and Run-mode chats, let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Step agents, schedules, webhooks and read-only users always keep AgentWorks tools only. Changing it starts a fresh CLI session on the next message. Applies to Claude Code, Codex, Cursor and Muse."
-                        checked={!!capabilities.native_agent_tools}
+                        description="On by default. In this workflow's Builder and Run-mode chats, let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Step agents, schedules, webhooks and read-only users always keep AgentWorks tools only. Changing it starts a fresh CLI session on the next message. Applies to Claude Code, Codex, Cursor and Muse."
+                        checked={nativeAgentToolsEnabled(capabilities.native_agent_tools)}
                         disabled={!canWriteWorkflow || saving}
                         disabledTitle={canWriteWorkflow ? 'Saving…' : 'Only owners and editors can change this.'}
                         onCheckedChange={checked => {

@@ -539,7 +539,8 @@ func TestWorkProjectBindingLoadsNativeAgentTools(t *testing.T) {
 		want         bool
 	}{
 		{`{"native_agent_tools":true}`, true},
-		{`{}`, false},
+		{`{}`, true}, // on by default
+		{`{"native_agent_tools":false}`, false},
 	} {
 		store := productProjectStore{
 			listPaths: func(context.Context, string) ([]string, bool, error) { return []string{manifestPath}, true, nil },

@@ -1,6 +1,7 @@
 import { agentApi } from '../../services/api'
 import type { PresetLLMConfig, SharedProjectSchedule, SharedProjectTrigger } from '../../services/api-types'
 import { dedupeByFilepath, flattenFiles, responseContent, responseFiles, slugifyTitle } from '../../utils/plannerFiles'
+import { nativeAgentToolsEnabled } from '../../utils/nativeAgentTools'
 
 export type ProductProject<P extends string = string> = {
   schemaVersion: 1
@@ -19,7 +20,7 @@ export type ProductProject<P extends string = string> = {
   selectedSecrets: string[]
   selectedGlobalSecrets: string[]
   workflowContextPaths: string[]
-  /** Crew "Native agent tools": capabilities.native_agent_tools in workflow.json. */
+  /** Crew "Native agent tools": capabilities.native_agent_tools in workflow.json, on unless explicitly false. */
   nativeAgentTools?: boolean
   selectionConfigInitialized: boolean
   secretSelectionInitialized: boolean
@@ -161,7 +162,10 @@ type ProductProjectStorageOptions = {
 
 function manifestNativeAgentTools(raw: ProductManifest): boolean {
   const capabilities = raw.capabilities
-  return !!capabilities && typeof capabilities === 'object' && (capabilities as { native_agent_tools?: unknown }).native_agent_tools === true
+  const setting = capabilities && typeof capabilities === 'object'
+    ? (capabilities as { native_agent_tools?: unknown }).native_agent_tools
+    : undefined
+  return nativeAgentToolsEnabled(setting)
 }
 
 function applyRuntimeManifest<P extends string>(project: ProductProject<P>, content: string): ProductProject<P> {
@@ -446,8 +450,8 @@ export async function updateProductProjectNativeAgentTools<P extends string>(
   const capabilities = manifest.capabilities && typeof manifest.capabilities === 'object'
     ? { ...(manifest.capabilities as Record<string, unknown>) }
     : {}
-  if (enabled) capabilities.native_agent_tools = true
-  else delete capabilities.native_agent_tools
+  // Saved explicitly: unset means on, so turning it off must write false.
+  capabilities.native_agent_tools = enabled
   const updatedAt = new Date().toISOString()
   manifest.capabilities = capabilities
   manifest.updated_at = updatedAt

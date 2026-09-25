@@ -3394,6 +3394,7 @@ export interface WorkflowCapabilities {
   slack_connection_id?: string
   // Builder and Run-mode chats use the coding CLI's own read/search, skills,
   // todos and subagents (agent_tools hybrid). Steps and automations never do.
+  // On unless explicitly false (see utils/nativeAgentTools).
   native_agent_tools?: boolean
 }
 

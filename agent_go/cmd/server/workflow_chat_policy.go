@@ -157,7 +157,7 @@ func normalizeWorkflowConversationMode(req *QueryRequest, readOnly bool) {
 
 // workflowChatNativeAgentTools reports whether this workflow chat turn runs
 // with the coding CLI's native tools (agent_tools hybrid): the workflow's
-// "Native agent tools" switch is on, the turn is an interactive Builder or
+// "Native agent tools" switch is on (the default), the turn is an interactive Builder or
 // Run-mode chat (not a step agent, schedule, webhook, bot, notification or
 // Pulse turn) and the user may edit the workflow.
 func (api *StreamingAPI) workflowChatNativeAgentTools(ctx context.Context, req QueryRequest, sessionID string, readOnly bool) bool {
@@ -174,5 +174,5 @@ func (api *StreamingAPI) workflowChatNativeAgentTools(ctx context.Context, req Q
 		return false
 	}
 	manifest, found, err := ReadWorkflowManifest(ctx, req.SelectedFolder)
-	return err == nil && found && manifest != nil && manifest.Capabilities.NativeAgentTools
+	return err == nil && found && manifest != nil && manifest.Capabilities.NativeAgentToolsEnabled()
 }

@@ -480,6 +480,7 @@ func ensureReportHumanInputColumn(ctx context.Context, db *sql.DB, column, defin
 }
 
 func createReportHumanInput(ctx context.Context, workspacePath string, req ReportHumanInputCreateRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	if normalizeReportHumanInputSource(req.Source) == "user_suggestion" && req.CreatedVia != "suggestion_tool" {
 		return nil, fmt.Errorf("use submit_workflow_suggestion to leave a user suggestion")
 	}
@@ -632,6 +633,7 @@ func listReportHumanInputs(ctx context.Context, workspacePath, status, source st
 }
 
 func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputAnswerRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -727,6 +729,7 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 }
 
 func dismissReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputAnswerRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -785,6 +788,7 @@ func dismissReportHumanInput(ctx context.Context, workspacePath, inputID string,
 }
 
 func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string, req ReportHumanInputConsumeRequest) (*ReportHumanInput, error) {
+	defer publishHumanInputsChanged(workspacePath) // live feed: header count + decisions pane
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -1067,6 +1071,12 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 			if err != nil {
 				return "", err
 			}
+			// Pulse decisions land in the user's Needs you list.
+			if isPulseDecisionSource(req.Source) {
+				if err := checkPulsePlainText("context", plainTextField{name: "question", text: req.Question, maxLen: 300}); err != nil {
+					return "", err
+				}
+			}
 			if req.CreatedBy == "" {
 				req.CreatedBy = "agent"
 			}
@@ -1278,7 +1288,13 @@ func (api *StreamingAPI) handleAnswerReportHumanInput(w http.ResponseWriter, r *
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "input": input})
+	// apply_message lets the UI send the answer to the Builder chat so it is
+	// applied now, where the user can watch (decision_apply_chat.go).
+	var applyMessage string
+	if input != nil {
+		applyMessage = decisionApplyChatMessage(*input)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "input": input, "apply_message": applyMessage})
 }
 
 func (api *StreamingAPI) handleDismissReportHumanInput(w http.ResponseWriter, r *http.Request) {

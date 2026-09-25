@@ -4,6 +4,7 @@ import {
   buildSqTimerText,
   sanitizeSqId,
   sanitizeSqTimerConfigs,
+  sqGameStateKey,
   SQ_FALLBACK_VARS,
   withViewerLinkBridge,
 } from './sqOps'
@@ -38,6 +39,14 @@ describe('sqOps', () => {
     ])
     expect(configs).toEqual([{ qid: 'q1', seconds: 120 }])
     expect(sanitizeSqTimerConfigs('nope')).toEqual([])
+  })
+
+  it('scopes saved game progress to its activity', () => {
+    expect(sqGameStateKey('Chats/SparkQuill/activities/fraction-quest/game.html', 'progress')).toBe('game-14-fraction-quest-progress')
+    expect(sqGameStateKey('Chats/SparkQuill/activities/space-quest/game.html', 'progress')).toBe('game-11-space-quest-progress')
+    expect(sqGameStateKey('Chats/SparkQuill/activities/a-b/game.html', 'c')).not.toBe(sqGameStateKey('Chats/SparkQuill/activities/a/game.html', 'b-c'))
+    expect(sqGameStateKey('Chats/SparkQuill/pages/report.html', 'progress')).toBeNull()
+    expect(sqGameStateKey('Chats/SparkQuill/activities/fraction-quest/game.html', '../secrets')).toBeNull()
   })
 
   it('bridges viewer links: fallback theme first, click script last', () => {

@@ -118,3 +118,19 @@ func TestRenderActivityPageKeepsAnswerWidgets(t *testing.T) {
 		t.Fatal("the SQ bridge must load before the test's own timer script")
 	}
 }
+
+func TestRenderActivityPageKeepsPlayableGameAndProgressBridge(t *testing.T) {
+	source := `<section><h1>Fraction Quest</h1><button id="advance">Next room</button><script>document.getElementById('advance').onclick=function(){SQ.saveGame('progress',{room:2})};SQ.loadGame('progress',function(saved){window.room=saved?saved.room:1})</script></section>`
+	page, _, err := RenderActivityPage(source, PageMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`saveGame:function(key,data)`, `loadGame:function(key,done)`, `op:'game-save'`, `op:'game-load'`, `id="advance"`, `SQ.saveGame('progress',{room:2})`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("playable game lost %q", want)
+		}
+	}
+	if strings.Index(page, `window.SQ={`) > strings.Index(page, `SQ.loadGame('progress'`) {
+		t.Fatal("game bridge must load before the game's own script")
+	}
+}

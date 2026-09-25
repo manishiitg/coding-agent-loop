@@ -22,6 +22,7 @@ import { useReportChat } from './reportWidgets/useReportChat'
 import { EntityIdentityIcon } from '../ui/EntityIdentityIcon'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
+import { useLiveRefetch } from '../../hooks/useLiveRefetch'
 import { useSelectedReportDocument } from './reportDocuments'
 
 function debugReportView(event: string, detail?: Record<string, unknown>) {
@@ -172,6 +173,10 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
   const selectedDocumentPath = useSelectedReportDocument(workspacePath, documentPath)
 
   const refresh = useCallback(() => setRefreshNonce(value => value + 1), [])
+  // Re-run the dashboard when its HTML or its workflow DB is written through
+  // the tools, or a run in this workflow finishes (at most every 2s during a
+  // burst). No polling: without the live feed, manual refresh remains.
+  useLiveRefetch(refresh, { kinds: ['report'], workflow: workspacePath, fallbackMs: 0, safetyMs: 0, minIntervalMs: 2_000 })
   useEffect(() => {
     const sync = () => setPreviewPreference(readReportPreviewPreference(workspacePath))
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, sync)

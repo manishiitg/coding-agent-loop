@@ -11,9 +11,11 @@ import {
   reportHumanInputStatusLabel,
 } from '../../utils/reportHumanInputFormatting'
 import { delegateReportHumanInputActionToChat, sendReportHumanInputQuestionToChat } from '../../utils/reportHumanInputChat'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { PlainMarkdown } from '../ui/PlainMarkdown'
-import { WORKFLOW_DECISIONS_REFRESH_EVENT, WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
+import { WORKFLOW_DECISIONS_REFRESH_EVENT } from './workflowEvents'
+import { useLiveRefetch } from '../../hooks/useLiveRefetch'
 
 type ReportHumanInputDraft = {
   selectedOptionId: string
@@ -166,14 +168,12 @@ export function ReportHumanInputPanel({
     return () => { cancelled = true }
 	}, [externallyManaged, loadInputs, refreshNonce])
 
-	useEffect(() => {
-		if (externallyManaged) return
-		// Event-driven refreshes keep the previous inputs on screen and never
-		// flash the loading state: nothing visible changes unless the data did.
-		const onRefresh = () => { void loadInputs(undefined, false) }
-    window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-    return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-	}, [externallyManaged, loadInputs])
+	// Server live-feed notices (a decision created, answered or dismissed)
+	// keep the previous inputs on screen and never flash the loading state.
+	// The chat never refreshes this pane.
+	useLiveRefetch(() => { void loadInputs(undefined, false) }, {
+		kinds: ['human_inputs'], workflow: workspacePath, fallbackMs: 0, safetyMs: 0, enabled: !externallyManaged,
+	})
 
   useEffect(() => {
     setDrafts({})
@@ -217,11 +217,23 @@ export function ReportHumanInputPanel({
     }
     updateDraft(input.id, { submitting: true })
     try {
-      await agentApi.answerReportHumanInput(workspacePath, input.id, {
+      const response = await agentApi.answerReportHumanInput(workspacePath, input.id, {
         selected_option_id: selectedOptionId,
         note,
       })
-      useChatStore.getState().addToast('Decision saved. Any approved action will run separately.', 'success')
+      // Apply the answer now, in the Builder chat where the user can watch it.
+      // If this send fails, the next run's pre-run step still applies it.
+      const applyMessage = response.apply_message?.trim()
+      if (applyMessage) {
+        try {
+          await sendWorkspacePaneMessageToChat({ workspacePath, message: applyMessage })
+          useChatStore.getState().addToast('Decision saved. Applying it in chat now.', 'success')
+        } catch {
+          useChatStore.getState().addToast('Decision saved. It will be applied at the next run.', 'success')
+        }
+      } else {
+        useChatStore.getState().addToast('Decision saved.', 'success')
+      }
 		setHistoryOpen(historyMode === 'expanded')
 		requestRefresh()
     } catch (err) {
@@ -336,7 +348,7 @@ export function ReportHumanInputPanel({
 			{(input.status === 'answered' || input.status === 'claimed') && (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-400/[0.06] px-2 py-1.5 text-amber-100">
                     <Clock3 className="h-3.5 w-3.5 shrink-0" />
-				<span>{input.status === 'claimed' ? 'The saved decision is being processed.' : 'Decision saved — any approved action runs separately.'}</span>
+				<span>{input.status === 'claimed' ? 'The saved decision is being processed.' : 'Decision saved — being applied in chat, or at the next run.'}</span>
                   </div>
                 )}
                 {input.outcome_summary && (
@@ -690,13 +702,10 @@ export function ReportHumanInputCollection({
 		return () => { cancelled = true }
 	}, [loadInputs, refreshNonce])
 
-	useEffect(() => {
-		// Event-driven refreshes keep the previous inputs on screen and never
-		// flash the loading state: nothing visible changes unless the data did.
-		const onRefresh = () => { void loadInputs(undefined, false) }
-		window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-		return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-	}, [loadInputs])
+	// Live-feed notices for any workflow; see the single-workflow panel above.
+	useLiveRefetch(() => { void loadInputs(undefined, false) }, {
+		kinds: ['human_inputs'], fallbackMs: 0, safetyMs: 0,
+	})
 
 	if (loading && inputs.length === 0 && !error) return null
 

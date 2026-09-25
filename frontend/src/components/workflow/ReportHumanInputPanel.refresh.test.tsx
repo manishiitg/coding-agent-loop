@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
-import type { PollingEvent, ReportHumanInput } from '../../services/api-types'
+import type { ReportHumanInput } from '../../services/api-types'
 
 vi.mock('../../services/api', () => ({ agentApi: { listReportHumanInputs: vi.fn() } }))
 vi.mock('../../stores/useChatStore', () => ({ useChatStore: { getState: () => ({ addToast: vi.fn() }) } }))
@@ -10,15 +10,24 @@ vi.mock('./reportWidgets/tableHelpers', () => ({ useContainerSizeTier: () => [nu
 vi.mock('../../utils/reportHumanInputChat', () => ({
   delegateReportHumanInputActionToChat: vi.fn(), sendReportHumanInputQuestionToChat: vi.fn(),
 }))
+const liveFeedListeners = vi.hoisted(() => [] as (() => void)[])
+vi.mock('../../services/liveFeed', () => ({
+  liveFeed: {
+    getStatus: () => 'live',
+    onStatus: () => () => {},
+    subscribe: (_kinds: string[], _workflow: string | null, onChange: () => void) => {
+      liveFeedListeners.push(onChange)
+      return () => {}
+    },
+  },
+}))
 vi.mock('../ui/PlainMarkdown', () => ({ PlainMarkdown: ({ content }: { content: string }) => <span>{content}</span> }))
 
 import { agentApi } from '../../services/api'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
-import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
-import { decisionMutationNeedsRefresh } from '../../utils/decisionRefresh'
 
-describe('decision card refresh during chat', () => {
-  it('moves a saved answer out of pending without a chat completion or manual refresh', async () => {
+describe('decision card refresh from the server live feed', () => {
+  it('moves a saved answer out of pending on a human_inputs notice, without the chat or a manual refresh', async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const workspace = 'Workflow/example'
     const input = { id: 'decision-1', workspace_path: workspace, source: 'technical_review',
@@ -33,12 +42,7 @@ describe('decision card refresh during chat', () => {
       expect(container.textContent).toContain('Needs your decision')
       const answered = { ...input, status: 'answered' as const, selected_option_id: 'approve' }
       vi.mocked(agentApi.listReportHumanInputs).mockResolvedValue({ success: true, inputs: [answered] })
-      const receipt = { id: 'tool-1', type: 'tool_call_end', data: { type: 'tool_call_end', data: {
-        tool_name: 'answer_human_input_request', result: JSON.stringify({ status: 'answered', input: answered }),
-      } } } as PollingEvent
-      await act(async () => {
-        if (decisionMutationNeedsRefresh(receipt, workspace)) window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
-      })
+      await act(async () => { liveFeedListeners.forEach(notify => notify()) })
       expect(container.textContent).not.toContain('Needs your decision')
       expect(container.textContent).not.toContain('Save answer')
       expect(container.textContent).toContain('Approve measurement?')

@@ -364,11 +364,15 @@ button:disabled{opacity:.55;cursor:default}
 // a slow reply cannot be tapped twice. data-choose buttons are wired on load.
 const activityScript = `
 window.addEventListener('message',function(e){if(e&&e.data&&e.data.__sq===1&&e.data.op==='print')window.print()});
+var gameLoads={},nextGameLoad=0;
+window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.__sq!==1||m.op!=='game-loaded'||!gameLoads[m.id])return;var done=gameLoads[m.id];delete gameLoads[m.id];done(m.data==null?null:m.data)});
 window.SQ={
   choose:function(text,el){if(el&&el.disabled)return;if(el)el.disabled=true;parent.postMessage({__sq:1,op:'choose',text:text},'*')},
   answer:function(qid,value,el){if(el&&el.disabled)return;if(String(value==null?'':value).trim()==='')return;if(el)el.disabled=true;parent.postMessage({__sq:1,op:'answer',qid:qid,value:value},'*')},
   startTimers:function(timers){parent.postMessage({__sq:1,op:'timer-config',timers:timers},'*')},
-  cancelTimer:function(qid){parent.postMessage({__sq:1,op:'timer-cancel',qid:qid},'*')}
+  cancelTimer:function(qid){parent.postMessage({__sq:1,op:'timer-cancel',qid:qid},'*')},
+  saveGame:function(key,data){parent.postMessage({__sq:1,op:'game-save',key:key,data:data},'*')},
+  loadGame:function(key,done){if(typeof done!=='function')return;var id='game-'+(++nextGameLoad);gameLoads[id]=done;parent.postMessage({__sq:1,op:'game-load',key:key,id:id},'*')}
 };
 document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('button[data-choose]');if(b)SQ.choose(b.getAttribute('data-choose'),b)});
 `

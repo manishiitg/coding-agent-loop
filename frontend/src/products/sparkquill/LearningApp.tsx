@@ -71,7 +71,7 @@ import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
 import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend'
-import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs, withViewerLinkBridge } from './sqOps'
+import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs, SQ_MAX_GAME_STATE_BYTES, sqGameStateKey, withViewerLinkBridge } from './sqOps'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { hasGatewaySSO, isSingleProductDeployment } from '../productSurfaceConfig'
@@ -2002,7 +2002,21 @@ export default function LearningApp() {
         .some((frame) => e.source === frame.contentWindow)
       const fromParentPage = () => e.source === iframeRef.current?.contentWindow || fromFrame('.fl-item-preview-frame, .fl-map-frame')
       const fromChildPage = () => e.source === childIframeRef.current?.contentWindow || fromFrame('.fl-scene-frame')
-      if (msg.op === 'save' && typeof msg.key === 'string') {
+      const gameStateKey = () => sqGameStateKey(childViewerPathRef.current, msg.key)
+      if (msg.op === 'game-save' && e.source === childIframeRef.current?.contentWindow) {
+        const key = gameStateKey()
+        if (!key) return
+        let size = 0
+        try { size = JSON.stringify(msg.data)?.length ?? 0 } catch { return }
+        if (size === 0 || size > SQ_MAX_GAME_STATE_BYTES) return
+        api.saveState(key, msg.data).catch(() => {})
+      } else if (msg.op === 'game-load' && (fromChildPage() || fromParentPage())) {
+        const source = e.source as Window | null
+        const reply = (data: unknown) => source?.postMessage({ __sq: 1, op: 'game-loaded', id: msg.id, data }, '*')
+        const key = e.source === childIframeRef.current?.contentWindow ? gameStateKey() : null
+        if (!key) { reply(null); return }
+        api.loadState(key).then(reply).catch(() => reply(null))
+      } else if (msg.op === 'save' && typeof msg.key === 'string') {
         api.saveState(msg.key, msg.data).catch(() => {})
       } else if (msg.op === 'load' && typeof msg.key === 'string') {
         api.loadState(msg.key)

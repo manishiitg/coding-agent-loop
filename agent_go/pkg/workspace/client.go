@@ -713,9 +713,11 @@ func (c *Client) UploadBinary(ctx context.Context, folderPath, fileName string, 
 		FilePath string `json:"filepath"`
 	}
 	if err := json.Unmarshal(respBody, &result); err == nil && result.FilePath != "" {
+		noteReportFileWrite(result.FilePath)
 		return result.FilePath, nil
 	}
 	// Fallback: construct path manually
+	noteReportFileWrite(folderPath + "/" + fileName)
 	return folderPath + "/" + fileName, nil
 }
 

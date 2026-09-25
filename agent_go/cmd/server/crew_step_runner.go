@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -69,9 +70,13 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 	}
 	runScope := strings.TrimSpace(req.ExecutionID)
 	if runScope == "" {
-		// Bridgeless callers (tests, ad-hoc runs) have no execution
-		// identity; the run folder preserves idempotency within one run.
-		runScope = req.WorkflowRunFolder
+		// No execution identity (a Builder/Workshop step run): every call is
+		// a new request. Keying on the run folder instead made a follow-up
+		// run of the same step adopt the previous run's stored answer in
+		// seconds, since every re-run shares the folder (RTS 2026-09-24,
+		// crew-cicd-deploy-status). Retries inside this call still share
+		// the key below.
+		runScope = strings.TrimSpace(req.WorkflowRunFolder) + "/adhoc-" + uuid.NewString()
 	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"source":           "workflow",

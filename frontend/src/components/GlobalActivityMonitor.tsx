@@ -25,6 +25,7 @@ import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 import { crewActivityTitle, showsActivityTypeIcon, type ActivityType } from '../utils/globalActivityPresentation'
+import { useLiveRefetch } from '../hooks/useLiveRefetch'
 
 type ActivityMonitorItem =
   | { type: 'session'; id: string; session: ActiveSessionInfo }
@@ -197,33 +198,16 @@ export const GlobalActivityMonitor: React.FC = () => {
   const currentWorkflowPresetName = currentWorkflowPreset?.label ?? null
 
   useEffect(() => {
-    let disposed = false
-    let refreshPromise: Promise<void> | null = null
-
-    const refresh = async () => {
-      // This surface promises live state; bypass the shared 30-second cache so
-      // a schedule that just started does not keep its old idle clock.
-      await getActiveSessions(true).catch(() => [])
-      if (disposed) return
-    }
-
-    const requestRefresh = () => {
-      if (document.hidden || refreshPromise) return
-      refreshPromise = refresh().finally(() => {
-        refreshPromise = null
-      })
-    }
-    const handleVisibilityChange = () => requestRefresh()
-
-    requestRefresh()
-    const interval = window.setInterval(requestRefresh, GLOBAL_ACTIVITY_REFRESH_MS)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      disposed = true
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
+    // Initial load; after that the live feed drives refreshes. This surface
+    // promises live state, so it bypasses the shared 30-second cache.
+    if (!document.hidden) void getActiveSessions(true).catch(() => [])
   }, [getActiveSessions])
+  // Session/schedule changes arrive as live notices; GLOBAL_ACTIVITY_REFRESH_MS
+  // polling only while the feed is down. getActiveSessions coalesces overlaps.
+  useLiveRefetch(() => { void getActiveSessions(true).catch(() => []) }, {
+    kinds: ['sessions', 'schedules'],
+    fallbackMs: GLOBAL_ACTIVITY_REFRESH_MS,
+  })
 
   const activeSessions = useMemo(() => {
     return activeSessionsCache.filter(session =>

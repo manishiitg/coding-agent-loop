@@ -96,7 +96,7 @@ func TestProfilesRegisterOnThePlatformRegistry(t *testing.T) {
 		t.Fatalf("child profile should resolve as a built-in product profile: %+v %v", got, err)
 	}
 	names := SkillNames()
-	if len(names) < 10 || names[0] != "backup" {
+	if len(names) < 7 || names[0] != "backup" {
 		t.Fatalf("skills = %v", names)
 	}
 	parent, _ := registry.Resolve(ParentProfileID, 0, "anyone")

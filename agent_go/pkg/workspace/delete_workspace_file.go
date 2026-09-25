@@ -50,6 +50,7 @@ func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspace
 	if !apiResp.Success {
 		return DeleteFileResult{}, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
+	noteReportFileWrite(params.Filepath)
 
 	return DeleteFileResult{
 		Filepath: params.Filepath,

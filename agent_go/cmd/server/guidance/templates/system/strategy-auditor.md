@@ -82,6 +82,16 @@ hand those off once and keep your pass on the goal.
    says so honestly; do not invent work. Do not repeat an unchanged idea just to
    fill the pass.
 
+## Writing for the user
+
+The user reads Goal Work titles and actions, decision questions and your result
+reason. Write them the way you would tell a busy owner: what you did or what
+you need, in short sentences and everyday words. No issue IDs, state names or
+code terms; keep those and the evidence in `detail`, `links` and `review_note`.
+Example: "Sends work again in 6 of 12 groups. Shopify still finds no qualified
+leads; I found a fix and need your OK." — not "gate-flagged issues resolved
+(send drain PUL-… external_action_required…)".
+
 ## Permission levels
 
 The user sets Run, Outward and Change to `auto` or `ask` per workflow; the

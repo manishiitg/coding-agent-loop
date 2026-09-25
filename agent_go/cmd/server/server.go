@@ -609,11 +609,14 @@ type StreamingAPI struct {
 	// that turn (so the new system prompt + tool list actually take effect on
 	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
-	lastWorkshopModeBySession        map[string]string
-	lastChatPolicyBySession          map[string]string
-	lastChatPolicyRoleBySession      map[string]string
-	lastAgentProfileKeyBySession     map[string]string
-	lastAgentToolsModeBySession      map[string]string
+	lastWorkshopModeBySession    map[string]string
+	lastChatPolicyBySession      map[string]string
+	lastChatPolicyRoleBySession  map[string]string
+	lastAgentProfileKeyBySession map[string]string
+	lastAgentToolsModeBySession  map[string]string
+	// lastWorkflowToolsModeBySession is the agent tools mode a workflow chat
+	// last ran with, to start fresh when its native tools switch flips.
+	lastWorkflowToolsModeBySession   map[string]string
 	launchedAgentProfileKeyBySession map[string]string
 	agentProfileAdmissions           sync.Map // *mcpagent.Agent -> immutable launched profile key
 
@@ -2478,6 +2481,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/chat-artifacts/{artifact_id}", api.handleGetChatArtifact).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/ui-control", api.handleUIControl).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/events/stream", api.handleSSEStream).Methods("GET")
+	// Header + right-pane live stream (change notices only; chat keeps its own streams).
+	apiRouter.HandleFunc("/live", api.handleLiveFeed).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 	// The product raw view receives only its owning chat's main terminal. All
@@ -2732,6 +2737,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start background cleanup goroutine to mark inactive sessions (10 minute timeout)
 	go api.cleanupInactiveSessions()
+	go api.watchScheduleSummaryForLiveFeed()
 	go api.warmLLMConfigCaches()
 
 	// Initialize and start the cron scheduler
@@ -3765,7 +3771,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if api.lastAgentToolsModeBySession == nil {
 		api.lastAgentToolsModeBySession = make(map[string]string)
 	}
-	api.lastAgentToolsModeBySession[sessionID] = agentProfileToolsMode(resolvedProfile)
+	agentToolsMode := agentProfileToolsMode(resolvedProfile)
+	// A workflow's Builder/Run chat takes the workflow's "Native agent tools"
+	// switch (a Crew's comes through its resolved profile).
+	workflowNativeAgentTools := resolvedProfile == nil && api.workflowChatNativeAgentTools(r.Context(), req, sessionID, currentUserIsReadOnly)
+	if workflowNativeAgentTools {
+		agentToolsMode = "hybrid"
+	}
+	api.lastAgentToolsModeBySession[sessionID] = agentToolsMode
 	api.conversationMux.Unlock()
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
@@ -5328,6 +5341,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if resolvedProfile != nil {
 			profileAgentToolsMode = resolvedProfile.Definition.Runtime.AgentTools.Mode
 			profileApprovalsMode = resolvedProfile.Definition.Runtime.Approvals.Mode
+		} else if workflowNativeAgentTools {
+			profileAgentToolsMode = "hybrid"
 		}
 		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
 		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, allowPersistentInteractive)
@@ -6994,6 +7009,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// session (Muse) gets a fresh session on any drift, carrying the
 			// recent dialogue, rather than keep running on the old prompt.
 			roleChanged := chatPolicyRoleRequiresReconnect(codingProvider, previousRole, policyRoleKey, knownRole, savedRuntime)
+			// Turning the workflow's native agent tools on or off changes what
+			// the CLI can do, like Builder <-> Run: start fresh with the recent
+			// dialogue instead of resuming a transcript full of the other mode.
+			if codingProvider {
+				currentTools := normalizeAgentToolsMode(api.lastAgentToolsModeBySession[sessionID])
+				if api.lastWorkflowToolsModeBySession == nil {
+					api.lastWorkflowToolsModeBySession = make(map[string]string)
+				}
+				previousTools, knownTools := api.lastWorkflowToolsModeBySession[sessionID]
+				if !knownTools && savedRuntime != nil && strings.TrimSpace(savedRuntime.AgentToolsMode) != "" {
+					previousTools, knownTools = savedRuntime.AgentToolsMode, true
+				}
+				api.lastWorkflowToolsModeBySession[sessionID] = currentTools
+				if knownTools && normalizeAgentToolsMode(previousTools) != currentTools {
+					roleChanged = true
+				}
+			}
 			definitionChanged := !codingProviderReloadsInstructionsOnResume(finalProvider) && chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime)
 			if roleChanged || definitionChanged || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
@@ -7942,6 +7974,7 @@ func (api *StreamingAPI) claimAgentWorksChatSession(sessionID, userID, query, tr
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
 
+	defer publishSessionsChanged() // runs after the unlock below
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -7981,6 +8014,7 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
 
+	defer publishSessionsChanged() // runs after the unlock below
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -9208,14 +9242,26 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 
 // updateSessionStatus updates the status of an active session in memory.
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
+	changed, workspacePath, scheduled := false, "", false
 	api.activeSessionsMux.Lock()
 	if session, exists := api.activeSessions[sessionID]; exists {
+		changed = session.Status != status
+		workspacePath = session.WorkspacePath
+		scheduled = liveFeedScheduledSession(sessionID, session.TriggeredBy)
 		session.Status = status
 		session.LastActivity = time.Now()
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
 	}
 	api.activeSessionsMux.Unlock()
 	api.observeRuntimeSnapshot(sessionID)
+	if changed {
+		publishSessionsChanged()
+		// Only a finished scheduled run refreshes the right pane. A chat turn
+		// (sending a message) must change nothing outside the chat.
+		if scheduled && liveFeedTerminalStatus(status) {
+			publishWorkflowSettled(workspacePath)
+		}
+	}
 }
 
 // removeSessionQueryID removes a completed workflow query from the session ->
@@ -9264,6 +9310,7 @@ func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Req
 		session.LastActivity = time.Now()
 	}
 	api.activeSessionsMux.Unlock()
+	publishSessionsChanged()
 
 	log.Printf("[ACTIVE_SESSION] Dismissed session %s", sessionID)
 	w.WriteHeader(http.StatusOK)
@@ -9651,6 +9698,9 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 		}
 	}
 	api.activeSessionsMux.Unlock()
+	if len(sessionsMarkedInactive) > 0 || len(sessionsToEvictRuntime) > 0 {
+		publishSessionsChanged()
+	}
 
 	for _, sessionID := range sessionsMarkedInactive {
 		api.observeRuntimeSnapshot(sessionID)

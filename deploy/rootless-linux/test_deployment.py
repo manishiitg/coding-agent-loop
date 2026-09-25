@@ -58,5 +58,50 @@ class SharedRootlessDeploymentTest(unittest.TestCase):
             self.assertIn(expected, build)
 
 
+class GogKeyringDeploymentCheckTest(unittest.TestCase):
+    """Gmail (gog) must use its file keyring on every headless deployment."""
+
+    def setUp(self):
+        import importlib.util
+        import tempfile
+        spec = importlib.util.spec_from_file_location("deployment_checks", ROOT / "deployment_checks.py")
+        self.checks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.checks)
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def env(self, text):
+        path = self.tmp / ".env"
+        path.write_text(text)
+        return path
+
+    def test_env_file_requires_file_backend_and_password(self):
+        self.checks.check_gog_keyring_file(self.env("GOG_KEYRING_BACKEND=file\nGOG_KEYRING_PASSWORD=abc\n"))
+        for bad in ("", "GOG_KEYRING_BACKEND=file\n", "GOG_KEYRING_BACKEND=auto\nGOG_KEYRING_PASSWORD=abc\n",
+                    "GOG_KEYRING_BACKEND=file\nGOG_KEYRING_PASSWORD=\n"):
+            with self.subTest(env=bad), self.assertRaises(ValueError):
+                self.checks.check_gog_keyring_file(self.env(bad))
+
+    def test_running_process_must_carry_the_keyring_settings(self):
+        self.checks.check_gog_keyring_process(b"PATH=/bin\0GOG_KEYRING_BACKEND=file\0GOG_KEYRING_PASSWORD=abc\0")
+        for bad in (b"PATH=/bin\0", b"GOG_KEYRING_BACKEND=file\0GOG_KEYRING_PASSWORD=\0"):
+            with self.subTest(environ=bad), self.assertRaises(ValueError):
+                self.checks.check_gog_keyring_process(bad)
+
+    def test_every_deploy_path_sets_the_keyring_and_updates_gog(self):
+        dominion = (REPO / "deploy/dedicated-vm/deploy-dominion.sh").read_text()
+        rootless = (ROOT / "build-and-activate.sh").read_text()
+        rts = (REPO / "deploy/aws-ec2/server/build-and-activate.sh").read_text()
+        entry = (REPO / "deploy.sh").read_text()
+        for name, text in (("dominion", dominion), ("rootless", rootless), ("rts", rts)):
+            with self.subTest(deploy=name):
+                self.assertIn("GOG_KEYRING_BACKEND", text)
+                self.assertIn("GOG_KEYRING_PASSWORD", text)
+        for name, text in (("dominion", dominion), ("rootless-entry", entry), ("rts", rts)):
+            with self.subTest(deploy=name):
+                self.assertIn("deploy/common/install-gog.sh", text)
+        self.assertIn("deployment_checks.py\" preflight", dominion)
+        self.assertIn("deployment_checks.py\" running", dominion)
+
+
 if __name__ == "__main__":
     unittest.main()

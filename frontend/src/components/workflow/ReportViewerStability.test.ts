@@ -66,7 +66,8 @@ describe('open report stability', () => {
     const panel = readFileSync('src/components/workflow/ReportHumanInputPanel.tsx', 'utf8')
 
     expect(panel).toContain('keepPreviousInputsWhenUnchanged')
-    expect(panel).toContain('const onRefresh = () => { void loadInputs(undefined, false) }')
+    // Live-feed refreshes reload without the loading state (showLoading=false).
+    expect(panel).toContain('useLiveRefetch(() => { void loadInputs(undefined, false) }')
     expect(panel).toContain('if (showLoading) setLoading(true)')
   })
 

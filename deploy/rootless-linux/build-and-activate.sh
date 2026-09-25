@@ -50,7 +50,17 @@ for snippet in "${RUNTIME_CONFIG_REQUIRED_SNIPPETS[@]:-}"; do
   }
 done
 
-for command in git go gcc npm python3 file sha256sum; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in git go gcc npm python3 file sha256sum openssl; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+# gog (Gmail connector) needs its encrypted file keyring on a headless box;
+# on "auto" it uses the service user's gnome-keyring, which has no unlocked
+# default collection, and every Gmail connect fails. Generate the password
+# once and preserve it (changing it orphans stored tokens). Checked below by
+# deployment_checks.py, in the env file and in the running process.
+if [[ -f "$REMOTE_APP/.env" ]]; then
+  grep -q '^GOG_KEYRING_PASSWORD=' "$REMOTE_APP/.env" || printf 'GOG_KEYRING_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$REMOTE_APP/.env"
+  grep -q '^GOG_KEYRING_BACKEND=' "$REMOTE_APP/.env" || echo 'GOG_KEYRING_BACKEND=file' >> "$REMOTE_APP/.env"
+  chmod 600 "$REMOTE_APP/.env"
+fi
 PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$SCRIPT_DIR/deployment_checks.py" preflight
 
 builder_revision="$(git -C "$REPO_ROOT" rev-parse HEAD)"

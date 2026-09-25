@@ -540,3 +540,37 @@ func TestAppendCrewPollTransition(t *testing.T) {
 		}
 	}
 }
+
+// A step run with no execution identity (Builder/Workshop) is a new request
+// every time: it must not adopt the previous run's stored answer just
+// because both share the run folder.
+func TestRunCrewStepWithoutExecutionIDNeverAdoptsPreviousRun(t *testing.T) {
+	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
+	convKey := "owner\x1fproduct-project:crewx:rts:trig-1"
+	svc.conversations = map[string]bool{convKey: true}
+	ctx := context.Background()
+	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
+
+	first := testCrewStepRequest()
+	first.ExecutionID = ""
+	folderKey := crewStepDeliveryBase(first.WorkflowID, first.WorkflowRunFolder, first.Group, first.StepID, first.TriggerID, runDestinationIsolated)
+	staleRun := webhookDeliveryRunID("rts", "trig-1", folderKey)
+	if _, err := svc.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
+		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
+		Caller: triggerCaller{Type: "workflow", ID: "wf-1"}, DeliveryID: folderKey, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	duration := int64(100)
+	if err := UpdateScheduleRunResult(ctx, runsWorkspace, staleRun, ScheduleRunCompletion{Status: "success", DurationMs: &duration, FinalResponse: "stale answer"}); err != nil {
+		t.Fatal(err)
+	}
+	runner := newCrewStepRunner(svc, "owner")
+	runner.pollInterval = 5 * time.Millisecond
+	deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	result, err := runner.RunCrewStep(deadline, first)
+	if err == nil || result.FinalResponse == "stale answer" || result.CrewRunID == staleRun {
+		t.Fatalf("follow-up adopted the previous run: result=%+v err=%v", result, err)
+	}
+}

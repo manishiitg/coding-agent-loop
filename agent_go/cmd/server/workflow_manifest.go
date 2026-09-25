@@ -628,6 +628,13 @@ type WorkflowCapabilities struct {
 	// identity, because delivering from an unintended Slack app is worse
 	// than not delivering. An identifier, never a secret.
 	SlackConnectionID string `json:"slack_connection_id,omitempty"`
+	// NativeAgentTools ("Native agent tools") runs this workflow's Builder and
+	// Run-mode chats in agent_tools mode hybrid: the coding CLI's own read,
+	// search, skills, todos and subagents; shell and file changes stay on
+	// AgentWorks tools. Interactive chats of owners and editors only: step
+	// agents, schedules, webhooks, bots and read-only users keep
+	// AgentWorks-only tools.
+	NativeAgentTools bool `json:"native_agent_tools,omitempty"`
 }
 
 // WorkflowNotificationConfig contains only safe references. Credential values
@@ -777,8 +784,8 @@ type WorkflowSchedule struct {
 	Caller          *triggerCaller         `json:"caller,omitempty"`
 	// Function makes a kind=function trigger a callable workflow function.
 	Function *WorkflowFunctionSpec `json:"function,omitempty"`
-	Mode            string                 `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
-	Messages        []string               `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
+	Mode     string                `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
+	Messages []string              `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
 	// DirectMessagesReason records why a schedule-local conversation is preferable
 	// to a canonical route despite its weaker step-level lifecycle.
 	DirectMessagesReason string `json:"direct_messages_reason,omitempty"`

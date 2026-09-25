@@ -3,6 +3,7 @@ import { Inbox } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { workflowHasRecentActivity } from '../../utils/workflowActivity'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { useLiveRefetch } from '../../hooks/useLiveRefetch'
 
 const ACTIVITY_REFRESH_MS = 30_000
 
@@ -39,18 +40,11 @@ export function GlobalActivityButton({ workspacePaths, active, onOpen }: GlobalA
   }, [pathKey])
 
   useEffect(() => {
-    const requestRefresh = () => {
-      if (!document.hidden) void refresh()
-    }
-    requestRefresh()
-    const interval = window.setInterval(requestRefresh, ACTIVITY_REFRESH_MS)
-    document.addEventListener('visibilitychange', requestRefresh)
-    return () => {
-      refreshSequence.current += 1
-      window.clearInterval(interval)
-      document.removeEventListener('visibilitychange', requestRefresh)
-    }
+    if (!document.hidden) void refresh()
+    return () => { refreshSequence.current += 1 }
   }, [refresh])
+  // Refetch on live notices; ACTIVITY_REFRESH_MS polling only if the feed is down.
+  useLiveRefetch(() => { void refresh() }, { kinds: ['notifications', 'human_inputs'], fallbackMs: ACTIVITY_REFRESH_MS })
 
   return (
     <Tooltip>

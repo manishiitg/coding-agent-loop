@@ -103,6 +103,10 @@ func workspaceProxyHandler() http.Handler {
 		// auth of its own; it must carry the identity this server verified,
 		// never whatever the browser put in the header.
 		r.Header.Set("X-User-ID", GetUserIDFromContext(r.Context()))
+		// A write to a workflow's dashboard files refreshes open Report views.
+		if rel := workspaceProxyRelativePath(r); isWorkflowWorkspaceProxyWrite(r) && liveFeedReportPath(rel) {
+			defer publishReportChanged(strings.TrimPrefix(strings.TrimPrefix(rel, "api/documents/"), "api/folders/"))
+		}
 		// Strip /api/wp prefix: /api/wp/api/documents → /api/documents
 		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api/wp")
 		if r.URL.Path == "" {

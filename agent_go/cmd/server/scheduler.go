@@ -1219,6 +1219,30 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 	return s.triggerSavedSchedule(workspacePath, scheduleID, originSessionID, nil)
 }
 
+// webhookDeliveryStartError re-checks a delivery's group and variables
+// against the trigger as saved now. A function trigger's variables are its
+// declared inputs; any other trigger's are its allowed_variables.
+func webhookDeliveryStartError(sched WorkflowSchedule, input *WorkflowWebhookDelivery) error {
+	if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
+		return errors.New("group is no longer allowed by this trigger")
+	}
+	if sched.Webhook == nil && !sched.IsFunctionTrigger() {
+		return nil
+	}
+	var allowed []string
+	if sched.IsFunctionTrigger() {
+		allowed = workflowFunctionInputNames(sched.Function)
+	} else {
+		allowed = sched.Webhook.AllowedVariables
+	}
+	for name := range input.Variables {
+		if !slices.Contains(allowed, name) {
+			return fmt.Errorf("variable %q is no longer allowed by this trigger", name)
+		}
+	}
+	return nil
+}
+
 func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, originSessionID string, input *WorkflowWebhookDelivery) (string, error) {
 	ctx := context.Background()
 
@@ -1251,17 +1275,8 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		sctx.TriggerSource = "webhook"
 		sctx.WebhookInput = input
-		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
-			return "", errors.New("group is no longer allowed by this trigger")
-		}
-		// Internal triggers carry no per-trigger variable allowlist; workflow-
-		// declared variables are still gated by validateWebhookVariableNames.
-		if sched.Webhook != nil {
-			for name := range input.Variables {
-				if !slices.Contains(sched.Webhook.AllowedVariables, name) {
-					return "", fmt.Errorf("variable %q is no longer allowed by this trigger", name)
-				}
-			}
+		if err := webhookDeliveryStartError(*sched, input); err != nil {
+			return "", err
 		}
 		if input.Group != "" {
 			sctx.Schedule.GroupNames = []string{input.Group}
@@ -3084,6 +3099,7 @@ func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleSte
 	return pulseLifecycleStep{label: label, query: fmt.Sprintf(`PULSE MODULE REVIEW DISPATCH. pulse_run_id=%q. This step owns ONLY module=%q. Earlier lifecycle steps have finished; later modules must not be dispatched here.
 Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction to read get_pulse_state(view="review_notes", module=%q) once for relevant prior reasoning. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
 Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist only canonical issues (and, for strategic_review, Goal Work items with record_pulse_goal_work), a human decision when genuinely required, and one terminal review result for this module. Put the expected benefit, baseline, guardrails and next outcome boundary in the issue or review summary rather than a separate proposal/impact lifecycle. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
+The user reads issue concerns and summaries, Goal Work titles and actions, decision questions and your result reason. Write those in plain language: lead with what changed or what the user needs to do, short sentences, everyday words, no issue IDs, state names or code terms. Keep IDs, evidence and technical detail in review_note, impact, evidence and the Goal Work detail; the tools refuse user-facing text that carries them.
 After dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, module, reference, contract)}
 }
 

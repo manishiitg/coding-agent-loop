@@ -99,6 +99,7 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	if !apiResp.Success {
 		return DiffPatchResult{}, fmt.Errorf("workspace API error: %s", apiResp.Error)
 	}
+	noteReportFileWrite(params.Filepath)
 
 	return DiffPatchResult{
 		Data: apiResp.Data,

@@ -23,7 +23,6 @@ import { SessionStopButton } from './SessionStopButton'
 import { TerminalEventTranscript } from './TerminalEventTranscript'
 import { MainAgentTerminal } from './MainAgentTerminal'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
-import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
@@ -63,9 +62,6 @@ import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
 import { submissionFailure } from '../platform/chat/submissionFailure'
-import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
-import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
-import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
 import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
 import { recordChatDeliveryTelemetry, recordChatSubmissionTelemetry } from '../utils/chatDeliveryTelemetry'
 
@@ -1307,7 +1303,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const previousEventCountRef = useRef<number>(0)
 
   // Track whether workspace-modifying events occurred during the current run
-  const hadWorkspaceActivityRef = useRef<boolean>(false)
 
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
@@ -1674,12 +1669,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
     const actualSessionId = response.session_id || sessionId
 
-    // Check if this tab belongs to the currently active workflow preset.
-    // Background preset tabs still store events but skip UI side effects
-    // (workspace refresh, canvas updates, step progress) to avoid polluting the visible workflow.
-    const isActivePresetTab =
-      tab?.metadata?.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
-
     // --- Session status handling ---
     const activity = sessionStreamingState(response)
     const sessionStatus = activity.status
@@ -2021,14 +2010,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       }
 
-      // Track workspace-modifying events for refresh-on-completion
-      if (event.type === 'tool_execution') {
-        const toolName = innerData?.tool_name ?? agentEvent?.tool_name
-        if (toolName === 'execute_shell_command') {
-          hadWorkspaceActivityRef.current = true
-        }
-      }
-
       if (event.type === 'learn_code_script_execution') {
         const scriptedData = (innerData ?? agentEvent ?? {}) as Record<string, unknown>
         console.log('[FIX_LEARN_CODE_UI] chat_area_event_received', {
@@ -2046,33 +2027,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       newEvents.push(withDisplaySafeUserMessage(event))
     }
-    // PERF FIX: Mark workspace as stale instead of auto-fetching.
-    //
-    // PROBLEM: Previously called fetchFiles() here, which fetches the entire workspace tree
-    // (~2-3MB JSON for large workspaces with many workflow runs). This happened on every
-    // completion event and background agent completion.
-    //
-    // Files are deliberately not synchronized event-by-event: shell and MCP
-    // writes share no reliable common file event. Mark the view stale after a
-    // completed run and let the user choose when to refresh it.
-    const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
-    // Reviewer/fixer turns can create typed Pulse findings, decisions, review
-    // receipts, and changelog entries without touching a workspace file. Those
-    // panels intentionally do not poll while empty. A saved decision receipt
-    // refreshes them immediately; completion remains a fallback. Limit the
-    // event to the active workflow preset; background work for another preset
-    // must not perturb the workflow currently on screen.
-    const presetState = useGlobalPresetStore.getState()
-    const visibleWorkspace = presetState.workflowPresets.find(
-      preset => preset.id === presetState.activePresetIds.workflow,
-    )?.selectedFolder?.filepath ?? ''
-    const hasDecisionMutation = newEvents.some(event => decisionMutationNeedsRefresh(event, visibleWorkspace))
-    if (newEvents.some(projectSecretsNeedRefresh)) {
-      window.dispatchEvent(new CustomEvent(PROJECT_SECRETS_REFRESH_EVENT))
-    }
-    if ((isCompletionLike || hasDecisionMutation) && selectedModeCategory === 'workflow' && isActivePresetTab) {
-      window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
-    }
+    // Left and right state are separate: chat events never refresh, mark
+    // stale, or otherwise touch the right pane (workspace files, decisions,
+    // Pulse, secrets). The right pane gets its state from the server via its
+    // own fetches and the live feed; the agent may only change it through an
+    // explicit ui-control command.
     // A foreground terminal event is the per-turn completion contract. Settle
     // the chat immediately instead of waiting for a later activity-cache poll;
     // the retained tmux/session may stay alive for the next user message.
@@ -2089,11 +2048,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       void chatStore.getActiveSessions(true).catch(error => {
         logger.warn('ChatArea', 'Failed to refresh activity after foreground completion', error)
       })
-    }
-    if (isCompletionLike && hadWorkspaceActivityRef.current && isActivePresetTab !== false) {
-      hadWorkspaceActivityRef.current = false
-      console.log('[Workspace] Marking files stale after workspace activity')
-      useWorkspaceStore.getState().setNeedsRefresh(true)
     }
 
     // Process workflow events — only for the ACTIVE preset's tabs
@@ -2140,8 +2094,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Why: Background workflows keep SSE alive while running (see tabsWithActiveSessions).
     // Their events must be stored so they're visible when the user switches back — otherwise
     // tool calls, step completions, and agent outputs that arrived while viewing another
-    // workflow would be permanently lost. UI side effects (workspace refresh, canvas updates,
-    // auto-notifications) are still gated on isActivePresetTab above.
+    // workflow would be permanently lost. Chat events have no right-pane side effects.
     if (tab && newEvents.length > 0) {
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) {

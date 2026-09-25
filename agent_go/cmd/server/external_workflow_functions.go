@@ -16,7 +16,7 @@ func (api *StreamingAPI) externalWorkflowFunctionCall(w http.ResponseWriter, r *
 	manifest := selected.Manifest
 	switch name {
 	case "list_workflow_functions":
-		functions := workflowFunctions(manifest)
+		functions := append(workflowFunctions(manifest), workflowAskFunction())
 		listed := make([]map[string]any, 0, len(functions))
 		for _, fn := range functions {
 			listed = append(listed, map[string]any{"name": fn.Name, "description": fn.Description, "input_schema": fn.InputSchema})
@@ -43,7 +43,7 @@ func (api *StreamingAPI) externalWorkflowFunctionCall(w http.ResponseWriter, r *
 			return
 		}
 		fnName, _ := args["function"].(string)
-		fn, found := findCrewFunction(workflowFunctions(manifest), fnName)
+		fn, found := findCrewFunction(append(workflowFunctions(manifest), workflowAskFunction()), fnName)
 		if !found {
 			externalError(w, 404, "not_found", "The workflow has no function "+strings.TrimSpace(fnName)+"; see list_workflow_functions.")
 			return

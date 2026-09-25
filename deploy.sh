@@ -199,6 +199,8 @@ fi
 # closing the command substitution early.
 # Install the pinned backend Slack CLI in the same persistent tools prefix.
 "${SSH[@]}" "bash -s -- '$REMOTE_TOOLS'" < "$LOCAL_REPO_ROOT/agent_go/scripts/install-slack-cli.sh"
+# gog (Gmail connector CLI), kept on the latest checksum-verified release.
+"${SSH[@]}" "bash -s -- '$REMOTE_TOOLS'" < "$LOCAL_REPO_ROOT/deploy/common/install-gog.sh"
 if [[ "${#CLI_TOOLS[@]}" -gt 0 ]]; then
   cli_install_cmd() {
     case "$1" in

@@ -1,4 +1,6 @@
 import { capabilitiesEqual, mergeRemoteCapabilities } from './workflowCapabilitiesSync'
+import { SettingsCard } from '../ui/SettingsCard'
+import { ToggleRow } from '../ui/ToggleRow'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, Save, Search } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
@@ -581,6 +583,24 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                       void persist(next)
                     }}
                   />
+                )}
+                {identityTab === 'llm' && (
+                  <div className="mt-4">
+                    <SettingsCard title="Agent tools" ariaLabel="Native agent tools">
+                      <ToggleRow
+                        label="Native agent tools"
+                        description="In this workflow's Builder and Run-mode chats, let the coding agent use its own file reading, search, skills, todo list and subagents. Shell commands and file changes still go through AgentWorks. Step agents, schedules, webhooks and read-only users always keep AgentWorks tools only. Changing it starts a fresh CLI session on the next message. Applies to Claude Code, Codex, Cursor and Muse."
+                        checked={!!capabilities.native_agent_tools}
+                        disabled={!canWriteWorkflow || saving}
+                        disabledTitle={canWriteWorkflow ? 'Saving…' : 'Only owners and editors can change this.'}
+                        onCheckedChange={checked => {
+                          const next = { ...capabilities, native_agent_tools: checked }
+                          setCapabilities(next)
+                          void persist(next)
+                        }}
+                      />
+                    </SettingsCard>
+                  </div>
                 )}
                 {identityTab === 'upgrades' && (
                   <WorkflowUpdatesView workspacePath={workspacePath} />

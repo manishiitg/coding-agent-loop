@@ -127,6 +127,12 @@ describe('formatToolCallResult', () => {
     })
   })
 
+  it('marks a native tool call the policy blocked as an error (QA #218)', () => {
+    const blocked = 'tool blocked by hook: Muse internal tools are disabled for this session; use web search or an AgentWorks MCP tool.'
+    expect(formatToolCallResult(blocked)).toEqual({ format: 'text', text: blocked, isError: true })
+    expect(formatToolCallResult('The hook docs say a tool blocked by hook: is rare').isError).toBe(false)
+  })
+
   it('keeps a Claude native Bash zero exit successful', () => {
     expect(formatToolCallResult('Exit code 0\nfile.txt')).toEqual({
       format: 'text',

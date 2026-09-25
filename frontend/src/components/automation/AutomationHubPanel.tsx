@@ -6,6 +6,7 @@ import { TriggerDeliveryHistoryPanel } from './TriggerDeliveryHistoryPanel'
 import type { WorkflowScope } from '../scheduler/scheduleRuns/helpers'
 import { ScheduleStatusPills, type ScheduleStatusSnapshot } from '../scheduler/scheduleRuns/ScheduleStatusPills'
 import { AskAIButton } from '../workflow/AskAIButton'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { getWorkspaceAskAIMessage } from '../workflow/workspaceAskAI'
 import { WorkspaceViewHeader } from '../workflow/WorkspaceViewHeader'
 import { WorkspaceViewActions } from '../workflow/WorkspaceViewActions'
@@ -15,6 +16,7 @@ const WorkflowScheduleRunsPanel = lazy(() => import('../scheduler/WorkflowSchedu
 const ProductAPITriggersView = lazy(() => import('../workflow/ProductAPITriggersView'))
 const WorkflowAPITriggersView = lazy(() => import('../workflow/WorkflowAPITriggersView'))
 const CrewFunctionsView = lazy(() => import('./CrewFunctionsView'))
+const WorkflowFunctionsView = lazy(() => import('../workflow/WorkflowFunctionsView'))
 
 export type AutomationHubSection = 'chats' | 'schedules' | 'triggers' | 'functions' | 'bots'
 
@@ -83,8 +85,9 @@ export function AutomationHubPanel({
     ...(chatContent ? ['chats' as const] : []),
     'schedules',
     ...(entityType === 'workflow' || productTriggerScope ? ['triggers' as const] : []),
-    // Crew functions (PLAT-357) live on the Crew's own project.
-    ...(entityType === 'product' && productTriggerScope ? ['functions' as const] : []),
+    // Functions (PLAT-357): a Crew's declared functions, or a workflow's
+    // function triggers plus its assistant ask.
+    ...((entityType === 'product' && productTriggerScope) || entityType === 'workflow' ? ['functions' as const] : []),
     ...(botContent ? ['bots' as const] : []),
   ]), [botContent, chatContent, entityType, productTriggerScope])
   const fallbackSection = availableSections.has(initialSection) ? initialSection : 'schedules'
@@ -189,6 +192,12 @@ export function AutomationHubPanel({
           hideHeader
           refreshToken={triggersRefreshToken}
           onCounts={setTriggersCounts}
+        />}
+        {section === 'functions' && entityType === 'workflow' && <WorkflowFunctionsView
+          workspacePath={workspacePath}
+          refreshToken={functionsRefreshToken}
+          onCounts={setFunctionsCounts}
+          onAsk={onAskAI ?? (message => sendWorkspacePaneMessageToChat({ message, workspacePath }).then(() => undefined))}
         />}
         {section === 'functions' && entityType === 'product' && productTriggerScope && <CrewFunctionsView
           scope={productTriggerScope}

@@ -8,7 +8,9 @@ import { UI_CONTROL_CONTRACT } from './contract.generated'
 import { applyUIAction, workspaceHost, type UIAction, type UISnapshot } from './client'
 
 const kinds = ['workflow.ui-action']
-export const UI_CONTROL_BACKUP_POLL_MS = 10_000
+// Lease renewal only (server lease: 6 min). The agent's explicit view
+// commands wake the pane over SSE; the right pane never polls the chat.
+export const UI_CONTROL_BACKUP_POLL_MS = 5 * 60_000
 type Binding = { binding: string; token: string; workspace: string }
 // Why a sync ran. A dormant lease (its chat has no live agent session) ignores
 // the backup poll and view changes; only SSE wakes, the chat going live, or the
@@ -184,9 +186,8 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
         void sync('view')
       }
     })
-    // SSE presentation events and local view changes are the primary wake-up
-    // paths. This slower poll only renews the 15-second lease and recovers if
-    // an event is lost while the stream reconnects.
+    // SSE presentation events and local view changes are the wake-up paths.
+    // This slow timer only renews the server lease.
     const timer = setInterval(() => { void sync('poll') }, UI_CONTROL_BACKUP_POLL_MS)
     // Bind as soon as the chat goes live.
     const unsubscribeLiveness = useChatStore.subscribe((current, previous) => {

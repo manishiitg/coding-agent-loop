@@ -115,6 +115,8 @@ fi
 sync_repo "mcpagent" "$MCPAGENT"
 bash "$REPO/agent_go/scripts/install-slack-cli.sh" /srv/dominion/tools
 command -v slack >/dev/null
+echo "==> Ensuring gog (Gmail connector CLI) is the latest release"
+bash "$REPO/deploy/common/install-gog.sh" /srv/dominion/tools
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only
 # agent_go/go.mod does), so without a go.work tying all three siblings
@@ -285,6 +287,22 @@ printf '%s\n' '[Unit]' 'Description=Keep Dominion service logs bounded' '' '[Tim
   'AccuracySec=1m' 'Persistent=true' '' '[Install]' 'WantedBy=timers.target' > "$HOME/.config/systemd/user/dominion-logrotate.timer"
 systemctl --user daemon-reload
 systemctl --user enable --now dominion-logrotate.timer || echo "WARNING: could not enable dominion-logrotate.timer" >&2
+# gog (Gmail integration) must use its file keyring on this headless box.
+# Left on "auto" it picks the user's gnome-keyring over D-Bus, which has no
+# unlocked default collection here, and every Gmail reconnect fails with
+# "store token: set token: Object does not exist at path /". Same idempotent
+# block as deploy/aws-ec2/server/build-and-activate.sh: generate the
+# encryption password once, keep it only in the mode-0600 env file, and
+# preserve it across releases (changing it would orphan stored tokens).
+DOMINION_ENV_FILE=/srv/dominion/.env
+if ! grep -q '^GOG_KEYRING_PASSWORD=' "$DOMINION_ENV_FILE"; then
+  printf 'GOG_KEYRING_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$DOMINION_ENV_FILE"
+fi
+grep -q '^GOG_KEYRING_BACKEND=' "$DOMINION_ENV_FILE" || echo 'GOG_KEYRING_BACKEND=file' >> "$DOMINION_ENV_FILE"
+chmod 600 "$DOMINION_ENV_FILE"
+# Deterministic, fail-closed configuration check (shared with Confida and
+# SparkQuill) before anything restarts.
+PRODUCT=dominion python3 "$REPO/deploy/rootless-linux/deployment_checks.py" preflight
 # dominion-agent depends on dominion-workspace (After=dominion-workspace.service
 # in its unit), so restart it first -- and it must actually be restarted here:
 # until now this script only ever restarted dominion-agent, so dominion-workspace
@@ -334,6 +352,9 @@ for _ in $(seq 1 60); do
 done
 if $healthy; then
   echo "==> Health check passed. Active release: $(readlink -f "$CURRENT_LINK")"
+  # The running agent must actually carry the checked configuration (e.g.
+  # gog's file keyring), not just the env file on disk.
+  PRODUCT=dominion python3 "$REPO/deploy/rootless-linux/deployment_checks.py" running
 else
   echo "FATAL: health check failed after restart — rolling back to $PREVIOUS_RELEASE" >&2
   if [[ -n "$PREVIOUS_RELEASE" ]]; then

@@ -311,7 +311,7 @@ Example Automation setup checks (stable IDs in the package):
 
 For a newly launched site, `baseline_first` is a valid setup decision. The first run reports what can be observed today and what cannot yet be measured. No package may imply that traffic increased before the measurement window exists. Publishing a page and sending outreach remain separate approval-gated actions.
 
-The same model applies to Finance: a Finance Analyst Crew may install a Tax Export capability pack and perform both jobs interactively. A **Weekly Finance Review** Automation could bind that Crew as the analysis slot and a distinct Cash Flow Planner Crew as the forecast slot, passing a reconciled finance brief between them. If the customer only wants the Finance Analyst to send its own weekly brief, that is a Crew schedule, not a multi-agent Automation Playbook. The catalog should label these three choices clearly.
+The same model applies to Finance: a Finance Analyst Crew may add reconciliation, expense review, cash planning, and Tax Export capability packs while keeping one primary identity and separate setup checks. A sourced weekly brief from that Crew can use a Crew schedule. A **Finance and Receivables Review** Automation makes sense when a separate Receivables Coordinator must inspect overdue invoices or failed payments, draft reviewed actions, and hand a bounded exception summary back to Finance Analyst. Create another Finance Crew only for a real owner, access, cadence, or independent-review boundary. The catalog should show the difference between one Crew's added capabilities and a multi-Crew Automation.
 
 ### Updates, replacement, and removal
 

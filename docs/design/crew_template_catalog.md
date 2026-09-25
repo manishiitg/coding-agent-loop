@@ -8,21 +8,29 @@ A **Crew template** currently provides a reusable capability pack: a local skill
 
 Each template must work as a useful interactive Crew after the user provides its minimum inputs. Connected accounts, schedules, outbound messages, payments, production changes, and other consequential actions require explicit setup and the product's normal permissions and approvals. Never prefill a customer's target metric with an illustrative website number.
 
-The catalog has **44 Crew templates in seven categories**. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Marketing & Growth, and Website Growth for the specific new-site traffic journey. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
+The catalog tracks candidate jobs in seven categories. Several related jobs should become capabilities of one Crew rather than separate Crew identities. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Marketing & Growth, and Website Growth for the specific new-site traffic journey. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
 The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
 
 ## Finance
 
-| Crew template | Job and first useful output | Minimum user input | Suggested Automation |
+Use **two default Crew identities** for a small business. Finance Analyst owns read-oriented analysis and planning. Receivables Coordinator owns customer-facing payment follow-up proposals. Different data or action permissions remain separate even when the same owner uses both. Tax Export Preparer is already available as an installable supporting pack for Finance Analyst; create a separate tax Crew only when a different owner, access scope, or review boundary requires it.
+
+| Default Crew | Job and first useful output | Minimum user input | Optional recurring work |
 | --- | --- | --- | --- |
-| **Finance Analyst** | Explain revenue, expenses, and notable changes; produce a sourced weekly finance brief. | Uploaded statements or authorized finance data, reporting period, metric definitions. | Weekly Business Report |
-| **Tax Export Preparer** | Prepare a reconciled, source-linked transaction export and exceptions list for a tax professional. | Reporting period, jurisdiction, recipient format, authorized transaction records. | Tax Handoff Monitor |
-| **Collections Coordinator** | Review overdue invoices and draft prioritized, policy-compliant follow-ups for approval. | Invoice ledger, payment terms, customer contact policy. | Invoice Chaser |
-| **Payment Recovery Specialist** | Investigate failed payments and propose customer-safe recovery steps; never retry a charge without an authorized payment workflow. | Payment events, retry policy, customer communication rules. | Failed Payment Recovery |
-| **Expense Reviewer** | Categorize expense records, flag exceptions, and prepare a review queue with evidence. | Expense export, chart of accounts, approval limits. | Expense Review |
-| **Cash Flow Planner** | Build a cash forecast with assumptions, uncertainty, and the next decisions to make. | Balances, receivables, payables, forecast horizon. | Cash Flow Monitor |
-| **Revenue Reconciliation Analyst** | Compare orders, invoices, payments, and refunds; report mismatches with source records. | Authorized source exports or connections and reconciliation rules. | Revenue Reconciliation |
+| **Finance Analyst** — available v1 | Explain revenue, expense, cash, and reconciliation changes in a sourced finance brief. Add optional forecasting, expense review, and tax export capabilities within this Crew. | Authorized records, period, currency, metric definitions; further inputs only for selected capabilities. | A weekly brief can be this Crew's schedule. A broader finance review Automation is useful only when it coordinates distinct owners or Crews. |
+| **Receivables Coordinator** — planned | Review overdue invoices and failed payments, produce an exceptions and follow-up queue, and draft customer-safe messages for approval. | Invoice/payment records, terms, retry and contact policies, routing owner. | Receivables Review, if a recurring goal and review policy are wanted. |
+
+| Capability pack | Installed in | First result and boundary |
+| --- | --- | --- |
+| **Revenue Reconciliation** — planned | Finance Analyst | Matched orders, invoices, payments, and refunds with a source-linked mismatch list. Read-only until the owner separately authorizes a correction. |
+| **Expense Review** — planned | Finance Analyst | Categorized expenses and an exception queue under the owner's chart of accounts and approval rules. No automatic approval or payment. |
+| **Cash Flow Planning** — planned | Finance Analyst | A forecast with source balances, receivable/payable assumptions, scenarios, and uncertainty. It is a forecast, not a verified balance. |
+| **Tax Export Preparer** — available v1 | Finance Analyst by default; separate Crew when access requires | Reconciled transaction export and exception list for review by the owner and tax professional. No automatic tax classification, filing, or delivery. |
+| **Collections** — planned | Receivables Coordinator | Ranked overdue-invoice queue and proposed follow-ups. Messages remain drafts until reviewed. |
+| **Failed Payment Recovery** — planned | Receivables Coordinator | Failed-payment investigation and policy-compliant next steps. No charge retry or customer message without a separately authorized route. |
+
+Setup checks belong to each selected capability pack, so a Finance Analyst can be ready for a sourced brief while tax export remains pending. Builder should first inspect the existing Finance Analyst Crew and offer a supporting pack; it should propose another Crew only when the permission, owner, cadence, or independent-review boundary makes sharing inappropriate. Adding a pack never imports another Crew's connections or activates a schedule, function, trigger, payment action, or delivery channel.
 
 ## Customer Support
 

@@ -240,7 +240,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 	defer heartbeat.Stop()
 	lastSendTime := time.Now()
 	lastEventTime := time.Time{} // zero until first event received
-	heartbeatSkipLogged := false  // log the post-reply pause once per turn, not every tick
+	heartbeatSkipLogged := false // log the post-reply pause once per turn, not every tick
 
 	for {
 		select {

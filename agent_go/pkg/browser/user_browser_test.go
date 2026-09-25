@@ -149,9 +149,13 @@ func TestWorkflowBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
 	opens, captures := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/execute" {
-			opens++
 			var req ShellExecuteRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
+			// Per-conversation tab selection (session_tabs.go) adds `tab` calls
+			// in the same browser; count the navigations themselves.
+			if strings.Contains(req.Command, " open ") {
+				opens++
+			}
 			if !strings.Contains(req.Command, "--session "+expected) || !strings.Contains(req.Command, "/data/browser-profile-workflows/"+expected) {
 				t.Errorf("wrong browser/profile: %s", req.Command)
 			}

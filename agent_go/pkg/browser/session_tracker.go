@@ -99,6 +99,10 @@ func reapIdleSessions(idleTimeout time.Duration) {
 	}
 	tracker.mu.Unlock()
 
+	// Conversations idle in a browser that others keep alive give their tab
+	// back (session_tabs.go); an entirely idle browser is reaped whole below.
+	releaseIdleSessionTabOwners(sessionOwnerTabIdleRelease, defaultWorkspaceBrowserClient())
+
 	if len(stale) == 0 {
 		return
 	}
@@ -385,14 +389,29 @@ func (t *SessionTracker) RemoveAllForWorkflow(workflowSessionID string) []string
 // and removes them from the tracker. This should be called when a workflow ends
 // (workflow completion, stop, or clear) to prevent chromium process accumulation.
 func (t *SessionTracker) CloseAllForWorkflow(workflowSessionID string, client *Client) {
+	// The ending conversation gives back its tab in any shared browser first;
+	// a browser other conversations still use is kept open for them.
+	ReleaseSessionTabOwner(workflowSessionID, client)
+
 	sessions := t.SessionsForWorkflow(workflowSessionID)
 	if len(sessions) == 0 {
 		return
 	}
 
 	log.Printf("[BROWSER_CLEANUP] Closing %d browser session(s) for workflow %q: %v", len(sessions), workflowSessionID, sessions)
+	removed := 0
 	for _, session := range sessions {
-		if IsUserBrowserSession(session) || (SharedBrowserEnabled() && session == SharedSessionName) {
+		if others := otherSessionTabOwners(session, workflowSessionID); len(others) > 0 {
+			t.reassignOwner(session, others[0])
+			log.Printf("[BROWSER_CLEANUP] Keeping shared browser %q open: %d other conversation(s) still use it (%v)", session, len(others), others)
+			continue
+		}
+		if IsUserBrowserSession(session) {
+			continue // a user's own browser outlives the conversation (never untracked here)
+		}
+		if SharedBrowserEnabled() && session == SharedSessionName {
+			t.Remove(session)
+			removed++
 			continue
 		}
 		if client != nil {
@@ -410,11 +429,22 @@ func (t *SessionTracker) CloseAllForWorkflow(workflowSessionID string, client *C
 				log.Printf("[BROWSER_CLEANUP] Closed browser session %q", session)
 			}
 		}
+		clearSessionTabScope(session)
+		t.Remove(session)
+		removed++
 	}
+	log.Printf("[BROWSER_CLEANUP] Cleanup complete for workflow %q: removed %d session(s) from tracker", workflowSessionID, removed)
+}
 
-	// Remove all from tracker
-	removed := t.RemoveAllForWorkflow(workflowSessionID)
-	log.Printf("[BROWSER_CLEANUP] Cleanup complete for workflow %q: removed %d session(s) from tracker", workflowSessionID, len(removed))
+// reassignOwner attributes a still-shared browser to a conversation that is
+// still using it, so that conversation's own end (or the idle reaper) closes it.
+func (t *SessionTracker) reassignOwner(browserSession, ownerID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if info, ok := t.sessions[browserSession]; ok {
+		info.agentSessionID = ownerID
+		info.workflowSessionID = ownerID
+	}
 }
 
 // CloseSession closes a single browser session and removes it from the tracker.

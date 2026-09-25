@@ -1,11 +1,11 @@
 export const LLM_DISCOVERY_ONBOARDING_DISMISSED_KEY = 'llm_discovery_onboarding_dismissed'
 export type WalkthroughSurface = 'overview' | 'empty-automation' | 'automation' | 'empty-crew' | 'crew'
 const WALKTHROUGH_DISMISSED_KEYS: Record<WalkthroughSurface, string> = {
-  overview: 'agentworks_overview_walkthrough_v2_dismissed',
-  'empty-automation': 'agentworks_empty_automation_walkthrough_v2_dismissed',
-  automation: 'agentworks_automation_walkthrough_v2_dismissed',
-  'empty-crew': 'agentworks_empty_crew_walkthrough_v2_dismissed',
-  crew: 'agentworks_crew_walkthrough_v2_dismissed',
+  overview: 'agentworks_overview_walkthrough_v3_dismissed',
+  'empty-automation': 'agentworks_empty_automation_walkthrough_v3_dismissed',
+  automation: 'agentworks_automation_walkthrough_v3_dismissed',
+  'empty-crew': 'agentworks_empty_crew_walkthrough_v3_dismissed',
+  crew: 'agentworks_crew_walkthrough_v3_dismissed',
 }
 
 export const LLM_DISCOVERY_ONBOARDING_OPENED_EVENT = 'llm-discovery-onboarding-opened'

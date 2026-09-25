@@ -4,12 +4,25 @@ import ModalPortal from '../ui/ModalPortal'
 import type { WalkthroughSurface } from '../../utils/onboarding'
 
 type WalkthroughStep = {
-  selector: string
+  selector?: string
   title: string
   body: string
+  example?: string
+}
+
+const PRODUCT_SWITCHER_STEP: WalkthroughStep = {
+  selector: '[aria-label="Switch product"]',
+  title: 'Choose a workspace',
+  body: 'Use AgentWorks for repeatable goals with a success metric. Use Crew for a specialist teammate that remembers an ongoing project. Switch between them here.',
 }
 
 const OVERVIEW_STEPS: WalkthroughStep[] = [
+  {
+    title: 'What is AgentWorks for?',
+    body: 'AgentWorks is for repeatable goals with a measurable result. Tell agents the outcome and metric; they build and run an automation, show progress, and ask for decisions when needed.',
+    example: 'Review new support requests daily and keep urgent response time under one hour.',
+  },
+  PRODUCT_SWITCHER_STEP,
   {
     selector: '[data-tour="workflow-add-edit"]',
     title: 'Open or create an automation',
@@ -43,6 +56,11 @@ const OVERVIEW_STEPS: WalkthroughStep[] = [
 ]
 
 const AUTOMATION_STEPS: WalkthroughStep[] = [
+  {
+    title: 'From goal to running automation',
+    body: 'This workspace is where AgentWorks turns a measurable goal into work its agents can run. Describe the outcome in chat, review the plan, and use the dashboard to see the result.',
+    example: 'Check new support requests each morning and flag urgent ones within an hour.',
+  },
   {
     selector: '[data-tour="workflow-add-edit"]',
     title: 'Current automation',
@@ -97,6 +115,12 @@ const AUTOMATION_STEPS: WalkthroughStep[] = [
 
 const EMPTY_AUTOMATION_STEPS: WalkthroughStep[] = [
   {
+    title: 'Choose a goal for AgentWorks',
+    body: 'AgentWorks uses automations to pursue repeatable, measurable goals. Open one to continue, or create one by describing the outcome you want and how you will measure success.',
+    example: 'Qualify incoming leads each day and report how many are ready for follow-up.',
+  },
+  PRODUCT_SWITCHER_STEP,
+  {
     selector: '[data-tour="automation-empty-state"]',
     title: 'Start with an automation',
     body: 'No automation is open yet. Choose one from the top bar or create a new one to start building.',
@@ -120,6 +144,12 @@ const EMPTY_AUTOMATION_STEPS: WalkthroughStep[] = [
 
 const EMPTY_CREW_STEPS: WalkthroughStep[] = [
   {
+    title: 'What is Crew for?',
+    body: 'Crew is for ongoing work with specialist AI teammates. Give each member a project and role; it keeps that project’s chat, memory, and tools so you can pick up where you left off.',
+    example: 'A research member gathers sources and drafts a weekly brief for one client.',
+  },
+  PRODUCT_SWITCHER_STEP,
+  {
     selector: '[data-tour="crew-empty-state"]',
     title: 'Your Crew starts here',
     body: 'Create a Crew member to keep a project’s chat, files, memory, and tools together.',
@@ -142,6 +172,11 @@ const EMPTY_CREW_STEPS: WalkthroughStep[] = [
 ]
 
 const CREW_STEPS: WalkthroughStep[] = [
+  {
+    title: 'A teammate that remembers this project',
+    body: 'This Crew member is a specialist AI teammate. Its role, project memory, files, and tools stay available across chats, making it useful for work that continues over time.',
+    example: 'Ask it to research a topic, draft a plan, then continue that plan later.',
+  },
   {
     selector: '[data-tour="crew-selector"]',
     title: 'Current Crew member',
@@ -214,8 +249,9 @@ const visibleTargetForSelector = (selector: string): Element | null => {
       styles.opacity !== '0'
   }) ?? null
 }
+const isStepAvailable = (step: WalkthroughStep) => !step.selector || Boolean(visibleTargetForSelector(step.selector))
 const visibleStepIndices = (steps: WalkthroughStep[]) => steps
-  .map((step, index) => visibleTargetForSelector(step.selector) ? index : -1)
+  .map((step, index) => isStepAvailable(step) ? index : -1)
   .filter(index => index >= 0)
 
 interface WorkflowWalkthroughProps {
@@ -228,18 +264,20 @@ interface WorkflowWalkthroughProps {
 export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen, onClose, openToken = 0, surface }) => {
   const steps = STEPS_BY_SURFACE[surface]
   const surfaceLabel = SURFACE_LABELS[surface]
-  const [stepIndex, setStepIndex] = useState(0)
+  const [progress, setProgress] = useState({ surface, openToken, index: 0 })
+  // A new surface must render its first step immediately, before effects run.
+  const stepIndex = progress.surface === surface && progress.openToken === openToken ? progress.index : 0
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null)
 
   const findStep = useCallback((startIndex: number, direction: 1 | -1) => {
     if (direction === 1) {
       for (let index = Math.max(0, startIndex); index < steps.length; index += 1) {
-        if (visibleTargetForSelector(steps[index].selector)) return index
+        if (isStepAvailable(steps[index])) return index
       }
       return -1
     }
     for (let index = Math.min(steps.length - 1, startIndex); index >= 0; index -= 1) {
-      if (visibleTargetForSelector(steps[index].selector)) {
+      if (isStepAvailable(steps[index])) {
         return index
       }
     }
@@ -248,18 +286,23 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
 
   const goToStep = useCallback((direction: 1 | -1) => {
     const nextIndex = findStep(stepIndex + direction, direction)
-    if (nextIndex >= 0) setStepIndex(nextIndex)
-  }, [findStep, stepIndex])
+    if (nextIndex >= 0) setProgress({ surface, openToken, index: nextIndex })
+  }, [findStep, openToken, stepIndex, surface])
 
   useEffect(() => {
     if (!isOpen) return
     const firstIndex = findStep(0, 1)
-    setStepIndex(firstIndex >= 0 ? firstIndex : 0)
+    setProgress({ surface, openToken, index: firstIndex >= 0 ? firstIndex : 0 })
     setTargetRect(null)
   }, [findStep, isOpen, openToken, surface])
 
   const updateTarget = useCallback(() => {
-    const target = visibleTargetForSelector(steps[stepIndex].selector)
+    const selector = steps[stepIndex]?.selector
+    if (!selector) {
+      setTargetRect(null)
+      return
+    }
+    const target = visibleTargetForSelector(selector)
     if (target) {
       const rect = target.getBoundingClientRect()
       setTargetRect(previous => previous &&
@@ -270,31 +313,31 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
     }
     const nextIndex = findStep(stepIndex + 1, 1)
     if (nextIndex >= 0 && nextIndex !== stepIndex) {
-      setStepIndex(nextIndex)
+      setProgress({ surface, openToken, index: nextIndex })
     } else {
       const previousIndex = findStep(stepIndex - 1, -1)
       if (previousIndex >= 0 && previousIndex !== stepIndex) {
-        setStepIndex(previousIndex)
+        setProgress({ surface, openToken, index: previousIndex })
         return
       }
       const firstIndex = findStep(0, 1)
       if (firstIndex >= 0 && firstIndex !== stepIndex) {
-        setStepIndex(firstIndex)
+        setProgress({ surface, openToken, index: firstIndex })
         return
       }
       setTargetRect(null)
     }
-  }, [findStep, stepIndex, steps])
+  }, [findStep, openToken, stepIndex, steps, surface])
 
   useEffect(() => {
     if (!isOpen) return
-    if (!visibleTargetForSelector(steps[stepIndex].selector)) {
+    if (!isStepAvailable(steps[stepIndex])) {
       const firstIndex = findStep(0, 1)
       if (firstIndex >= 0) {
-        setStepIndex(firstIndex)
+        setProgress({ surface, openToken, index: firstIndex })
       }
     }
-  }, [findStep, isOpen, stepIndex, steps])
+  }, [findStep, isOpen, openToken, stepIndex, steps, surface])
 
   useEffect(() => {
     if (!isOpen) return
@@ -348,13 +391,13 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
     : targetRect
     ? clamp(targetRect.left, 12, window.innerWidth - panelWidth - 12)
     : clamp((window.innerWidth - panelWidth) / 2, 12, window.innerWidth - panelWidth - 12)
-  const panelTop = panelBesideTarget && targetRect
+  const panelTop = !targetRect
+    ? window.innerHeight / 2
+    : panelBesideTarget
     ? clamp(targetRect.bottom + 10, 12, window.innerHeight - panelHeight - 12)
-    : targetRect
-    ? targetRect.bottom + panelHeight + 16 > window.innerHeight
+    : targetRect.bottom + panelHeight + 16 > window.innerHeight
       ? clamp(targetRect.top - panelHeight - 14, 12, window.innerHeight - panelHeight - 12)
       : clamp(targetRect.bottom + 14, 12, window.innerHeight - panelHeight - 12)
-    : clamp((window.innerHeight - panelHeight) / 2, 12, window.innerHeight - panelHeight - 12)
 
   return (
     <ModalPortal>
@@ -373,7 +416,7 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
         )}
         <div
           className="fixed pointer-events-auto overflow-y-auto rounded-2xl border border-border bg-popover p-5 text-popover-foreground shadow-2xl"
-          style={{ left: panelLeft, top: panelTop, width: panelWidth, maxHeight: window.innerHeight - 24 }}
+          style={{ left: panelLeft, top: panelTop, transform: targetRect ? undefined : 'translateY(-50%)', width: panelWidth, maxHeight: window.innerHeight - 24 }}
           role="dialog"
           aria-label={surfaceLabel.aria}
           aria-describedby="workflow-walkthrough-description"
@@ -399,6 +442,11 @@ export const WorkflowWalkthrough: React.FC<WorkflowWalkthroughProps> = ({ isOpen
           <p id="workflow-walkthrough-description" className="mt-2 text-sm leading-5 text-muted-foreground">
             {step?.body ?? 'This part of the interface is still loading. You can reopen the walkthrough from your account menu.'}
           </p>
+          {step?.example && (
+            <div className="mt-3 rounded-lg bg-muted/60 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              <span className="font-semibold text-foreground">Example:</span> {step.example}
+            </div>
+          )}
           {stepTotal > 0 && (
             <div className="mt-4 flex gap-1" aria-hidden="true">
               {visibleIndices.map((index, position) => (

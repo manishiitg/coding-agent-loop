@@ -12,7 +12,7 @@ import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { SharedSlackBotSettings } from '../../admin/SlackAdminPanel'
 import { RouteChip } from './RouteChips'
-import { SlackAppSetupSteps, SlackChecksView, SlackTokenHint } from './SlackAppSetupSteps'
+import { SlackAppSetupSteps, SlackChecksView, SlackPermissionsChecklist, SlackTokenHint } from './SlackAppSetupSteps'
 import { routeId } from './types'
 
 // The Slack tab for one workflow or crew project answers a single question:
@@ -184,6 +184,7 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
   return (
     <FormSection title={own ? `Edit ${own.display_name}` : `Set up this ${noun}'s bot`} description={<>Create a Slack app for this {noun} and paste its two tokens. {inviteHint}</>}>
       <SlackAppSetupSteps finalStep={<>Save below, then in Slack run <b>/invite @YourBot</b> in any channel and @mention it.</>} />
+      <SlackPermissionsChecklist />
       <div>
         <Label className="mb-2 block">Bot name</Label>
         <Input type="text" value={slackConnName} onChange={e => setSlackConnName(e.target.value)} disabled={!canManageWorkflowSlack} placeholder="e.g. Support bot" title={ownTitle} />

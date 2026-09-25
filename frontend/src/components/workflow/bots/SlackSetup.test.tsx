@@ -87,6 +87,21 @@ it("shows where to get each Slack token next to its field", async () => {
   expect(host.querySelector('summary')?.textContent).toContain('Where to get Slack tokens');
 });
 
+it("shows required scopes, optional scopes, and bot events without opening setup details", async () => {
+  const host = await render(makeBots());
+  const checklist = host.querySelector('[aria-label="Slack permissions and events"]')!;
+  const required = Array.from(checklist.querySelectorAll('ul code')).map(item => item.textContent);
+  expect(required).toEqual([
+    'app_mentions:read', 'channels:history', 'groups:history', 'channels:read', 'groups:read',
+    'chat:write', 'reactions:write', 'users:read', 'users:read.email',
+  ]);
+  expect(checklist.textContent).toContain('Optional bot scopes: files:read');
+  expect(checklist.textContent).toContain('chat:write.public');
+  expect(checklist.textContent).toContain('connections:write');
+  expect(checklist.textContent).toContain('app_mention message.channels message.groups');
+  expect(checklist.textContent).toContain('Reinstall the Slack app after changing scopes');
+});
+
 it("shows a configured own bot as a summary with no channel setup", async () => {
   const host = await render(makeBots({ own: ownBot }));
   expect(radio(host, /Its own bot/).checked).toBe(true);

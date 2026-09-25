@@ -18,6 +18,26 @@ export function SlackTokenHint({ kind }: { kind: 'bot' | 'app' }) {
   </>
 }
 
+export function SlackPermissionsChecklist() {
+  return (
+    <section aria-label="Slack permissions and events" className="space-y-3 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+      <div>
+        <h4 className="font-semibold text-foreground">Permissions and events</h4>
+        <p className="mt-1">In your Slack app, open <b>OAuth &amp; Permissions → Bot Token Scopes</b> and add these required scopes:</p>
+      </div>
+      <ul className="space-y-2">
+        <li><b className="text-foreground">Read mentions and channel context:</b> <Code>app_mentions:read</Code> <Code>channels:history</Code> <Code>groups:history</Code> <Code>channels:read</Code> <Code>groups:read</Code></li>
+        <li><b className="text-foreground">Reply and react:</b> <Code>chat:write</Code> <Code>reactions:write</Code></li>
+        <li><b className="text-foreground">Identify the sender:</b> <Code>users:read</Code> <Code>users:read.email</Code></li>
+      </ul>
+      <p><b className="text-foreground">Optional bot scopes:</b> <Code>files:read</Code> to read incoming attachments; <Code>chat:write.public</Code> to post in public channels without joining them.</p>
+      <p><b className="text-foreground">App-Level Token:</b> add <Code>connections:write</Code> under <b>Basic Information → App-Level Tokens</b> for Socket Mode.</p>
+      <p><b className="text-foreground">Required bot events:</b> under <b>Event Subscriptions → Subscribe to bot events</b>, add <Code>app_mention</Code> <Code>message.channels</Code> <Code>message.groups</Code> and save. Enable Socket Mode first; leave Request URL empty.</p>
+      <p>Reinstall the Slack app after changing scopes. “Save &amp; test” checks tokens and granted scopes; confirm delivery with an @mention and a plain thread reply.</p>
+    </section>
+  )
+}
+
 export function SlackAppSetupSteps({ finalStep }: { finalStep: ReactNode }) {
   return (
     <details className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
@@ -27,7 +47,7 @@ export function SlackAppSetupSteps({ finalStep }: { finalStep: ReactNode }) {
           Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">api.slack.com/apps</a> → <b>Create New App</b> → <b>From scratch</b>. Pick a name and your workspace.
         </li>
         <li>
-          <b>OAuth &amp; Permissions</b> → <b>Bot Token Scopes</b>. Add <Code>app_mentions:read</Code>, <Code>channels:history</Code>, <Code>groups:history</Code>, <Code>channels:read</Code>, <Code>groups:read</Code>, <Code>chat:write</Code>, <Code>chat:write.public</Code>, <Code>reactions:write</Code>, <Code>users:read</Code>, <Code>users:read.email</Code>, and optionally <Code>files:read</Code> for attachments.
+          <b>OAuth &amp; Permissions</b> → <b>Bot Token Scopes</b>. Add the required scopes in the permissions card below. Add optional scopes only for features you need.
         </li>
         <li>
           <b>Basic Information</b> → <b>App-Level Tokens</b> → <b>Generate Token and Scopes</b>. Add <Code>connections:write</Code> and copy the <Code>xapp-</Code> <b>App Token</b>. Then enable <b>Socket Mode</b>.

@@ -9,6 +9,8 @@ import { WorkspaceViewActions } from './WorkspaceViewActions'
 import { BrowserWorkspacePanel } from './BrowserWorkspacePanel'
 import { TooltipProvider } from '../ui/tooltip'
 import { getWorkspacePanelGuide } from './workspacePanelGuides'
+import { IntegrationHowToGuide } from './IntegrationHowToGuide'
+import { INTEGRATION_HOW_TO_TOPICS } from './integrationHowToTopics'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -178,6 +180,48 @@ describe('Panel walkthroughs', () => {
       await act(async () => root.unmount())
       host.remove()
     }
+  })
+
+  it.each(INTEGRATION_HOW_TO_TOPICS)('shows %s task answers in the larger walkthrough bubble', async topic => {
+    const expectedAnswer = {
+      MCPs: 'Connect a new app',
+      Skills: 'GitHub URL',
+      Slack: 'xapp-',
+      WhatsApp: 'Linked Devices',
+      Gmail: 'Add & sign in',
+      Connect: 'Remote MCP URL',
+    }[topic]
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<WorkspaceViewHeader title="Integrations" helpTopic={`Integrations · ${topic}`} />))
+      const button = host.querySelector(`[aria-label="Walkthrough: Integrations · ${topic}"]`) as HTMLButtonElement
+      expect(host.querySelector(`[aria-label="${topic} how-to answers"]`)).toBeNull()
+
+      await act(async () => button.click())
+      const dialog = host.querySelector('[role="dialog"]')!
+      expect(dialog.className).toContain('w-[min(40rem,calc(100vw-1.5rem))]')
+      expect(dialog.querySelector(`[aria-label="${topic} how-to answers"]`)).not.toBeNull()
+      expect(dialog.querySelectorAll('details').length).toBeGreaterThanOrEqual(6)
+      expect(dialog.textContent).toContain(expectedAnswer)
+
+      await act(async () => button.click())
+      expect(host.querySelector(`[aria-label="${topic} how-to answers"]`)).toBeNull()
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('keeps project and workflow how-to answers specific to their controls', () => {
+    const projectSkills = renderToStaticMarkup(<IntegrationHowToGuide topic="Skills" scopeNoun="project" />)
+    const workflowSkills = renderToStaticMarkup(<IntegrationHowToGuide topic="Skills" scopeNoun="workflow" />)
+    expect(projectSkills).toContain('Skills for this project')
+    expect(workflowSkills).toContain('Builder opens in chat')
+    expect(renderToStaticMarkup(<IntegrationHowToGuide topic="Slack" scopeNoun="project" />)).toContain('this project')
+    expect(renderToStaticMarkup(<IntegrationHowToGuide topic="WhatsApp" scopeNoun="workflow" />)).toContain('Workflow routes')
+    expect(renderToStaticMarkup(<IntegrationHowToGuide topic="Connect" scopeNoun="workflow" />)).toContain('Remote MCP URL')
   })
 
   it('places Browser help between Ask AI and Refresh exactly once', () => {

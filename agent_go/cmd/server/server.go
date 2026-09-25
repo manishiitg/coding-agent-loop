@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -861,9 +862,11 @@ type QueryRequest struct {
 	// the next cron message waits for turn completion instead of racing a tmux
 	// snapshot that may not have flipped to busy yet.
 	DisableLiveInputDelivery bool `json:"disable_live_input_delivery,omitempty"`
-	// KeepNativeSessionAlive keeps one native coding-CLI process alive while a
-	// scheduler sends its known consecutive turns (run → Pulse). Contract
-	// upgrades are manual Builder work and never belong to this sequence.
+	// KeepNativeSessionAlive was how a scheduler kept one native coding-CLI
+	// process alive across its consecutive turns (run → Pulse). Every
+	// chat-level turn now retains its CLI (codingAgentRequestAllowsPersistentInteractive),
+	// so it no longer changes the transport; kept for wire compatibility with
+	// callers that still send it.
 	KeepNativeSessionAlive bool `json:"keep_native_session_alive,omitempty"`
 	// PulseLifecycleTurn marks a scheduler-sent Pulse turn (Gate, review
 	// dispatch, Finalize). The main conversation keeps the Builder model on
@@ -5349,7 +5352,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		} else if workflowNativeAgentTools {
 			profileAgentToolsMode = "hybrid"
 		}
-		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
+		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req)
 		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, allowPersistentInteractive)
 		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive, musePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
@@ -9912,6 +9915,12 @@ func agentSupportsLiveInputDelivery(agent *mcpagent.Agent) bool {
 func liveInputErrorProvesNoTarget(err error) bool {
 	if err == nil {
 		return false
+	}
+	// A running agent with no turn in flight cannot take the message (its
+	// steer queue drains only inside a turn), so start a new turn with it.
+	var deliveryErr *mcpagent.CodingAgentDeliveryError
+	if errors.As(err, &deliveryErr) && deliveryErr.Kind == mcpagent.DeliveryErrorKindNoSession {
+		return true
 	}
 	return strings.Contains(err.Error(), "session registered for owner") ||
 		strings.Contains(err.Error(), "session is closed")

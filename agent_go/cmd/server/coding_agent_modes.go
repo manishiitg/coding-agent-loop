@@ -36,41 +36,33 @@ func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInter
 }
 
 // codingAgentUsesStructuredTransportForChat applies AgentWorks' shared
-// use-case rule to every product: a human-facing coding-agent conversation is
-// retained in tmux; non-interactive/background execution uses structured JSON.
-// A product profile may choose tools, skills and models, but it does not create
-// a second transport policy for the same kind of chat.
-func codingAgentUsesStructuredTransportForChat(provider string, isInteractiveChat bool) bool {
+// transport rule: every chat-level coding-agent turn runs in tmux, whether a
+// person, a schedule, a webhook, a bot or a background completion started it.
+// Only workflow steps (applyWorkflowTransportToAgentConfig), delegated
+// sub-agents and typed runtime stages use structured JSON. A product profile
+// may choose tools, skills and models, but not a second transport policy.
+func codingAgentUsesStructuredTransportForChat(provider string, retainsTmux bool) bool {
 	if _, ok := llm.GetCodingAgentProviderContract(llm.Provider(strings.TrimSpace(provider)), ""); !ok {
 		return false
 	}
-	return !isInteractiveChat
+	return !retainsTmux
 }
 
-func codingAgentRequestAllowsPersistentInteractive(req *QueryRequest, sessionID string) bool {
+// codingAgentRequestAllowsPersistentInteractive reports whether a chat-level
+// turn keeps its coding CLI in a retained tmux session. All of them do except
+// typed runtime stages (e.g. Pulse reviewers), which run like workflow stages.
+//
+// Schedules, webhooks, bot turns and background completions used to fall back
+// to structured JSON. When such a turn landed in a person's retained chat (a
+// crew schedule posting its "Daily wrap-up" into the project conversation) it
+// replaced the chat's tmux agent with a structured one; the person's later
+// messages were queued for a turn that never came (RTS 2026-09-25). Retained
+// panes that go idle are closed by the idle reaper.
+func codingAgentRequestAllowsPersistentInteractive(req *QueryRequest) bool {
 	if req == nil {
 		return false
 	}
-	// Backend-created children and typed runtime stages have durable outputs and
-	// completion notifications, not a user who can continue their native CLI.
-	if strings.TrimSpace(req.ParentSessionID) != "" || strings.TrimSpace(req.SessionKind) != "" || req.IsAutoNotification {
-		return false
-	}
-	// A scheduler knows that its immediately following turn belongs to the same
-	// conversation. Keep the CLI process alive across that boundary rather than
-	// sending Claude Code /exit and spawning a separate --resume process.
-	if req.KeepNativeSessionAlive {
-		return true
-	}
-	// "Make interactive" deliberately keeps the schedule session ID. This
-	// explicit promotion therefore outranks its historical trigger/ID shape.
-	if req.UserInteractiveContinuation {
-		return true
-	}
-	// Workflow Builder chats are represented internally as workflow_phase, but
-	// they are still ordinary user-interactive main chats. Classify by origin
-	// and ownership instead of agent mode so their conversation tmux survives.
-	return !isScheduledSessionIdentity(sessionID, req.TriggeredBy)
+	return strings.TrimSpace(req.SessionKind) == ""
 }
 
 func codingAgentClaudeCodeChatTransport(provider string) string {

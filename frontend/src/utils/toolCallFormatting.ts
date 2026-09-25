@@ -157,9 +157,17 @@ const NATIVE_SHELL_NONZERO_EXIT = /^exit code\s+[1-9]\d*\b/im
  */
 const SHELL_PERMISSION_DENIED = /(?:Operation not permitted|[Pp]ermission denied)/
 
+/**
+ * A native CLI tool call the AgentWorks tool policy refused. Muse reports it
+ * as "tool blocked by hook: …" in an ordinary result; with native agent tools
+ * off, a blocked read_file was shown with a green check and read as a policy
+ * leak (QA #218).
+ */
+const NATIVE_TOOL_BLOCKED = /^\s*tool blocked by hook:/i
+
 function textCarriesHarnessError(value: unknown): boolean {
   return typeof value === 'string' && (
-    HARNESS_TOOL_ERROR.test(value) || NATIVE_SHELL_NONZERO_EXIT.test(value)
+    HARNESS_TOOL_ERROR.test(value) || NATIVE_SHELL_NONZERO_EXIT.test(value) || NATIVE_TOOL_BLOCKED.test(value)
   )
 }
 

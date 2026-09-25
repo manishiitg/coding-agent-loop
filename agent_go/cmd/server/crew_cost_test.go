@@ -209,7 +209,7 @@ func TestUpdateScheduleRunResultAtomicity(t *testing.T) {
 
 func TestDispatchInternalProductTriggerStampsCaller(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, internalDispatchCrewTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	result, err := svc.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
 		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
@@ -233,7 +233,7 @@ func TestDispatchInternalProductTriggerStampsCaller(t *testing.T) {
 
 func TestRunCrewStepAdoptsRunUsage(t *testing.T) {
 	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
-	svc.conversations = map[string]bool{"owner\x1fconversation:crewx:rts": true}
+	svc.conversations = map[string]bool{"owner\x1fproduct-project:crewx:rts:trig-1": true}
 	ctx := context.Background()
 	req := testCrewStepRequest()
 	runID := webhookDeliveryRunID("rts", "trig-1", crewRunnerDeliveryBase(req))

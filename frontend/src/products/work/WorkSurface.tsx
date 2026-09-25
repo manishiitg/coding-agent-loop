@@ -777,6 +777,28 @@ export function WorkSurface() {
     }
   }, [selected, tabId, updateLLMConfig])
 
+  // Keep the workspace's inputs stable while chat state changes. The pane is
+  // memoized, and each callback only changes when its project or action changes.
+  const workspaceProjectId = selected?.id
+  const sharedWorkspaceOwner = useMemo(() => selected?.shared
+    ? { ownerId: selected.shared.ownerId, ownerUsername: selected.shared.ownerUsername }
+    : undefined, [selected?.shared])
+  const changeNativeAgentTools = useCallback(async (enabled: boolean) => {
+    await updateNativeAgentTools(workspaceProjectId!, enabled)
+    markWorkProjectRuntimeDirty(workspaceProjectId!)
+  }, [workspaceProjectId, updateNativeAgentTools])
+  const changeSelectedServers = useCallback((servers: string[]) => updateSelections(workspaceProjectId!, { selectedServers: servers }), [workspaceProjectId, updateSelections])
+  const changeSelectedSkills = useCallback((skills: string[]) => updateSelections(workspaceProjectId!, { selectedSkills: skills }), [workspaceProjectId, updateSelections])
+  const changeSelectedSecrets = useCallback((secrets: string[]) => updateSelections(workspaceProjectId!, { selectedSecrets: secrets }), [workspaceProjectId, updateSelections])
+  const changeSelectedGlobalSecrets = useCallback((secrets: string[]) => updateSelections(workspaceProjectId!, { selectedGlobalSecrets: secrets }), [workspaceProjectId, updateSelections])
+  const changeWorkflowContextPaths = useCallback(async (paths: string[]) => {
+    if (!workspaceProjectId) return
+    await updateSelections(workspaceProjectId, { workflowContextPaths: paths })
+    markWorkProjectRuntimeDirty(workspaceProjectId)
+  }, [workspaceProjectId, updateSelections])
+  const changeProjectIdentity = useCallback((patch: ProductIdentityPatch) => updateIdentity(workspaceProjectId!, patch), [workspaceProjectId, updateIdentity])
+  const requestDeleteProject = useCallback(() => setDeleteCandidate(selected ?? null), [selected])
+
   useEffect(() => {
     useModeStore.getState().setModeCategory('multi-agent')
     useAppStore.getState().setAgentMode('multi-agent')
@@ -1110,27 +1132,21 @@ export function WorkSurface() {
                         view={workspaceView}
                         onViewChange={selectWorkspaceView}
                         enabledPanels={workspacePanels}
-                        shared={selected.shared ? { ownerId: selected.shared.ownerId, ownerUsername: selected.shared.ownerUsername } : undefined}
+                        shared={sharedWorkspaceOwner}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}
                         selectedGlobalSecrets={selected.selectedGlobalSecrets}
                         workflowContextPaths={selected.workflowContextPaths}
                         onRuntimeChange={changeWorkRuntime}
                         nativeAgentTools={!!selected.nativeAgentTools}
-                        onNativeAgentToolsChange={async enabled => {
-                          await updateNativeAgentTools(selected.id, enabled)
-                          markWorkProjectRuntimeDirty(selected.id)
-                        }}
-                        onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
-                        onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
-                        onSelectedSecretsChange={secrets => updateSelections(selected.id, { selectedSecrets: secrets })}
-                        onSelectedGlobalSecretsChange={secrets => updateSelections(selected.id, { selectedGlobalSecrets: secrets })}
-                        onWorkflowContextPathsChange={async paths => {
-                          await updateSelections(selected.id, { workflowContextPaths: paths })
-                          markWorkProjectRuntimeDirty(selected.id)
-                        }}
-                        onUpdateIdentity={patch => updateIdentity(selected.id, patch)}
-                        onDeleteRequest={() => setDeleteCandidate(selected)}
+                        onNativeAgentToolsChange={changeNativeAgentTools}
+                        onSelectedServersChange={changeSelectedServers}
+                        onSelectedSkillsChange={changeSelectedSkills}
+                        onSelectedSecretsChange={changeSelectedSecrets}
+                        onSelectedGlobalSecretsChange={changeSelectedGlobalSecrets}
+                        onWorkflowContextPathsChange={changeWorkflowContextPaths}
+                        onUpdateIdentity={changeProjectIdentity}
+                        onDeleteRequest={requestDeleteProject}
                       /></>
                   ) : (
                     <div className="grid h-full place-items-center text-sm text-muted-foreground">Opening workspace…</div>

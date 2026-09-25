@@ -2207,6 +2207,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [showRunningDrawer, setShowChatArea])
 
+  // These slots own their subscriptions. Reusing their elements lets the
+  // memoized workspace host ignore chat-only WorkflowLayout renders.
+  const chatTabsSlot = useMemo(() => showChatArea ? <WorkflowChatTabs embedded /> : undefined, [showChatArea])
+  const workshopPanel = useMemo(() => workspacePath ? (
+    <AutomationHubPanel
+      key={`${activePresetId || 'workflow'}:${workspacePath}`}
+      entityType="workflow"
+      workspacePath={workspacePath}
+      workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
+      chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
+    />
+  ) : undefined, [activePresetId, workspacePath])
+
   // No preset selected state
   if (!activeWorkflowPreset && !workspacePath) {
     return (
@@ -2246,16 +2259,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // first grid item. Spanning a non-existent second column would otherwise
       // leave the full-width chat occupying only half of a desktop viewport.
       sharedToolbar={showChatArea && workspacePaneVisible}
-      chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded /> : undefined}
-      workshopPanel={workspacePath ? (
-        <AutomationHubPanel
-          key={`${activePresetId || 'workflow'}:${workspacePath}`}
-          entityType="workflow"
-          workspacePath={workspacePath}
-          workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
-          chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
-        />
-      ) : undefined}
+      chatTabsSlot={chatTabsSlot}
+      workshopPanel={workshopPanel}
       paneClassName={layout.canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}

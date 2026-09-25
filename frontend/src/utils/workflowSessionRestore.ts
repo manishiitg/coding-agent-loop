@@ -1,5 +1,5 @@
 import { activateTab } from './activateTab'
-import { hydrateTabEvents, restoreSession } from './sessionRestore'
+import { restoreSession } from './sessionRestore'
 import { hydrateExecutionConversation } from './executionConversationRestore'
 import { agentApi } from '../services/api'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
@@ -14,6 +14,7 @@ import { normalizeWorkspacePath } from './workspacePathUtils'
 import { activateWorkflowTab, beginWorkflowNavigation, isCurrentWorkflowNavigation, selectWorkflowPreset } from './workflowNavigation'
 import { scheduleTabLabel } from './scheduleTabLabel'
 import { resolveWorkflowTabForSession } from './workflowTabResolution'
+import { cachedWorkflowTabIdForPreset } from './workflowTabOwnership'
 
 type RestoreWorkflowSessionOptions = {
   preset?: CustomPreset | PredefinedPreset
@@ -369,6 +370,18 @@ export async function openWorkflowPresetPage(
 
   const title = options.title || preset.label || 'Automation'
   const chatStore = useChatStore.getState()
+
+  // Switching back to a workflow seen earlier in this page: show its last
+  // conversation from memory at once. The lookups below still run and move
+  // to another tab only when they resolve a different conversation.
+  const cachedTabId = options.activeSession
+    ? undefined
+    : cachedWorkflowTabIdForPreset(preset.id, chatStore.chatTabs, chatStore.tabEvents)
+  if (cachedTabId) {
+    activateWorkflowTab(cachedTabId, { expectedGeneration: navigationGeneration })
+    useWorkflowStore.getState().setShowChatArea(true)
+  }
+
   if (options.activeSession) {
     await openActiveSession(options.activeSession, {
       preset,
@@ -380,6 +393,11 @@ export async function openWorkflowPresetPage(
     return
   }
 
+  // Both reads are independent; start the running-registry read alongside
+  // the active-session read instead of after it.
+  const runningWorkflowPromise = options.runningWorkflow
+    ? Promise.resolve(options.runningWorkflow)
+    : findRunningWorkflowForPreset(preset)
   const activeSession = pickWorkflowActiveSession(await chatStore.getActiveSessions(), preset, useChatStore.getState().chatTabs)
 
   if (!isCurrentWorkflowNavigation(navigationGeneration, preset.id)) return
@@ -395,7 +413,7 @@ export async function openWorkflowPresetPage(
     return
   }
 
-  const runningWorkflow = options.runningWorkflow || await findRunningWorkflowForPreset(preset)
+  const runningWorkflow = await runningWorkflowPromise
   if (!isCurrentWorkflowNavigation(navigationGeneration, preset.id)) return
   if (runningWorkflow?.session_id) {
     await openActiveSession(sessionFromRunningWorkflow(runningWorkflow), {

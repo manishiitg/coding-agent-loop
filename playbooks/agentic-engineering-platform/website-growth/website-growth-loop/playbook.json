@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "website-growth-loop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "changelog": [
+    { "version": "0.3.0", "summary": "Adds executable strategist/search artifact checks, worked examples, an action ledger and repeat-run method, and separates technical SEO from buyer-question mapping." },
     { "version": "0.2.0", "summary": "Adds a saved nine-check setup checklist with evidence references for Builder chat and the Playbook screen." },
     { "version": "0.1.0", "summary": "Adds a chat-led Website Growth team proposal with two required Crew roles, typed handoffs, a baseline-first path, and a manual test before recurrence." }
   ],
@@ -34,14 +35,16 @@
   "outputs": ["Reviewed Crew roster and access map", "Versioned growth brief and search opportunity handoff", "Manual two-Crew test run", "Website Growth dashboard with evidence and open questions", "Paused recurrence proposal"],
   "agent_slots": [
     { "id": "strategist", "agent_playbook_id": "website-growth-starter", "required": true, "output": "growth-priority-brief/v1" },
-    { "id": "search", "agent_playbook_id": "search-opportunity-mapper", "accepts": ["seo-analyst"], "required": true, "output": "search-opportunity-list/v1" },
+    { "id": "search", "agent_playbook_id": "search-opportunity-mapper", "required": true, "output": "search-opportunity-list/v1" },
+    { "id": "technical_seo", "agent_playbook_id": "seo-analyst", "required": false, "output": "seo-issue-list/v1" },
     { "id": "content", "agent_playbook_id": "content-brief-writer", "required": false, "output": "content-brief/v1" },
+    { "id": "page", "agent_playbook_id": "content-page-builder", "required": false, "output": "reviewable-page-draft/v1" },
     { "id": "measurement", "agent_playbook_id": "traffic-engagement-analyst", "required": false, "output": "traffic-readout/v1" }
   ],
   "handoffs": [
     { "id": "strategy-to-search", "from": "strategist", "to": "search", "artifact_type": "growth-priority-brief/v1", "required": true },
     { "id": "search-to-content", "from": "search", "to": "content", "artifact_type": "search-opportunity-list/v1", "required": false },
-    { "id": "shipped-work-to-measurement", "from": "content", "to": "measurement", "artifact_type": "shipped-change/v1", "required": false }
+    { "id": "content-to-page", "from": "content", "to": "page", "artifact_type": "content-brief/v1", "required": false }
   ],
-  "setup_checks": ["goal_owner", "metric_policy", "team_bindings", "site_scope", "capabilities", "handoff_contract", "plan_review", "test_run", "activation_choice"]
+  "setup_checks": ["goal_owner", "metric_policy", "team_bindings", "site_scope", "capabilities", "handoff_contract", "plan_review", "test_run", "action_ledger", "activation_choice"]
 }

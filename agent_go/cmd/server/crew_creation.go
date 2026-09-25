@@ -126,6 +126,13 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if userID == "" {
 		return CreatedCrew{}, fmt.Errorf("crew creation requires a user")
 	}
+	claims := GetUserFromContext(ctx)
+	if claims == nil || strings.TrimSpace(claims.UserID) != userID || userAccessForClaims(claims).Disabled {
+		return CreatedCrew{}, fmt.Errorf("crew creation requires the current authorized user")
+	}
+	if !userAllowedProduct(claims, "work") {
+		return CreatedCrew{}, fmt.Errorf("Crew product is unavailable or access denied")
+	}
 	if err := validateCrewCreationWorkflowPath(workflowPath); err != nil {
 		return CreatedCrew{}, err
 	}
@@ -166,6 +173,9 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	creatingManifest, exists, err := ReadWorkflowManifest(ctx, workflowPath)
 	if err != nil || !exists || creatingManifest == nil {
 		return CreatedCrew{}, fmt.Errorf("creating workflow is unavailable or access denied")
+	}
+	if access := workflowAccessForManifest(claims, creatingManifest); access != WorkflowAccessWrite && access != WorkflowAccessOwner {
+		return CreatedCrew{}, fmt.Errorf("creating a Crew for this workflow requires write access")
 	}
 	if s == nil || s.registry == nil {
 		return CreatedCrew{}, fmt.Errorf("product profiles are unavailable")

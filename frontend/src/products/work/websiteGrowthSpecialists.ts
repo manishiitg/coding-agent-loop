@@ -24,6 +24,10 @@ type Specialist = {
   method: readonly string[]
   evidence: string
   boundary: string
+  deeperMethod?: string
+  workedExample?: string
+  specialistChecks?: readonly { id: string; title: string; instructions: string }[]
+  automationOutput?: string
 }
 
 const specialists: readonly Specialist[] = [
@@ -45,9 +49,33 @@ const specialists: readonly Specialist[] = [
     minimumInput: 'Offer, target audience, market, website pages, and buyer questions or research scope.',
     optionalConnections: 'Search Console and approved keyword research for actual demand signals.',
     exampleRequests: ['Map our buyers’ main questions to the pages we already have.', 'Find the most useful unanswered questions for our new website.'],
-    method: ['Confirm the offer, audience, geography, buying stage, and site scope.', 'Read representative product, service, FAQ, and resource pages.', 'Group buyer questions by intent and map each to a current page or a documented gap.', 'Use authorized search data when available; otherwise mark demand and ranking as unknown.', 'Rank opportunities by buyer relevance, gap severity, evidence quality, and feasible next action.'],
-    evidence: 'Each opportunity names the buyer question, intent, existing page or missing page, source URLs, confidence, and proposed validation.',
+    method: ['Confirm the offer, audience, geography, buying stage, and site scope; read the strategist brief when this is a Website Growth Loop run.', 'Collect buyer questions from approved owner notes, customer conversations, site copy, or authorized search data; label each origin and deduplicate equivalent questions.', 'Inspect representative product, service, FAQ, and resource pages, then map each question to a page that actually answers it, a weak answer to improve, or a documented gap.', 'Use authorized search data when available; otherwise mark demand and ranking as unknown.', 'Rank opportunities by buyer relevance, answer gap, evidence quality, and feasible next action; explain why an existing-page update or a new page is justified.'],
+    evidence: 'Each opportunity has a stable ID, exact buyer question, source, intent, current page or gap, evidence URLs, confidence, next action, and reason for rank. Link the source strategist finding when present.',
     boundary: 'Do not invent search volume or ranking difficulty; avoid producing keyword lists detached from an audience need.',
+    deeperMethod: `## Mapping and decision rules
+
+Keep the candidate set bounded to the approved audience and offer. Cluster questions only when a single page can answer the same user need; retain distinct buying-stage or product questions. Mark each candidate **answered** when a page directly answers it, **weak answer** when a relevant page exists but leaves the decision question unresolved, or **gap** when no inspected page addresses it. A relevant title alone is not a complete answer.
+
+Choose **update existing page** when the page already serves the same buyer and intent. Choose **new page** only when the user need is distinct enough to deserve its own page and the owner has useful source material. Choose **verify first** when the question or claimed demand has weak evidence. Prefer a high-relevance, evidenced gap with a feasible owner over a speculative high-volume idea. Record the reason for the order; do not create a numeric opportunity score without measured inputs.
+
+Save stable question IDs so later runs can mark answered, deferred, or rejected questions without rediscovering them. On a repeat run, read the prior map and owner decisions; inspect changed pages and new evidence first. Report a delta and state when nothing has changed. Search Console rows may omit anonymized queries, so treat a query export as a partial view of buyer demand.`,
+    automationOutput: 'When invoked as the Website Growth Loop search step, return one plain JSON object matching search-opportunity-list/v1. Do not wrap it in Markdown or add other commentary. Include inspected URLs, exact question sources, stable IDs, evidence, confidence, unknown demand, and any strategist finding IDs so the Workflow can validate the saved response.',
+    workedExample: `## Worked opportunity map
+
+Fictional owner context: ArborDesk sells appointment software to independent physiotherapy clinics in the UK. The site is newly launched. The strategist observed that the clinic page discusses scheduling but does not explain reminders. Two pages were inspected on 2026-09-25: \`https://arbordesk.example/\` and \`https://arbordesk.example/clinics\`. No Search Console data was available.
+
+| ID | Buyer question and source | Page decision | Evidence and confidence | Next action / reason for order |
+| --- | --- | --- | --- | --- |
+| \`Q-001\` | “How do patient reminders work?” Owner-confirmed buyer question, linked to strategist finding \`F-001\`. | Weak answer on \`/clinics\`. | Page mentions scheduling but not reminders; observed on 2026-09-25. Confidence: medium until product facts are confirmed. Search demand: unknown. | First: update the existing clinic page after the owner confirms the feature. It serves the same buyer and intent; a separate page is premature. |
+| \`Q-002\` | “Can patients reschedule themselves?” Hypothesis from a site-content gap; no customer or search evidence yet. | Gap in the two inspected pages; uninspected pages remain unknown. | Inspected URLs above; confidence: low. Search demand: unknown. | Verify with the owner and inspect the remaining site before proposing a page. |
+
+Save a structured \`search-opportunity-list/v1\` artifact for the Loop with \`site_url\`, \`buyer_questions[]\`, evidence references, confidence, and proposed next action. Include the inspected scope and source date. The first result may be partial when buyer research is unavailable; label hypotheses rather than filling the list with invented demand.
+
+**Review failure:** “physiotherapy software: 5,000 monthly searches, build a new page” fails without an authorized query source, the actual buyer question, an inspected existing-page answer, and a reason a new page is better.`,
+    specialistChecks: [
+      { id: 'question_sources', title: 'Verify buyer-question evidence', instructions: 'Save at least one exact buyer question from an owner, customer, approved research source, or a clearly labeled hypothesis. Link its origin and date; deduplicate equivalent phrasing. Do not turn an invented keyword volume into evidence.' },
+      { id: 'mapping_decision', title: 'Review the page decision', instructions: 'Inspect the relevant page set and verify at least one question is classified answered, weak answer, or gap with a source reference. Explain update-existing versus new-page versus verify-first, then save the owner review or explicit blocker.' },
+    ],
   },
   {
     id: 'content-brief-writer', name: 'Content Brief Writer', icon: '📝', role: 'Evidence-led website content brief writer',
@@ -135,6 +163,7 @@ function checklist(spec: Specialist): string {
     { id: 'scope', title: 'Confirm site and owner scope', instructions: `Confirm the owner is authorized to assess the site, the canonical URL, target audience, market, and relevant pages. Record crawl and data boundaries.` },
     { id: 'inputs', title: 'Check minimum inputs', instructions: `Resolve: ${spec.minimumInput} If missing, explain what first result remains possible and do not invent data.` },
     { id: 'access', title: 'Test required access', instructions: `Read a representative authorized source or provided export needed for the first result. Optional connections: ${spec.optionalConnections} Record the chosen source, date range, and access limitation.` },
+    ...(spec.specialistChecks || []),
     { id: 'first_result', title: 'Produce the first result', instructions: `Produce ${spec.firstResult} ${spec.evidence} Label assumptions and missing evidence.` },
     { id: 'review', title: 'Review the first result', instructions: 'Show the result to the owner, resolve corrections and priority choices, then record the agreed next action.' },
     { id: 'recurrence', title: 'Decide on recurring work', optional: true, instructions: 'Ask whether this specialist should remain chat-only or suggest a separate schedule, trigger, function, or multi-agent Automation. Choosing chat-only completes this decision. Configure and test any requested recurring action separately; never activate it by template selection.' },
@@ -162,6 +191,10 @@ ${spec.method.map((step, index) => `${index + 1}. ${step}`).join('\n')}
 
 Deliver **${spec.firstResult}** ${spec.evidence}
 
+${spec.deeperMethod || ''}
+
+${spec.automationOutput || ''}
+
 ## Boundaries
 
 ${spec.boundary} Never claim a measurement unavailable in the source data. Do not select an external account, publish, send outreach, start paid spend, or activate a schedule, trigger, function, or Automation merely because this template was added.
@@ -182,6 +215,8 @@ Expected first output: **${spec.firstResult}** ${spec.evidence}
 ## Optional connections
 
 ${spec.optionalConnections} Choose an account and scope in Crew Integrations only if needed. Test the actual source before marking access verified. Never copy another Crew's credentials.
+
+${spec.workedExample || ''}
 
 ## Recurring work
 

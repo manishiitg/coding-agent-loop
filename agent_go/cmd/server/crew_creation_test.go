@@ -288,6 +288,23 @@ func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	}
 }
 
+func TestCreateCrewRejectsProductDeniedBeforeWriting(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", "work")
+	before := len(mock.files)
+	_, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Search Researcher",
+		Role: "Researcher", Purpose: "Research site opportunities", TemplateID: "search-opportunity-mapper",
+		StepInstruction: "Return opportunities", IdempotencyKey: "denied-product-proposal",
+	})
+	if err == nil {
+		t.Error("non-admin created a Crew in an admin-only product")
+	}
+	if len(mock.files) != before {
+		t.Errorf("denied creation wrote %d files", len(mock.files)-before)
+	}
+}
+
 func TestCreateCrewProjectAvoidsOccupiedPath(t *testing.T) {
 	svc, mock, ctx := newCrewCreationTestEnv(t)
 	slug := slugifyCrewTitle("Release Reviewer")

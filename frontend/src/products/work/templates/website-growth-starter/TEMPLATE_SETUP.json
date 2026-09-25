@@ -16,7 +16,7 @@
     {
       "id": "site_access",
       "title": "Inspect the website",
-      "instructions": "Verify that public site pages or an owner-provided export are readable. Record the inspected URLs and crawl limits. Do not infer indexing status from a public page fetch."
+      "instructions": "Read at least the homepage and one key offer or conversion page, or label which was unavailable. Save exact inspected URLs or export references, access time, and crawl limits. A screenshot cannot verify HTTP status and a public fetch cannot prove indexing."
     },
     {
       "id": "audience",
@@ -31,12 +31,12 @@
     {
       "id": "first_audit",
       "title": "Verify the first site audit",
-      "instructions": "Inspect representative pages and produce source-linked findings about discoverability, content, and the primary conversion path. Label unverified hypotheses."
+      "instructions": "Save a first brief with at least one reproducible page observation, its URL or export reference, capture date, evidence type (observed, owner-reported, or hypothesis), and a limitation. Verify a reviewer can revisit the source. A generic audit summary does not pass."
     },
     {
       "id": "first_plan",
       "title": "Review the 30-day plan",
-      "instructions": "Present a prioritized 30-day plan with three to five actions, evidence, effort, owner, and success signal. Complete after the owner reviews and agrees on the first actions."
+      "instructions": "Present three to five stable action IDs with page, supporting finding ID, effort, owner, success signal, and reason for order. Save the brief path and the owner's decision for the first action. Do not complete from an unsourced list or an unanswered review request."
     },
     {
       "id": "publishing",

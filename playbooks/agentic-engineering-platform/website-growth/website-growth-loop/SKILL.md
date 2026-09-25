@@ -11,13 +11,13 @@ Coordinate Crews to find traffic opportunities, prepare improvements, and measur
 
 ## When to use
 
-Use for a recently launched website whose owner wants sustained relevant traffic. A public site and owner context are enough for a first manual run; connected search or analytics data improves measurement later. Use a Crew schedule if only one specialist repeats one task.
+Use for a new site seeking relevant visitors. Public pages and owner context support a first manual run. Add connected measurement later. Use a Crew schedule for one repeating specialist.
 
 ## Discovery and user direction
 
-Inspect the Automation, goals, Crews, skills, integrations, and access. Propose Crew reuse or creation, handoffs, cost, permissions, and blockers. Ask for material decisions and record answers. Selection alone does not authorize creation or runs.
+Inspect the Automation, Crews, skills, access, and goals. Propose the team, handoffs, cost, and blockers; record owner decisions. Selection does not authorize creation or runs.
 
-Track setup in `SETUP.json` beside this skill. Verify each check before adding its ID to `completed_steps`; save a source or artifact reference under `evidence[id]`. Preserve existing progress and report blockers.
+Track setup in `SETUP.json`. Verify checks, save references under `evidence[id]`, and report blockers.
 
 ## Required inputs
 
@@ -25,15 +25,15 @@ Resolve site, offer, audience, market, visitor action, crawl scope, owner, metri
 
 ## Plan and AgentWorks tools
 
-Start with two distinct Crew roles: Website Growth Starter as strategist and Search Opportunity Mapper or SEO Analyst as search specialist. Reuse suitable authorized Crews. After the concrete team proposal is reviewed, use `create_crew` for missing specialists with stable idempotency keys; bind existing Crews with internal triggers and read-only attachments. Add Crew steps and deterministic artifact validation to the Workflow plan. Add Content Brief Writer and Traffic & Engagement Analyst only when their work and data are useful. Test a manual route before proposing paused recurrence.
+Use Website Growth Starter and Search Opportunity Mapper as distinct required Crews. Reuse suitable Crews; technical SEO is optional. After owner review, use `create_crew` with stable idempotency keys for missing specialists. Bind internal triggers and attachments. Add Crew steps with blocking artifact validation after each producer. Add content or measurement only when inputs and owners exist. Test manually before proposing recurrence.
 
 ## Knowledge and persistence
 
-Save owner decisions, site scope, metrics, Crew bindings, source-linked results, and measurement windows. Pass bounded artifacts between Crews.
+Save decisions, scope, metrics, Crew bindings, evidence, and windows. Track stable action IDs and states. Pass bounded artifacts. Read previous runs and decisions before repeating; report changes.
 
 ## Validation and reporting
 
-Verify two distinct authorized Crew IDs, current skills and access, a schema-valid strategist brief, a search handoff, and one bounded manual test. The dashboard shows action status, source links, baseline availability, traffic or conversion readings with denominators, confidence, Crew run IDs, cost, and unresolved blockers.
+Verify two Crew IDs, skills, access, both artifacts, and a manual run. Prove invalid artifacts stop the next Crew. The dashboard shows action state, sources, baseline, denominators, run IDs, cost, and blockers. Distinguish drafts, shipped work, and measured results.
 
 ## Guardrails
 
@@ -43,8 +43,11 @@ Do not infer indexing from a public fetch, fabricate keyword volume or traffic, 
 
 - [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goal, route, and schedule decisions.
 - [Team and handoff contract](references/team-and-handoffs.md): exact roles, setup checks, artifacts, and run proof.
-- [Example run record](examples/website-growth-run.json): fictional evidence shape.
-- [Setup progress](SETUP.json): nine checks, saved evidence, and completed IDs.
+- [Action and measurement cycle](references/action-and-measurement.md): owner review, shipping evidence, measurement, and repeat runs.
+- [Artifact validator](scripts/validate_growth_artifact.py): deterministic first-route shape and reference checks.
+- [Example strategist brief](examples/growth-priority-brief.json) and [example search map](examples/search-opportunity-list.json): fictional worked handoff.
+- [Example run record](examples/website-growth-run.json): fictional run evidence shape.
+- [Setup progress](SETUP.json): ten checks, saved evidence, and completed IDs.
 - [Catalog metadata](playbook.json): roster, inputs, and recommendations.
 
 ## Completion contract

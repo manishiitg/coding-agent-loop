@@ -1,12 +1,66 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPlaybookReinstallPreservesProgressAndUpdateArchivesEvidence(t *testing.T) {
+	item, err := findPlaybook("website-growth-loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	ctx := context.Background()
+	const workspace = "Workflow/growth"
+	const skill = "agentworks-playbook-website-growth-loop"
+	const setupPath = workspace + "/skills/" + skill + "/SETUP.json"
+	originalHash, err := installPlaybookSkill(ctx, workspace, skill, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progress map[string]interface{}
+	if err := json.Unmarshal([]byte(mock.files[setupPath]), &progress); err != nil {
+		t.Fatal(err)
+	}
+	progress["completed_steps"] = []string{"goal_owner"}
+	progress["evidence"] = map[string]string{"goal_owner": "Owner reviewed the actual website and goal"}
+	saved, _ := json.Marshal(progress)
+	mock.files[setupPath] = string(saved)
+	retryHash, err := installPlaybookSkill(ctx, workspace, skill, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retryHash != originalHash || mock.files[setupPath] != string(saved) {
+		t.Fatal("reinstall changed the source hash or erased customer setup progress")
+	}
+	// Emulate an older installed version; update must preserve the evidence
+	// before replacing the working checklist with the current source.
+	progress["playbook_version"] = "0.2.0"
+	saved, _ = json.Marshal(progress)
+	mock.files[setupPath] = string(saved)
+	if _, err := installPlaybookSkill(ctx, workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	var updated struct {
+		Previous  string   `json:"previous_setup_path"`
+		Completed []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[setupPath]), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Previous == "" || mock.files[updated.Previous] != string(saved) || len(updated.Completed) != 0 {
+		t.Fatal("update lost earlier evidence or carried unreviewed checks into the new version")
+	}
+}
 
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
@@ -20,7 +74,7 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if growth.Category != "Website Growth" || growth.Version != "0.2.0" {
+	if growth.Category != "Website Growth" || growth.Version != "0.3.0" {
 		t.Fatalf("website growth loop = %+v", growth)
 	}
 	setupSource, err := os.ReadFile(filepath.Join(growth.SourceDir, "SETUP.json"))

@@ -22,13 +22,22 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 	if api.productSchedules == nil {
 		return nil
 	}
-	authorize := func(ctx context.Context) (context.Context, error) {
+	authorize := func(ctx context.Context, readOnly bool) (context.Context, error) {
 		ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
 		if userAccessForClaims(&UserClaims{UserID: userID}).Disabled {
 			return nil, fmt.Errorf("Access denied: disabled account")
 		}
 		if _, err := authorizeWorkflowContextPaths(ctx, []string{workspace}); err != nil {
 			return nil, fmt.Errorf("Workflow is unavailable or access denied")
+		}
+		if !readOnly {
+			manifest, exists, err := ReadWorkflowManifest(ctx, workspace)
+			if err != nil || !exists || manifest == nil {
+				return nil, fmt.Errorf("Workflow is unavailable or access denied")
+			}
+			if access := workflowAccessForManifest(GetUserFromContext(ctx), manifest); access != WorkflowAccessWrite && access != WorkflowAccessOwner {
+				return nil, fmt.Errorf("Crew setup changes require current workflow write access")
+			}
 		}
 		return ctx, nil
 	}
@@ -43,7 +52,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
 			"caller":          triggerCallerToolSchema(triggerCallerWorkflow, triggerCallerCrew),
 		}}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, err := authorize(ctx)
+		ctx, err := authorize(ctx, args["action"] == "list")
 		if err != nil {
 			return "", err
 		}
@@ -165,7 +174,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			"crew_project_id": map[string]interface{}{"type": "string", "description": "Stable Crew project ID from list_accessible_workflows."},
 			"crew_profile_id": map[string]interface{}{"type": "string", "description": "Crew product profile; defaults to work."},
 		}}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, err := authorize(ctx)
+		ctx, err := authorize(ctx, args["action"] == "list")
 		if err != nil {
 			return "", err
 		}
@@ -243,7 +252,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			"crew_profile_id":      map[string]interface{}{"type": "string", "description": "Crew profile. Only 'work' is supported."},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx, err := authorize(ctx)
+		ctx, err := authorize(ctx, false)
 		if err != nil {
 			return "", err
 		}

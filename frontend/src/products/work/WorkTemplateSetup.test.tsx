@@ -83,4 +83,31 @@ describe('WorkTemplateSetup', () => {
     expect(container.textContent).toContain('Tax Export Preparer · Setup pending')
     await act(async () => { root.unmount() })
   })
+
+  it('clears a previous completion when the current checklist cannot be read', async () => {
+    const template = crewTemplates[0]
+    const initial = parseCrewTemplateSetupState(template.files[template.setupPath], template)!
+    getPlannerFileContent.mockResolvedValue({ data: { content: JSON.stringify({ ...initial, completed_steps: initial.checks.map(check => check.id) }) } })
+    container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await act(async () => { root.render(<WorkTemplateSetup template={template} workspacePath="Chats/Work/projects/finance" onStartSetup={async () => {}} />) })
+      expect(container.textContent).toContain('Setup complete')
+      getPlannerFileContent.mockRejectedValue(new Error('Access revoked'))
+      await act(async () => { (container!.querySelector('[aria-label="Refresh setup status"]') as HTMLButtonElement).click() })
+      expect(container.textContent).not.toContain('Setup complete')
+      expect(container.textContent).toContain('Access revoked')
+    } finally {
+      await act(async () => { root.unmount() })
+    }
+  })
+
+  it('rejects completed progress that removed a required template check', () => {
+    const template = crewTemplates[0]
+    const saved = JSON.parse(template.files[template.setupPath])
+    saved.checks = saved.checks.slice(0, -1)
+    saved.completed_steps = saved.checks.map((check: { id: string }) => check.id)
+    expect(saved.checks.length).toBeGreaterThanOrEqual(5)
+    expect(parseCrewTemplateSetupState(JSON.stringify(saved), template)).toBeNull()
+  })
 })

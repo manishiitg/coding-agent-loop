@@ -16,9 +16,21 @@ Read `templates/website-growth-starter/TEMPLATE_SETUP.json` and `templates/websi
 1. Confirm the owner's site URL (or uploaded page files), the offer, target buyers, geography, and the one action a useful visitor should take. If one is unknown, label the assumption and ask for it.
 2. Inspect a bounded set of public pages: homepage, primary product or service page, key conversion page, and any published content hub. Record the URL and observation for every finding. If browsing is unavailable, ask for a site export or screenshots and state what cannot be checked.
 3. Check discoverability basics that can be observed: page response and accessibility, navigation, title and description, headings, internal links, sitemap and robots directives, canonical hints, mobile readability, and obvious performance concerns. A public crawl cannot prove that Google indexed a page; use authorized Search Console data for that conclusion.
-4. Map buyer questions to existing pages and gaps. Separate observed issues, plausible opportunities, and ideas that need traffic or search data. Avoid fabricated keyword volume, ranking position, traffic forecasts, or AI citation counts.
-5. Produce a **Website Growth Brief**: site and audience summary; source-linked findings; the most important discovery and conversion gaps; a prioritized 30-day action table with action, page, evidence, effort, owner, and success signal; and the smallest next inputs needed. Start with three to five actions that the owner can actually review.
+4. Identify one or two buyer questions to pass to Search Opportunity Mapper; that specialist owns the full buyer-question map. Separate observed site issues, plausible opportunities, and ideas requiring traffic or search data. Avoid fabricated keyword volume, ranking position, traffic forecasts, or AI citation counts.
+5. Produce a **Website Growth Brief**: site and audience summary; source-linked findings; the most important discovery and conversion gaps; a prioritized 30-day action table with stable action ID, page, evidence, effort, owner, and success signal; and the smallest next inputs needed. Start with three to five actions that the owner can actually review. See the worked brief and review failures in `templates/website-growth-starter/SETUP.md`.
 6. Ask the owner to review the brief. Revise priorities when business context changes. If the available evidence is thin, deliver a useful partial brief instead of presenting guesses as measured results.
+
+When invoked as the Website Growth Loop strategist step, return the final response as one plain JSON object matching `growth-priority-brief/v1` in the Loop's worked example. Do not wrap it in Markdown or add commentary outside the JSON. Include inspected scope, source dates, stable finding/action IDs, baseline state, and limitations so the Workflow can validate the saved response before calling the search Crew.
+
+## Prioritize with an explanation
+
+For each candidate action record whether evidence is **observed**, **owner-reported**, or **hypothesized**. Prefer an observed obstacle on the path to the visitor action, then an evidenced buyer need the site fails to answer, then lower-confidence ideas. Label effort small, medium, or large based on the actual review/change needed. Put an action first only when its buyer relevance, evidence, and feasible next step justify that order; record the reason and any owner override. Do not turn these judgments into a made-up traffic score.
+
+When a page or data source is unavailable, record the blocker and the smallest next input. A screenshot can support a copy or layout observation but cannot establish HTTP behavior, canonical responses, or indexing. A public page fetch can show a declared canonical but not prove Google's selected canonical.
+
+## Run again without losing decisions
+
+Read the prior brief, action IDs, owner decisions, actual changes, and evidence dates before inspecting the bounded scope again. Recheck changed pages and unresolved blockers first. Keep completed, rejected, and deferred actions with their reasons; create a new action ID only for a genuinely new issue. Report changes since the prior run, what shipped, what remains unknown, and the next review date. If there is no new evidence, say so and do not repeat the same recommendations as new findings. Wait for a comparable measurement window before describing a trend.
 
 ## Measurement and execution
 

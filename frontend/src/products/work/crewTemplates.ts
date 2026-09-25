@@ -129,6 +129,9 @@ export function parseCrewTemplateSetupState(content: string, template: CrewTempl
       if (!check || typeof check.id !== 'string' || !check.id || typeof check.title !== 'string' || !check.title || typeof check.instructions !== 'string' || !check.instructions || ids.has(check.id)) return null
       ids.add(check.id)
     }
+    // Saved progress cannot remove requirements from the installed template.
+    const canonical = JSON.parse(template.files[template.setupPath]) as CrewTemplateSetupState
+    if (!Array.isArray(canonical.checks) || canonical.checks.length !== ids.size || canonical.checks.some(check => !ids.has(check.id))) return null
     if (raw.completed_steps.some(id => typeof id !== 'string' || !ids.has(id))) return null
     return raw as CrewTemplateSetupState
   } catch {

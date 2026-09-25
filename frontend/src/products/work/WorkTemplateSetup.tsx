@@ -54,6 +54,7 @@ export function WorkTemplateSetup({ template, workspacePath, chatReady = true, o
       setSetup(current)
       setError('')
     } catch (cause) {
+      setSetup(null)
       setError(cause instanceof Error ? cause.message : 'Could not load template setup.')
     } finally {
       setLoading(false)
@@ -84,7 +85,7 @@ export function WorkTemplateSetup({ template, workspacePath, chatReady = true, o
     <section className="shrink-0 border-b border-border bg-muted/30 px-4 py-2.5" aria-label={`${template.name} setup status`}>
       <div className="mx-auto flex max-w-2xl items-center gap-2">
         {complete ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Sparkles className="h-4 w-4 shrink-0 text-primary" />}
-        <span className="min-w-0 flex-1 text-sm font-semibold text-foreground">{template.name} · {complete ? 'Setup complete' : 'Setup pending'}</span>
+        <span className="min-w-0 flex-1 text-sm font-semibold text-foreground">{template.name} · {error && !setup ? 'Setup needs attention' : complete ? 'Setup complete' : 'Setup pending'}</span>
         <button type="button" onClick={() => { void refresh() }} disabled={loading} aria-label="Refresh setup status" className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50">
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>

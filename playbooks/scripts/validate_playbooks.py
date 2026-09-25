@@ -159,6 +159,53 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
             fail(errors, manifest_path, f"recommended_tools[{index}] has an incomplete shape")
         elif tool.get("optional") is not True:
             fail(errors, manifest_path, f"recommended_tools[{index}].optional must be true")
+    slots = manifest.get("agent_slots", [])
+    if not isinstance(slots, list):
+        fail(errors, manifest_path, "agent_slots must be a list")
+        slots = []
+    slot_outputs: dict[str, str] = {}
+    for index, slot in enumerate(slots):
+        if not isinstance(slot, dict) or not {"id", "agent_playbook_id", "required", "output"}.issubset(slot):
+            fail(errors, manifest_path, f"agent_slots[{index}] is incomplete")
+            continue
+        slot_id = slot["id"]
+        if not isinstance(slot_id, str) or not slot_id or slot_id in slot_outputs:
+            fail(errors, manifest_path, f"agent_slots[{index}] has an invalid or duplicate id")
+            continue
+        if not isinstance(slot["output"], str) or not slot["output"]:
+            fail(errors, manifest_path, f"agent_slots[{index}] needs an output type")
+            continue
+        slot_outputs[slot_id] = slot["output"]
+    handoffs = manifest.get("handoffs", [])
+    if not isinstance(handoffs, list):
+        fail(errors, manifest_path, "handoffs must be a list")
+        handoffs = []
+    handoff_ids: set[str] = set()
+    for index, handoff in enumerate(handoffs):
+        if not isinstance(handoff, dict) or not {"id", "from", "to", "artifact_type", "required"}.issubset(handoff):
+            fail(errors, manifest_path, f"handoffs[{index}] is incomplete")
+            continue
+        if not isinstance(handoff["id"], str) or not handoff["id"] or handoff["id"] in handoff_ids:
+            fail(errors, manifest_path, f"handoffs[{index}] has an invalid or duplicate id")
+            continue
+        handoff_ids.add(handoff["id"])
+        if handoff["from"] not in slot_outputs or handoff["to"] not in slot_outputs:
+            fail(errors, manifest_path, f"handoffs[{index}] references a missing agent slot")
+        elif handoff["artifact_type"] != slot_outputs[handoff["from"]]:
+            fail(errors, manifest_path, f"handoffs[{index}] artifact_type does not match its producer output")
+    setup_checks = manifest.get("setup_checks", [])
+    if setup_checks:
+        setup_path = package / "SETUP.json"
+        try:
+            setup = json.loads(setup_path.read_text())
+            defined_checks = [check["id"] for check in setup["checks"]]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            fail(errors, manifest_path, f"setup_checks needs a valid SETUP.json: {exc}")
+        else:
+            if len(setup_checks) != len(set(setup_checks)) or defined_checks != setup_checks:
+                fail(errors, manifest_path, "setup_checks must match ordered SETUP.json check IDs")
+            if setup.get("playbook_id") != playbook_id or setup.get("playbook_version") != manifest.get("version"):
+                fail(errors, manifest_path, "SETUP.json id and version must match playbook.json")
     pulse_focus = manifest.get("pulse_focus", [])
     if not isinstance(pulse_focus, list):
         fail(errors, manifest_path, "pulse_focus must be a list")

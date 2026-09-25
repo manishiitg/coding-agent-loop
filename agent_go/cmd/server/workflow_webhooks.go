@@ -474,7 +474,7 @@ func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.R
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"triggers": hooks, "routes": routes, "groups": groups, "declared_variables": variableNames, "route_error": routeError, "steps": steps})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"workflow_id": manifest.ID, "triggers": hooks, "routes": routes, "groups": groups, "declared_variables": variableNames, "route_error": routeError, "steps": steps})
 }
 
 func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Request) {

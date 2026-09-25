@@ -177,11 +177,13 @@ the task needs a change, it says so instead of attempting one.
 
 All supported AI apps connect to the server over MCP Streamable HTTP at
 `POST/GET/DELETE /api/external/v1/mcp`. Unlike the legacy CLI and stdio bridge,
-which list every tool, the remote surface is exactly two self-describing
-tools: `get_api_spec` (no arguments lists every available tool, names return
-JSON schemas) and `call_tool` (executes by name). The full catalog —
-product.yaml's external tools plus run tools — resolves internally, so the
-surface stays tiny no matter how run mode grows. Choose **Hosted AI app**
+which list every tool, the remote surface advertises up to six tools:
+`list_agents`, `ask`, `call_function`, `get_call`, `get_api_spec`, and
+`call_tool`. Tool availability depends on the connection's scopes. Use the
+first four for direct Crew and workflow calls; `get_api_spec` returns schemas
+for other operations and `call_tool` executes them by name. The full catalog —
+product.yaml's external tools plus run tools — still resolves internally.
+Choose **Hosted AI app**
 in Connect to see the ready-to-paste URL for the active
 installation:
 
@@ -216,7 +218,7 @@ app session or a PAT.
 
 Schemas, scopes, and per-request authorization are identical to the REST
 external API: `get_api_spec` only lists and describes tools the grant may
-use, and every `call_tool` runs through the same dispatcher. Existing PAT
+use, and direct MCP tools and `call_tool` run through the same dispatcher. Existing PAT
 connections remain supported for older integrations; direct PAT integrations send it in the
 `Authorization: Bearer` header. The legacy `?token=` form is supported for
 older clients, but credentials in URLs can leak into proxy logs and history.
@@ -597,7 +599,7 @@ run is recorded; run artifacts have a separate retention policy.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
-`POST/GET/DELETE /api/external/v1/mcp` (get_api_spec + call_tool over the same catalog). The CLI
+`POST/GET/DELETE /api/external/v1/mcp` (four direct call tools plus get_api_spec and call_tool over the same catalog). The CLI
 uses a browser-approved OAuth access token in the Bearer header; app sessions
 can also use these endpoints with their normal JWT. Account token management is
 `GET/POST /api/auth/access-tokens` and `DELETE /api/auth/access-tokens/{id}`, using

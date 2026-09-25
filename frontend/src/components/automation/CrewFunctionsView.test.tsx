@@ -69,7 +69,8 @@ describe('CrewFunctionsView', () => {
     expect(fn.textContent).toContain('By crew:alpha (Alpha Bot)')
     const ask = byTestId('crew-function-ask')!
     expect(ask.textContent).toContain('Built in')
-    expect(ask.querySelector('button')).toBeNull()
+    expect(ask.textContent).toContain('Run now')
+    expect(ask.textContent).toContain('Copy call')
   })
 
   it('shows recent calls with status and latest progress, expandable to the result', async () => {
@@ -98,7 +99,7 @@ describe('CrewFunctionsView', () => {
 
   it('describes schema fields', () => {
     expect(schemaFields({ type: 'object', required: ['a'], properties: { a: { type: 'array', items: { type: 'number' } }, b: { type: 'boolean' } } }))
-      .toEqual([{ name: 'a', type: 'number[]', required: true }, { name: 'b', type: 'boolean', required: false }])
+      .toEqual([{ name: 'a', type: 'number[]', required: true, hasDefault: false }, { name: 'b', type: 'boolean', required: false, hasDefault: false }])
   })
   it('lists callers (not webhooks) and disconnects one', async () => {
     await renderView()

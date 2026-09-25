@@ -58,6 +58,21 @@ func externalTools() ([]externalTool, error) {
 			return map[string]any{"limit": externalInteger(1, 200), "offset": externalInteger(0, 10000)}
 		}
 		p := page()
+		p["query"] = map[string]any{"type": "string"}
+		p["kind"] = map[string]any{"type": "string", "enum": []any{"crew", "workflow"}}
+		add("list_agents", "Find visible Crews and workflows, their callable functions and availability.", false, false, p)
+		waitSeconds := map[string]any{"type": "integer", "minimum": 0, "maximum": externalCrewMaxWaitSeconds}
+		add("ask", "Ask a Crew or workflow in this connection's continuing conversation.", false, false, map[string]any{
+			"target": externalString("Agent ID or unambiguous name from list_agents."), "message": externalString("Question or request."), "wait_seconds": waitSeconds,
+		}, "target", "message")
+		add("call_function", "Call a named function after validating its typed inputs.", false, false, map[string]any{
+			"target": externalString("Agent ID or unambiguous name from list_agents."), "function": externalString("Function name."),
+			"args": map[string]any{"type": "object", "additionalProperties": true}, "wait_seconds": waitSeconds,
+		}, "target", "function")
+		add("get_call", "Follow a call started by this connection, including progress and late answers.", false, false, map[string]any{
+			"call_id": externalString("Call ID returned by ask or call_function."), "wait_seconds": waitSeconds,
+		}, "call_id")
+		p = page()
 		p["query"] = externalString("Filter workflow labels and IDs.")
 		add("list_workflows", "List workflows visible to the signed-in user.", false, false, p)
 		add("get_workflow", "Read one workflow manifest and the caller's access level.", false, true, nil)
@@ -301,6 +316,10 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	}
 	if err = tool.validator.Validate(call.Arguments); err != nil {
 		externalError(w, 400, "invalid_arguments", err.Error())
+		return
+	}
+	if isExternalAgentTool(tool.Name) {
+		api.externalAgentCall(w, r, tool.Name, call.Arguments)
 		return
 	}
 	if isExternalCrewTool(tool.Name) {

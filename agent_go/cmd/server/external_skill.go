@@ -23,15 +23,14 @@ import (
 // hostedSkillDescription is the SKILL.md frontmatter description: what the
 // skill does and when to use it. Keep it under 1024 chars with no XML
 // brackets (frontmatter constraints shared by the upload scanners).
-const hostedSkillDescription = "Read and run AgentWorks workflows and Crews over MCP (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Use when the task touches an AgentWorks workflow or when agentworks tools are available."
+const hostedSkillDescription = "Discover, ask, and call AgentWorks Crews and workflows over MCP, and read their files, plans, runs, and guidance. Use when the task touches an AgentWorks Crew or workflow or when AgentWorks MCP tools are available."
 
 // buildHostedSkillMarkdown renders the hosted SKILL.md. It must stay
 // self-contained: ChatGPT delivers tools only (no MCP prompts, resources, or
 // initialize instructions), so a hosted agent sees exactly this text plus
 // tool schemas. It shares sections with
-// agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md, but the dispatch
-// differs: the remote surface exposes only get_api_spec and call_tool, so
-// every tool below runs through call_tool.
+// agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md. Direct calls use
+// the four advertised tools; less common and legacy operations use call_tool.
 func buildHostedSkillMarkdown(origin string) string {
 	server := strings.TrimRight(strings.TrimSpace(origin), "/")
 	var body strings.Builder
@@ -39,15 +38,19 @@ func buildHostedSkillMarkdown(origin string) string {
 	fmt.Fprintf(&body, `
 # AgentWorks
 
-You are connected to an AgentWorks server at %s via MCP. This connection exposes exactly two tools and reads and runs through them: tools read, and run-mode tools execute in pinned Run-mode sessions. Nothing creates, edits, or authors. Workflows below are identified by workflow ID, never by filesystem path.
+You are connected to an AgentWorks server at %s via MCP. The server advertises `+"`list_agents`"+`, `+"`ask`"+`, `+"`call_function`"+`, `+"`get_call`"+`, `+"`get_api_spec`"+`, and `+"`call_tool`"+` when your scopes permit them. Tools read or run; they do not author workflows. IDs are never filesystem paths.
 
 ## First step
 
-Call `+"`get_api_spec`"+` with no arguments to list every available tool. Call `+"`get_api_spec`"+` again with names for their JSON schemas. Execute everything with `+"`call_tool`"+`, passing the tool name and its arguments — never call a listed tool directly, only these two tools exist. Discover workflow IDs with `+"`list_workflows`"+` first — IDs are never filesystem paths. Call `+"`get_agent_context`"+` for token capabilities and the guidance version.
+Use `+"`list_agents`"+` to find visible Crews and workflows; call them by the returned ID. Use `+"`get_api_spec`"+` for other permitted operations and their schemas, then `+"`call_tool`"+` to execute those operations by name. Call `+"`get_agent_context`"+` through `+"`call_tool`"+` if you need token capabilities and the guidance version.
+
+## Ask and call
+
+Use `+"`ask(target, message)`"+` for a plain-language request. This MCP connection has one continuing conversation with each target. The workflow assistant may choose a typed function or a raw Run-mode action. When the function and inputs are known, use `+"`call_function(target, function, args)`"+` for checked inputs before execution. Omitted declared defaults are applied; explicit values override them. An invalid call is refused with problems and the effective schema; supply missing values before retrying. If the result is still working, poll `+"`get_call(call_id)`"+` for progress and the outcome. Another token owned by the same user has a separate conversation and cannot poll this call.
 
 ## Guidance per task
 
-List topics with `+"`list_guidance_topics`"+` and load only relevant ones via `+"`get_guidance_topic`"+`. Inspect workflow knowledge with `+"`list_workflow_knowledge`"+` / `+"`read_workflow_knowledge`"+` (learnings, knowledgebase notes, workspace skills, skill wiring). Use `+"`get_file_link`"+` for preview/download URLs.
+Use `+"`list_workflows`"+` through `+"`call_tool`"+` when you need workflow-only inventory or metadata. List topics with `+"`list_guidance_topics`"+` and load only relevant ones via `+"`get_guidance_topic`"+`. Inspect workflow knowledge with `+"`list_workflow_knowledge`"+` / `+"`read_workflow_knowledge`"+` (learnings, knowledgebase notes, workspace skills, skill wiring). Use `+"`get_file_link`"+` for preview/download URLs.
 
 ## Run
 
@@ -59,9 +62,9 @@ To run: call a run-mode tool such as `+"`execute_step`"+` — the reply carries 
 
 ## Crews
 
-Workflows expose typed functions (their Builder defines them): `+"`list_workflow_functions`"+` shows each one's inputs, and `+"`call_workflow_function`"+` runs it. Inputs are checked first, so a missing, unknown or mistyped input is refused before anything runs; pass every required input and never a free-text task. Poll `+"`get_workflow_function_call`"+` for longer runs.
+Workflows expose typed functions defined by their Builder. Direct `+"`call_function`"+` returns the run outcome; direct `+"`ask`"+` reaches the workflow's Run-mode assistant. The older `+"`list_workflow_functions`"+`, `+"`call_workflow_function`"+`, and `+"`get_workflow_function_call`"+` operations remain available through `+"`call_tool`"+` for existing scripts. Calls need `+"`runs:execute`"+` and edit access to the workflow.
 
-Crews are persistent AgentWorks agents. Discover them with `+"`list_crews`"+` (IDs, never paths); `+"`get_crew`"+` shows identity, model, and functions. Read project files with `+"`list_crew_files`"+` / `+"`read_crew_file`"+`. Call a Crew's typed functions with `+"`call_crew_function`"+` (arguments must match `+"`list_crew_functions`"+`), or ask anything with `+"`ask_crew`"+`. Both run in your own continuing conversation with that Crew (one per AgentWorks user; never the Crew's main chat), so repeated `+"`ask_crew`"+` calls are a chat: the Crew remembers your earlier asks. The result returns within `+"`wait_seconds`"+` (max 25), otherwise poll `+"`get_crew_function_call`"+` with the returned `+"`call_id`"+`.
+Crews are persistent AgentWorks agents. `+"`get_crew`"+` shows identity, model, and functions; `+"`list_crew_files`"+` / `+"`read_crew_file`"+` read shared project files. The older `+"`list_crews`"+`, `+"`call_crew_function`"+`, `+"`ask_crew`"+`, and `+"`get_crew_function_call`"+` operations remain available through `+"`call_tool`"+` for existing scripts. Those calls keep their legacy user-scoped conversation. New direct calls use the connection-scoped conversation. Calls need `+"`crews:run`"+` on a token that includes the Crew.
 
 ## Answer from reading
 
@@ -118,7 +121,7 @@ func (api *StreamingAPI) handleExternalPlugin(w http.ResponseWriter, r *http.Req
 		return
 	}
 	origin, resource, ok := mcpOAuthURLs()
-	if !ok {
+	if !ok || !strings.HasPrefix(strings.ToLower(origin), "https://") {
 		externalError(w, http.StatusServiceUnavailable, "plugin_unavailable", "The Cowork plugin requires a configured public HTTPS URL.")
 		return
 	}

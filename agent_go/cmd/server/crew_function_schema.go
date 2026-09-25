@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -50,6 +51,11 @@ func checkCrewFunctionSchema(schema map[string]interface{}, where string) error 
 			if err := checkCrewFunctionSchema(child, where+"."+name); err != nil {
 				return err
 			}
+			if defaultValue, present := child["default"]; present {
+				if problems := validateCrewFunctionValue(child, normalizeCrewFunctionInput(child, defaultValue)); len(problems) > 0 {
+					return fmt.Errorf("%s.%s: invalid default: %s", where, name, strings.Join(problems, "; "))
+				}
+			}
 		}
 		if raw, ok := schema["required"]; ok {
 			list, ok := raw.([]interface{})
@@ -73,6 +79,65 @@ func checkCrewFunctionSchema(schema map[string]interface{}, where string) error 
 		}
 	}
 	return nil
+}
+
+// prepareCrewFunctionArgs applies declared defaults and the small set of
+// lossless scalar conversions before validating an invocation. Result values
+// continue to use validateCrewFunctionValue without input normalization.
+func prepareCrewFunctionArgs(schema map[string]interface{}, args map[string]interface{}) (map[string]interface{}, []string) {
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	props, _ := schema["properties"].(map[string]interface{})
+	prepared := make(map[string]interface{}, len(args)+len(props))
+	problems := []string{}
+	for name, value := range args {
+		child, known := props[name].(map[string]interface{})
+		if len(schema) > 0 && !known {
+			problems = append(problems, fmt.Sprintf("$.%s: unknown input", name))
+			continue
+		}
+		if known {
+			value = normalizeCrewFunctionInput(child, value)
+		}
+		prepared[name] = value
+	}
+	for name, raw := range props {
+		if _, present := prepared[name]; present {
+			continue
+		}
+		child, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if value, present := child["default"]; present {
+			prepared[name] = normalizeCrewFunctionInput(child, value)
+		}
+	}
+	problems = append(problems, validateCrewFunctionValue(schema, prepared)...)
+	sort.Strings(problems)
+	return prepared, problems
+}
+
+func normalizeCrewFunctionInput(schema map[string]interface{}, value interface{}) interface{} {
+	s, ok := value.(string)
+	if !ok {
+		return value
+	}
+	switch schema["type"] {
+	case "integer":
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n
+		}
+	case "boolean":
+		if s == "true" {
+			return true
+		}
+		if s == "false" {
+			return false
+		}
+	}
+	return value
 }
 
 // validateCrewFunctionValue checks value against schema and returns every
@@ -112,14 +177,14 @@ func validateCrewFunctionValueAt(schema map[string]interface{}, value interface{
 		if required, ok := schema["required"].([]interface{}); ok {
 			for _, item := range required {
 				name, _ := item.(string)
-				if _, present := object[name]; !present || object[name] == nil {
+				if _, present := object[name]; !present {
 					*problems = append(*problems, fmt.Sprintf("%s.%s: required", at, name))
 				}
 			}
 		}
 		for name, child := range object {
 			childSchema, ok := props[name].(map[string]interface{})
-			if !ok || child == nil {
+			if !ok {
 				continue
 			}
 			validateCrewFunctionValueAt(childSchema, child, at+"."+name, problems)

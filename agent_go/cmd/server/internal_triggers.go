@@ -33,17 +33,17 @@ const (
 
 	triggerCallerWorkflow = "workflow"
 	triggerCallerCrew     = "crew"
-	// triggerCallerUser is a signed-in user's external connection (MCP or the
-	// agentworks CLI). Only the server stamps it, from the authenticated
-	// request; agent tool schemas never offer it.
-	triggerCallerUser = "user"
+	// triggerCallerUser identifies a signed-in person or legacy external
+	// call. New direct MCP calls use the access token's connection ID.
+	triggerCallerUser       = "user"
+	triggerCallerConnection = "connection"
 )
 
 // triggerCaller stamps which resource may invoke an internal trigger.
 // Workflow callers use the workflow manifest ID; crew callers use the project
 // ID with its profile.
 type triggerCaller struct {
-	Type      string `json:"type"` // "workflow" or "crew"
+	Type      string `json:"type"`
 	ID        string `json:"id"`
 	ProfileID string `json:"profile_id,omitempty"`
 }
@@ -90,8 +90,10 @@ func validateAnyTriggerCaller(caller *triggerCaller) error {
 		return validateTriggerCaller(caller, triggerCallerCrew)
 	case triggerCallerUser:
 		return validateTriggerCaller(caller, triggerCallerUser)
+	case triggerCallerConnection:
+		return validateTriggerCaller(caller, triggerCallerConnection)
 	default:
-		return fmt.Errorf("internal trigger caller type must be %q or %q", triggerCallerWorkflow, triggerCallerCrew)
+		return fmt.Errorf("internal trigger caller type must be crew, workflow, user or connection")
 	}
 }
 
@@ -213,7 +215,7 @@ func (c *triggerCaller) matchesPresented(wantType string, presented triggerCalle
 // binding's own type.
 func (c *triggerCaller) matchesAnyPresented(presented triggerCaller) bool {
 	wantType := strings.ToLower(strings.TrimSpace(presented.Type))
-	if wantType != triggerCallerWorkflow && wantType != triggerCallerCrew && wantType != triggerCallerUser {
+	if wantType != triggerCallerWorkflow && wantType != triggerCallerCrew && wantType != triggerCallerUser && wantType != triggerCallerConnection {
 		return false
 	}
 	return c.matchesPresented(wantType, presented)

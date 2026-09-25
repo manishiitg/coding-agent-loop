@@ -90,6 +90,38 @@ func TestWorkflowFunctionArgs(t *testing.T) {
 	}
 }
 
+func TestWorkflowFunctionDefaultsAreValidatedAndApplied(t *testing.T) {
+	sched := reviewPRTrigger()
+	sched.Function.Inputs[0].Default = json.RawMessage(`"runloop-works"`)
+	sched.Function.Inputs[1].Default = json.RawMessage(`"app"`)
+	sched.Function.Inputs = append(sched.Function.Inputs, WorkflowFunctionInput{Name: "PUBLISH", Type: "boolean", Default: json.RawMessage(`false`)})
+	if err := validateWorkflowFunctionSpec(sched.Function); err != nil {
+		t.Fatal(err)
+	}
+	values, _, err := workflowFunctionArgs(sched, map[string]interface{}{"PR_NUMBER": "149"})
+	if err != nil || values["GITHUB_OWNER"] != "runloop-works" || values["GITHUB_REPO"] != "app" || values["PUBLISH"] != "false" {
+		t.Fatalf("defaults = %v, err = %v", values, err)
+	}
+	values, _, err = workflowFunctionArgs(sched, map[string]interface{}{"PR_NUMBER": 149, "GITHUB_OWNER": "other"})
+	if err != nil || values["GITHUB_OWNER"] != "other" {
+		t.Fatalf("explicit override = %v, err = %v", values, err)
+	}
+	if _, _, err = workflowFunctionArgs(sched, map[string]interface{}{"PR_NUMBER": 149, "GITHUB_OWNER": nil}); err == nil {
+		t.Fatal("explicit null must not use the default")
+	}
+	if _, _, err = workflowFunctionArgs(sched, map[string]interface{}{"PR_NUMBER": 149, "GITHUB_OWNRE": "typo"}); err == nil {
+		t.Fatal("unknown input must be refused")
+	}
+	required := workflowFunctionInputSchema(sched)["required"].([]interface{})
+	if len(required) != 1 || required[0] != "PR_NUMBER" {
+		t.Fatalf("effective required fields = %v", required)
+	}
+	sched.Function.Inputs[0].Default = json.RawMessage(`null`)
+	if err := validateWorkflowFunctionSpec(sched.Function); err == nil {
+		t.Fatal("null default accepted")
+	}
+}
+
 // The validated inputs become the run's variables directly.
 func TestDeliverFunctionSetsRunVariables(t *testing.T) {
 	var got *WorkflowWebhookDelivery

@@ -117,6 +117,10 @@ func TestExternalSkillMDAndZIP(t *testing.T) {
 		"---\nname: agentworks\n",
 		"description: " + hostedSkillDescription,
 		"https://skills.test",
+		"list_agents",
+		"ask(target, message)",
+		"call_function(target, function, args)",
+		"get_call(call_id)",
 		"get_agent_context",
 		"list_workflows",
 		"run_status",
@@ -125,6 +129,9 @@ func TestExternalSkillMDAndZIP(t *testing.T) {
 		if !strings.Contains(markdown, want) {
 			t.Fatalf("skill.md missing %q", want)
 		}
+	}
+	if strings.Contains(markdown, "exactly two tools") || strings.Contains(markdown, "only these two tools exist") {
+		t.Fatal("hosted skill still describes the old two-tool MCP surface")
 	}
 	if strings.Contains(markdown, "aw_pat_") || strings.Contains(markdown, "agentworks login") || strings.Contains(markdown, "claude mcp add") {
 		t.Fatal("hosted skill must not carry credentials or local-CLI setup")

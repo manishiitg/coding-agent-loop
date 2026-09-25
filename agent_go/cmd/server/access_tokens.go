@@ -265,6 +265,16 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return true
 	}
 	t := c.AccessToken
+	if isExternalAgentTool(tool.Name) {
+		switch tool.Name {
+		case "list_agents":
+			return t.Allows("crews:read") || t.Allows("crews:run") || t.Allows("workflows:read") || t.Allows("runs:execute")
+		case "get_call":
+			return t.Allows("crews:read") || t.Allows("crews:run") || t.Allows("workflows:read") || t.Allows("runs:execute")
+		default:
+			return t.Allows("crews:run") || t.Allows("runs:execute")
+		}
+	}
 	if isExternalCrewTool(tool.Name) {
 		switch tool.Name {
 		case "call_crew_function", "ask_crew":

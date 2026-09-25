@@ -9,6 +9,7 @@ export type CrewFunctionSchema = {
   required?: string[]
   properties?: Record<string, CrewFunctionSchema>
   items?: CrewFunctionSchema
+  default?: unknown
 }
 
 export interface CrewFunction {
@@ -21,6 +22,7 @@ export interface CrewFunction {
   created_at?: string
   updated_at?: string
   implicit?: boolean
+  allowed_callers?: { type: string; id: string; profile_id?: string }[]
 }
 
 export interface CrewFunctionProgress { at: string; message: string; percent?: number }

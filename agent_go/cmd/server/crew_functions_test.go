@@ -56,6 +56,33 @@ func TestCrewFunctionSchemaValidation(t *testing.T) {
 	}
 }
 
+func TestCrewFunctionDefaultsAndUnknownInputs(t *testing.T) {
+	schema := map[string]interface{}{"type": "object", "required": []interface{}{"build", "env"}, "properties": map[string]interface{}{
+		"build":  map[string]interface{}{"type": "integer"},
+		"env":    map[string]interface{}{"type": "string", "default": "staging", "enum": []interface{}{"staging", "prod"}},
+		"notify": map[string]interface{}{"type": "boolean", "default": false},
+	}}
+	if err := checkCrewFunctionSchema(schema, "input_schema"); err != nil {
+		t.Fatal(err)
+	}
+	got, problems := prepareCrewFunctionArgs(schema, map[string]interface{}{"build": "149"})
+	if len(problems) > 0 || got["build"] != int64(149) || got["env"] != "staging" || got["notify"] != false {
+		t.Fatalf("prepared = %v, problems = %v", got, problems)
+	}
+	got, problems = prepareCrewFunctionArgs(schema, map[string]interface{}{"build": 149, "env": "prod"})
+	if len(problems) > 0 || got["env"] != "prod" {
+		t.Fatalf("override = %v, problems = %v", got, problems)
+	}
+	_, problems = prepareCrewFunctionArgs(schema, map[string]interface{}{"build": 149, "env": nil, "typo": "x"})
+	if len(problems) != 2 {
+		t.Fatalf("expected null and unknown input problems, got %v", problems)
+	}
+	bad := map[string]interface{}{"type": "object", "properties": map[string]interface{}{"env": map[string]interface{}{"type": "string", "default": "dev", "enum": []interface{}{"prod"}}}}
+	if err := checkCrewFunctionSchema(bad, "input_schema"); err == nil {
+		t.Fatal("invalid default accepted")
+	}
+}
+
 func TestCrewFunctionToolName(t *testing.T) {
 	if got := crewFunctionToolName("RTS Flow Tester", "run_login_flow"); got != "rts_flow_tester__run_login_flow" {
 		t.Fatalf("tool name = %q", got)

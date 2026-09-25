@@ -134,19 +134,39 @@ func TestExternalMCPStreamableSpecAndCall(t *testing.T) {
 		t.Fatalf("run-capable connection got read-only instructions: %q", initResult.Instructions)
 	}
 
-	// The remote surface is exactly two tools; the catalog resolves inside.
+	// Four common operations are direct MCP tools alongside the gateway.
 	tools := listExternalMCPTools(t, ctx, cli)
-	if len(tools) != 2 {
+	if len(tools) != 6 {
 		names := make([]string, 0, len(tools))
 		for name := range tools {
 			names = append(names, name)
 		}
-		t.Fatalf("remote tools %v, want exactly [get_api_spec call_tool]", names)
+		t.Fatalf("remote tools %v, want six core tools", names)
 	}
-	for _, name := range []string{externalMCPToolSpec, externalMCPToolCall} {
+	for _, name := range []string{externalMCPToolSpec, externalMCPToolCall, "list_agents", "ask", "call_function", "get_call"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("remote surface missing %q", name)
 		}
+	}
+	agents := callRemoteTool(t, ctx, cli, "list_agents", map[string]any{"kind": "workflow", "limit": 1})
+	requireRemoteSuccess(t, agents, "list_agents")
+	var discovered struct {
+		Agents []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"agents"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(marshalStructured(t, agents)), &discovered); err != nil {
+		t.Fatal(err)
+	}
+	if discovered.Total != 1 || len(discovered.Agents) != 1 || discovered.Agents[0].ID != "invoices" || discovered.Agents[0].Name != "Invoice processing" {
+		t.Fatalf("scoped discovery = %+v", discovered)
+	}
+	exact := callRemoteTool(t, ctx, cli, "list_agents", map[string]any{"query": "invoices"})
+	requireRemoteSuccess(t, exact, "list_agents exact ID")
+	if got := marshalStructured(t, exact); !strings.Contains(got, `"total":1`) && !strings.Contains(got, `"total": 1`) {
+		t.Fatalf("exact ID discovery = %s", got)
 	}
 
 	// Spec with no arguments lists the whole scope-filtered catalog.
@@ -225,10 +245,15 @@ func TestExternalMCPRespectsTokenScopes(t *testing.T) {
 	if initResult.Instructions != externalMCPReadOnlyInstructions {
 		t.Fatalf("read-only connection got run instructions: %q", initResult.Instructions)
 	}
-	// Same two tools; the scope filter applies inside the spec and the calls.
+	// Read-only tokens see discovery and polling, but no call starters.
 	tools := listExternalMCPTools(t, ctx, cli)
-	if len(tools) != 2 {
-		t.Fatalf("read-only surface has %d tools, want 2", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("read-only surface has %d tools, want 4", len(tools))
+	}
+	for _, name := range []string{"ask", "call_function"} {
+		if _, visible := tools[name]; visible {
+			t.Fatalf("read-only surface exposes %q", name)
+		}
 	}
 	spec := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{})
 	requireRemoteSuccess(t, spec, "read-only spec list")

@@ -357,6 +357,12 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 			}
 			caller := triggerCaller{Type: triggerCallerUser, ID: strings.TrimSpace(claims.UserID)}
 			trigger.Caller = &caller
+		} else if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerConnection) {
+			claims := GetUserFromContext(ctx)
+			if claims == nil || claims.AccessToken == nil || strings.TrimSpace(claims.AccessToken.ID) != strings.TrimSpace(trigger.Caller.ID) {
+				return productWebhookResponse{}, false, fmt.Errorf("connection caller must be the authenticated access token")
+			}
+			trigger.Caller = &triggerCaller{Type: triggerCallerConnection, ID: claims.AccessToken.ID}
 		} else if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
 			// A Crew caller may be any Crew on the server (Crews are shared
 			// server-wide); it must exist and must not be the target itself.
@@ -688,7 +694,7 @@ func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Cont
 		matchUserID = ownerID
 	}
 	match := &productWebhookMatch{UserID: matchUserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
-	if strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerUser) {
+	if strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerUser) || strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerConnection) {
 		label := firstNonEmptyTrimmed(call.CallerLabel, "an external connection")
 		sourceNote := "This turn was started by " + label + " through an external connection (MCP or the agentworks CLI); your result is returned to that connection."
 		return s.deliverProductTrigger(ctx, match, deliveryID, strings.TrimSpace(call.Event), call.Payload, sourceNote, nil)

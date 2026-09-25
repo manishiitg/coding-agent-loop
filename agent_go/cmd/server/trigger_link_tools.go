@@ -174,7 +174,7 @@ func crewTargetMessage(caller triggerLinkCaller) string {
 	switch caller.Stamp.Type {
 	case triggerCallerWorkflow:
 		kind = "workflow"
-	case triggerCallerUser:
+	case triggerCallerUser, triggerCallerConnection:
 		kind = "external connection"
 	}
 	return fmt.Sprintf("The %s %q called you. This conversation is yours and that caller's alone (earlier calls from it are above); your main chat is for people and does not see it. The task is in the payload's `task` field; any extra input is under `payload`. Do the task, then end with a clear, self-contained final answer: it is returned to the caller.", kind, caller.Label)

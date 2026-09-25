@@ -1,11 +1,11 @@
 ---
 name: agentworks
-description: Read and run AgentWorks workflows and Crews through MCP (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Load when the task touches an AgentWorks workflow or when AgentWorks MCP tools are available.
+description: Discover, ask, and call AgentWorks Crews and workflows through MCP, and read their files, plans, runs, and guidance. Load when the task touches an AgentWorks Crew or workflow or when AgentWorks MCP tools are available.
 ---
 
 # AgentWorks
 
-This skill is an entry pointer, not a manual. All substantive guidance lives on the server and is fetched per task — nothing here can go stale.
+This skill is an entry pointer. Discover current tool schemas and detailed guidance from the server when the task needs them.
 
 This connection reads and runs, like the Slack and WhatsApp run-mode channels: tools read, and run-mode tools execute in pinned Run-mode sessions. Nothing creates, edits, or authors.
 
@@ -15,11 +15,15 @@ This connection reads and runs, like the Slack and WhatsApp run-mode channels: t
 claude mcp add --transport http agentworks 'https://your-server/api/external/v1/mcp'
 ```
 
-Approve the MCP connection in your browser. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access, and reading (`crews:read`) and asking or calling (`crews:run`) its Crews. The remote MCP surface has `get_api_spec` to discover available tool names and schemas, then `call_tool` to invoke one by name. Unavailable tools are omitted from the catalog.
+Approve the MCP connection in your browser. Its scopes control reading (`workflows:read`, `files:read`, `crews:read`) and calling (`runs:execute`, `crews:run`) targets the account can access. The remote MCP surface advertises `list_agents`, `ask`, `call_function`, and `get_call` directly when permitted. Use `get_api_spec` and `call_tool` for other operations. Unavailable tools are omitted.
 
 ## First step
 
-Use `get_api_spec` to inspect the available tools, then call `get_agent_context` through `call_tool` for your capabilities and guidance version. Discover workflow IDs with `list_workflows` first — IDs are never filesystem paths.
+Use `list_agents` to find visible Crews and workflows by ID or name. Use a returned ID for calls; IDs are never filesystem paths. `get_api_spec` lists other permitted operations and their schemas; call `get_agent_context` through `call_tool` if you need your capabilities and guidance version.
+
+## Ask and call
+
+Use `ask(target, message)` for a plain-language request. The target gets one continuing conversation for this MCP connection. A workflow assistant may choose an exposed typed function or a raw Run-mode action; use `call_function(target, function, args)` when a specific function and its inputs are known and validation before execution matters. Omitted declared defaults are applied, explicit values override them, and invalid or unknown inputs are refused. A refusal includes problems and the effective schema; supply missing values before retrying. If a call is still working, follow its `call_id` with `get_call`. A separate access token owned by the same user has a separate conversation and cannot poll that call.
 
 ## Guidance per task
 
@@ -35,9 +39,9 @@ To run: call a run-mode tool such as `execute_step` — the reply carries `sessi
 
 ## Crews
 
-Workflows expose typed **functions** (their Builder defines them): `list_workflow_functions` shows each one's inputs, and `call_workflow_function` runs it. Inputs are checked first, so a missing, unknown or mistyped input is refused before anything runs; pass every required input and never a free-text task. The result is the run's outcome (status, error, each step's output) within `wait_seconds` (max 25), otherwise poll `get_workflow_function_call` with the returned `call_id`. Every workflow also offers `ask` (function `ask`, args `{message}`): it reaches the workflow's Run-mode assistant in one continuing thread per user, which answers questions and starts runs with the right variables itself. Needs `runs:execute` and edit access to the workflow.
+The older `list_workflow_functions`, `call_workflow_function`, and `get_workflow_function_call` operations remain available through `call_tool` for existing scripts. For new MCP calls, use the direct tools above. Workflow typed functions return run outcomes. Workflow `ask` reaches its Run-mode assistant; it can choose a typed function or a raw run. Calls need `runs:execute` and edit access to the workflow.
 
-Crews are persistent AgentWorks agents. Discover them with `list_crews` (IDs, never paths); `get_crew` shows identity, model, and functions. Read project files with `list_crew_files` / `read_crew_file` (private chat transcripts and databases are never exposed). Call a Crew's typed functions with `call_crew_function` (arguments must match `list_crew_functions`), or ask anything with `ask_crew`. Both run in your own continuing conversation with that Crew (one per AgentWorks user; never the Crew's main chat), so repeated `ask_crew` calls are a chat: the Crew remembers your earlier asks. The result returns within `wait_seconds` (max 25), otherwise poll `get_crew_function_call` with the returned `call_id` for progress and the result. Needs `crews:read` / `crews:run` on a token that includes the Crew.
+Crews are persistent AgentWorks agents. `get_crew` shows identity, model, and functions; `list_crew_files` / `read_crew_file` read shared project files. The older `list_crews`, `call_crew_function`, `ask_crew`, and `get_crew_function_call` operations remain available through `call_tool` for existing scripts. They keep their legacy user-scoped conversation. New direct calls use the connection-scoped conversation. Calls need `crews:run` on a token that includes the Crew.
 
 ## Answer from reading
 

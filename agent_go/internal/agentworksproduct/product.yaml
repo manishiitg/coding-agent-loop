@@ -344,6 +344,10 @@ chat:
     # lists. Admitting an authoring mutation here is a deliberate API
     # change, not a drive-by edit: tokens read and run, never author.
     external_tools:
+      - list_agents
+      - ask
+      - call_function
+      - get_call
       - list_workflows
       - get_workflow
       - list_files

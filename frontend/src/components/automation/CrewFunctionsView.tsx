@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
 import { crewFunctionsApi, type CrewFunction, type CrewFunctionCall, type CrewFunctionSchema } from '../../api/crewFunctions'
 import { productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
+import FunctionRunForm from './FunctionRunForm'
 
 const buttonClass = 'rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50'
 
@@ -18,9 +19,9 @@ function schemaType(schema?: CrewFunctionSchema): string {
 }
 
 /** One line per input or result field: name, type, required. */
-export function schemaFields(schema?: CrewFunctionSchema): { name: string; type: string; required: boolean }[] {
+export function schemaFields(schema?: CrewFunctionSchema): { name: string; type: string; required: boolean; hasDefault: boolean }[] {
   const required = new Set(schema?.required ?? [])
-  return Object.entries(schema?.properties ?? {}).map(([name, child]) => ({ name, type: schemaType(child), required: required.has(name) }))
+  return Object.entries(schema?.properties ?? {}).map(([name, child]) => ({ name, type: schemaType(child), required: required.has(name), hasDefault: child.default !== undefined }))
 }
 
 function formatTime(value?: string): string {
@@ -39,7 +40,7 @@ function FieldList({ label, schema }: { label: string; schema?: CrewFunctionSche
     <span className="font-medium text-foreground">{label}</span>{' '}
     {fields.length === 0
       ? <span className="text-muted-foreground">{schema?.type ? schemaType(schema) : 'none'}</span>
-      : <span className="text-muted-foreground">{fields.map(field => `${field.name}: ${field.type}${field.required ? '' : '?'}`).join(', ')}</span>}
+      : <span className="text-muted-foreground">{fields.map(field => `${field.name}: ${field.type}${field.required && !field.hasDefault ? '' : '?'}${field.hasDefault ? ' (default)' : ''}`).join(', ')}</span>}
   </div>
 }
 
@@ -99,7 +100,7 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
       <p className="text-xs leading-relaxed text-muted-foreground">Functions are how other Crews, workflows and external tools (MCP, CLI) call this Crew. Every Crew answers the built-in <code>ask</code>; typed functions add checked inputs and results. Each caller gets its own continuing conversation here, never the main chat. Ask the Crew chat to add or change a function.</p>
       {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
       <div className="min-w-0 max-w-full space-y-2">
-        {functions.map(fn => <section key={fn.name} data-testid={`crew-function-${fn.name}`} className="min-w-0 max-w-full space-y-2 overflow-hidden rounded-lg border border-border p-3">
+        {[...functions].sort((a, b) => Number(b.name === 'ask') - Number(a.name === 'ask')).map(fn => <section key={fn.name} data-testid={`crew-function-${fn.name}`} className="min-w-0 max-w-full space-y-2 overflow-hidden rounded-lg border border-border p-3">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate font-mono text-sm font-medium">{fn.name}</h3>
             <span className="shrink-0 text-[11px] text-muted-foreground">{fn.implicit ? 'Built in' : fn.created_by ? `By ${fn.created_by}` : ''}{!fn.implicit && fn.updated_at ? ` · ${formatTime(fn.updated_at)}` : ''}</span>
@@ -107,6 +108,9 @@ export default function CrewFunctionsView({ scope, refreshToken = 0, onCounts, o
           {fn.description && <p className="line-clamp-2 text-xs text-muted-foreground" title={fn.description}>{fn.description}</p>}
           <FieldList label="Inputs" schema={fn.input_schema} />
           <FieldList label="Returns" schema={fn.result_schema} />
+          <FunctionRunForm key={`${scope.projectId}:${fn.name}`} target={scope.projectId} functionName={fn.name} fields={Object.entries(fn.input_schema?.properties ?? {}).map(([name, schema]) => ({
+            name, type: schema.type ?? 'string', enum: schema.enum, default: schema.default, required: fn.input_schema?.required?.includes(name),
+          }))} />
           {!fn.implicit && <div className="flex flex-wrap justify-end gap-1.5">
             {onEdit && <button type="button" disabled={busy} className={buttonClass} onClick={() => void onEdit(`I want to update the Crew function "${fn.name}". Show me its current definition and ask me what to change.`)}>Edit in chat</button>}
             <button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(fn.name)}>Remove</button>

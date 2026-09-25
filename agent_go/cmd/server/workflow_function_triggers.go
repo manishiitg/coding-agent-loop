@@ -41,11 +41,12 @@ type WorkflowFunctionSpec struct {
 // WorkflowFunctionInput is one argument, set as the declared workflow
 // variable of the same name for that run.
 type WorkflowFunctionInput struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type,omitempty"` // string (default), integer, number, boolean
-	Required    bool     `json:"required,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Enum        []string `json:"enum,omitempty"`
+	Name        string          `json:"name"`
+	Type        string          `json:"type,omitempty"` // string (default), integer, number, boolean
+	Required    bool            `json:"required,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Enum        []string        `json:"enum,omitempty"`
+	Default     json.RawMessage `json:"default,omitempty"`
 }
 
 func isFunctionTriggerKind(kind string) bool {
@@ -100,6 +101,15 @@ func validateWorkflowFunctionSpec(spec *WorkflowFunctionSpec) error {
 		default:
 			return fmt.Errorf("function input %q: type must be string, integer, number or boolean", input.Name)
 		}
+		if len(input.Default) > 0 {
+			var value interface{}
+			if err := json.Unmarshal(input.Default, &value); err != nil || value == nil {
+				return fmt.Errorf("function input %q: default must be a non-null value of the declared type", input.Name)
+			}
+			if _, err := workflowFunctionInputValue(*input, value); err != nil {
+				return fmt.Errorf("function input %q: invalid default: %w", input.Name, err)
+			}
+		}
 	}
 	for _, caller := range spec.AllowedCallers {
 		c := caller
@@ -138,8 +148,14 @@ func workflowFunctionInputSchema(sched WorkflowSchedule) map[string]interface{} 
 			}
 			property["enum"] = values
 		}
+		if len(input.Default) > 0 {
+			var value interface{}
+			if json.Unmarshal(input.Default, &value) == nil {
+				property["default"] = value
+			}
+		}
 		properties[input.Name] = property
-		if input.Required {
+		if input.Required && len(input.Default) == 0 {
 			required = append(required, input.Name)
 		}
 	}
@@ -256,7 +272,20 @@ func workflowFunctionArgs(sched WorkflowSchedule, args map[string]interface{}) (
 		variables[name] = value
 	}
 	for _, input := range sched.Function.Inputs {
-		if _, given := variables[input.Name]; input.Required && !given {
+		if _, given := args[input.Name]; !given && len(input.Default) > 0 {
+			var raw interface{}
+			if err := json.Unmarshal(input.Default, &raw); err == nil {
+				if value, err := workflowFunctionInputValue(input, raw); err == nil {
+					variables[input.Name] = value
+				} else {
+					problems = append(problems, fmt.Sprintf("invalid saved default for %s: %v", input.Name, err))
+				}
+			} else {
+				problems = append(problems, fmt.Sprintf("invalid saved default for %s", input.Name))
+			}
+		}
+		_, supplied := args[input.Name]
+		if _, available := variables[input.Name]; input.Required && !available && !supplied {
 			problems = append(problems, fmt.Sprintf("missing required input %s", input.Name))
 		}
 	}
@@ -298,6 +327,11 @@ func workflowFunctionInputValue(input WorkflowFunctionInput, raw interface{}) (s
 		}
 	case "boolean":
 		b, ok := raw.(bool)
+		if !ok {
+			if s, stringOK := raw.(string); stringOK && (s == "true" || s == "false") {
+				b, ok = s == "true", true
+			}
+		}
 		if !ok {
 			return "", fmt.Errorf("input %s must be true or false", input.Name)
 		}

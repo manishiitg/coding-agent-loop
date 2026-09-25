@@ -42,16 +42,30 @@ var crewFunctionFastWait = 120 * time.Second
 var crewFunctionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
 
 type crewFunction struct {
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description,omitempty"`
-	InputSchema  map[string]interface{} `json:"input_schema,omitempty"`
-	ResultSchema map[string]interface{} `json:"result_schema,omitempty"`
-	Instructions string                 `json:"instructions,omitempty"`
-	CreatedBy    string                 `json:"created_by,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description,omitempty"`
+	InputSchema    map[string]interface{} `json:"input_schema,omitempty"`
+	ResultSchema   map[string]interface{} `json:"result_schema,omitempty"`
+	AllowedCallers []triggerCaller        `json:"allowed_callers,omitempty"`
+	Instructions   string                 `json:"instructions,omitempty"`
+	CreatedBy      string                 `json:"created_by,omitempty"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
 	// TriggerID is set on a workflow function: the function trigger it runs.
 	TriggerID string `json:"trigger_id,omitempty"`
+}
+
+func crewFunctionCallerAllowed(fn crewFunction, caller triggerCaller) bool {
+	if len(fn.AllowedCallers) == 0 {
+		return true
+	}
+	for _, allowed := range fn.AllowedCallers {
+		a := allowed
+		if a.matchesAnyPresented(caller) {
+			return true
+		}
+	}
+	return false
 }
 
 type crewFunctionsDoc struct {
@@ -623,15 +637,20 @@ func (api *StreamingAPI) startCrewFunctionCall(ctx context.Context, userID strin
 	if caller.isTarget(target) {
 		return nil, fmt.Errorf("a %s cannot call its own function", target.Kind)
 	}
+	if target.Kind == triggerCallerCrew && !crewFunctionCallerAllowed(fn, caller.Stamp) {
+		return nil, fmt.Errorf("function %q does not allow this caller", fn.Name)
+	}
 	if args == nil {
 		args = map[string]interface{}{}
 	}
 	// A workflow function checks its own inputs on dispatch, with messages
 	// that name the missing or unknown input.
 	if target.Kind != triggerCallerWorkflow {
-		if problems := validateCrewFunctionValue(fn.InputSchema, args); len(problems) > 0 {
+		prepared, problems := prepareCrewFunctionArgs(fn.InputSchema, args)
+		if len(problems) > 0 {
 			return nil, fmt.Errorf("arguments do not match %s's input schema: %s", fn.Name, strings.Join(problems, "; "))
 		}
+		args = prepared
 	}
 	callerKey := crewFunctionKey(caller.Stamp.Type, caller.Stamp.ID)
 	targetKey := crewFunctionKey(target.Kind, target.stampID())
@@ -1107,16 +1126,17 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		}
 		return jsonOut(response)
 	}
-	schemaSchema := map[string]interface{}{"type": "object", "description": "JSON Schema subset: type object|array|string|number|integer|boolean, properties, required, items, enum."}
+	schemaSchema := map[string]interface{}{"type": "object", "description": "JSON Schema subset: type object|array|string|number|integer|boolean, properties, required, items, enum, and property defaults."}
 
 	if err := register("define_function", "Declare or update a typed function on this Crew/workflow (omit target) or on another Crew (any Crew) or a workflow you can edit. Other Crews and workflows then call it with call_function (or a generated tool) and get back a result validated against result_schema. instructions tell the target what to do when called.", map[string]interface{}{
 		"type": "object", "required": []string{"name", "description", "instructions"}, "properties": map[string]interface{}{
-			"target":        targetSchema,
-			"name":          map[string]interface{}{"type": "string", "description": "snake_case name, e.g. run_login_flow."},
-			"description":   map[string]interface{}{"type": "string", "description": "What the function does, for callers."},
-			"instructions":  map[string]interface{}{"type": "string", "description": "What the target Crew does when this function is called."},
-			"input_schema":  schemaSchema,
-			"result_schema": schemaSchema,
+			"target":          targetSchema,
+			"name":            map[string]interface{}{"type": "string", "description": "snake_case name, e.g. run_login_flow."},
+			"description":     map[string]interface{}{"type": "string", "description": "What the function does, for callers."},
+			"instructions":    map[string]interface{}{"type": "string", "description": "What the target Crew does when this function is called."},
+			"input_schema":    schemaSchema,
+			"result_schema":   schemaSchema,
+			"allowed_callers": map[string]interface{}{"type": "array", "description": "Optional caller allow-list; empty allows anyone with base access.", "items": triggerCallerToolSchema(triggerCallerCrew, triggerCallerWorkflow, triggerCallerUser, triggerCallerConnection)},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		ctx = withClaims(ctx)
@@ -1149,6 +1169,32 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 		if err := checkCrewFunctionSchema(resultSchema, "result_schema"); err != nil {
 			return "", err
 		}
+		var allowedCallers []triggerCaller
+		if raw, present := args["allowed_callers"]; present {
+			items, ok := raw.([]interface{})
+			if !ok {
+				return "", fmt.Errorf("allowed_callers must be an array")
+			}
+			for _, item := range items {
+				value, ok := item.(map[string]interface{})
+				if !ok {
+					return "", fmt.Errorf("each allowed caller must be an object")
+				}
+				kind, kindOK := value["type"].(string)
+				id, idOK := value["id"].(string)
+				if !kindOK || !idOK {
+					return "", fmt.Errorf("allowed caller needs type and id strings")
+				}
+				stamp := triggerCaller{Type: kind, ID: id}
+				if profile, ok := value["profile_id"].(string); ok {
+					stamp.ProfileID = profile
+				}
+				if err := validateAnyTriggerCaller(&stamp); err != nil {
+					return "", err
+				}
+				allowedCallers = append(allowedCallers, stamp)
+			}
+		}
 		if target.Kind == triggerCallerWorkflow {
 			return "", errWorkflowFunctionsAreTriggers(target)
 		}
@@ -1163,11 +1209,14 @@ func (api *StreamingAPI) registerCrewFunctionTools(registrar definitionToolRegis
 			if functions[i].Name == name {
 				functions[i].Description, functions[i].Instructions = strings.TrimSpace(description), strings.TrimSpace(instructions)
 				functions[i].InputSchema, functions[i].ResultSchema, functions[i].UpdatedAt = inputSchema, resultSchema, now
+				if _, present := args["allowed_callers"]; present {
+					functions[i].AllowedCallers = allowedCallers
+				}
 				updated = true
 			}
 		}
 		if !updated {
-			functions = append(functions, crewFunction{Name: name, Description: strings.TrimSpace(description), Instructions: strings.TrimSpace(instructions), InputSchema: inputSchema, ResultSchema: resultSchema, CreatedBy: creator, CreatedAt: now, UpdatedAt: now})
+			functions = append(functions, crewFunction{Name: name, Description: strings.TrimSpace(description), Instructions: strings.TrimSpace(instructions), InputSchema: inputSchema, ResultSchema: resultSchema, AllowedCallers: allowedCallers, CreatedBy: creator, CreatedAt: now, UpdatedAt: now})
 		}
 		if err := writeCrewFunctions(ctx, target, functions); err != nil {
 			return "", err

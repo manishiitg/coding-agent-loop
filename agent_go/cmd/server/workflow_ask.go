@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -48,15 +49,22 @@ func workflowAskSessionID(workflowID string, caller triggerCaller) string {
 	return "wfask-" + hex.EncodeToString(sum[:])[:24]
 }
 
-func workflowAskMessage(caller triggerLinkCaller, message string) string {
+func workflowAskMessage(caller triggerLinkCaller, manifest *WorkflowManifest, message string) string {
 	kind := "Crew"
 	switch caller.Stamp.Type {
 	case triggerCallerWorkflow:
 		kind = "workflow"
-	case triggerCallerUser:
+	case triggerCallerUser, triggerCallerConnection:
 		kind = "external connection"
 	}
-	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. If it asks you to run something, start the right route with the variables it needs (never rely on a saved value for per-run data such as a PR number), wait for the outcome and report it, including any step that skipped and why. If a required value is missing, say which instead of running. You cannot change the workflow here: if the caller reports a problem or asks for a change, record it for the owner with submit_workflow_suggestion and say you did.]\n\n%s", kind, caller.Label, strings.TrimSpace(message))
+	var offered []map[string]interface{}
+	for _, fn := range workflowFunctions(manifest) {
+		if externalAgentFunctionAllowed(triggerTarget{Kind: triggerCallerWorkflow, Manifest: manifest}, fn, caller.Stamp) {
+			offered = append(offered, map[string]interface{}{"name": fn.Name, "description": fn.Description, "inputs": fn.InputSchema})
+		}
+	}
+	encoded, _ := json.Marshal(offered)
+	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. Callable typed functions for this caller: %s. When a request fits one, prefer it and ask for important missing values. You may also choose a raw Run-mode action. For any run, pass its per-run inputs explicitly rather than relying on saved values; wait for the outcome and report skipped steps. You cannot change the workflow here: record change requests and problems for the owner with submit_workflow_suggestion.]\n\n%s", kind, caller.Label, string(encoded), strings.TrimSpace(message))
 }
 
 // runWorkflowAsk sends the question to the workflow assistant and settles the
@@ -73,7 +81,7 @@ func (api *StreamingAPI) runWorkflowAsk(call *crewFunctionCall, target triggerTa
 	manifest := target.Manifest
 	sessionID := workflowAskSessionID(manifest.ID, caller.Stamp)
 	query := QueryRequest{
-		Query: workflowAskMessage(caller, message), AgentMode: "workflow_phase", PhaseID: "workflow-builder",
+		Query: workflowAskMessage(caller, manifest, message), AgentMode: "workflow_phase", PhaseID: "workflow-builder",
 		PresetQueryID: manifest.ID, SelectedFolder: target.Path,
 		PinRunMode: true, TriggeredBy: "external", SessionTitle: "Asked by " + caller.Label,
 		ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"},

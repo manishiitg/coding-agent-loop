@@ -34,9 +34,9 @@ const (
 // Remote instructions are short: the two tool descriptions teach the
 // protocol, since hosted clients may not deliver initialize instructions at
 // all (ChatGPT delivers tools only).
-const externalMCPInstructions = `You are connected to an AgentWorks server: tools read, and run-mode tools execute in pinned Run-mode sessions; nothing creates, edits, or authors. Call get_api_spec with no arguments to list the available tools, then get_api_spec with names for schemas, then call_tool to execute. Discover workflow IDs with list_workflows first; IDs are never filesystem paths. Answer from what you read; if the task needs a change, say so instead of attempting one.`
+const externalMCPInstructions = `You are connected to AgentWorks. Find Crews and workflows with list_agents. Use ask for a plain-language request, call_function for a named typed function, and get_call to follow progress. Use get_api_spec and call_tool for other operations. IDs are never filesystem paths. This connection can run but cannot author workflows.`
 
-const externalMCPReadOnlyInstructions = `You are connected to an AgentWorks server with a read-only connection: every tool reads; nothing creates, edits, or runs. Call get_api_spec with no arguments to list the available tools, then get_api_spec with names for schemas, then call_tool to execute. Discover workflow IDs with list_workflows first; IDs are never filesystem paths. Answer from what you read; if the task needs a change, say so instead of attempting one.`
+const externalMCPReadOnlyInstructions = `You are connected to AgentWorks with read-only access. Use list_agents to discover Crews and workflows, and get_api_spec with call_tool for other reads. This connection cannot start calls or runs.`
 
 var externalMCPToolSchemas = map[string]map[string]any{
 	externalMCPToolSpec: {
@@ -98,7 +98,7 @@ func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Reques
 	for _, tool := range allowed {
 		// The catalog omits run tools from tokens lacking runs:execute, so
 		// execute_step's presence proves this connection runs.
-		if tool.Name == "execute_step" {
+		if tool.Name == "execute_step" || tool.Name == "ask" || tool.Name == "call_function" {
 			instructions = externalMCPInstructions
 			break
 		}
@@ -120,6 +120,20 @@ func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Reques
 			},
 		)
 	}
+	for _, tool := range allowed {
+		if !isExternalAgentTool(tool.Name) {
+			continue
+		}
+		entry := tool
+		schema, err := json.Marshal(entry.InputSchema)
+		if err != nil {
+			externalError(w, http.StatusInternalServerError, "schema_error", err.Error())
+			return
+		}
+		mcpServer.AddTool(mcp.NewToolWithRawSchema(entry.Name, entry.Description, schema), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return api.externalMCPCall(ctx, r, entry.Name, allowed, request), nil
+		})
+	}
 	httpServer := server.NewStreamableHTTPServer(mcpServer,
 		server.WithStateLess(true),
 		// This is an authenticated deployment behind Caddy, not a local
@@ -140,6 +154,9 @@ func (api *StreamingAPI) externalMCPCall(ctx context.Context, r *http.Request, n
 	}
 	if name == externalMCPToolSpec {
 		return externalMCPAPISpec(args, allowed)
+	}
+	if isExternalAgentTool(name) {
+		return api.externalMCPExecute(ctx, r, name, args)
 	}
 	target, _ := args["name"].(string)
 	target = strings.TrimSpace(target)
@@ -165,6 +182,10 @@ func (api *StreamingAPI) externalMCPCall(ctx context.Context, r *http.Request, n
 	if callArgs == nil {
 		callArgs = map[string]any{}
 	}
+	return api.externalMCPExecute(ctx, r, target, callArgs)
+}
+
+func (api *StreamingAPI) externalMCPExecute(ctx context.Context, r *http.Request, target string, callArgs map[string]any) *mcp.CallToolResult {
 	body, err := json.Marshal(map[string]any{"name": target, "arguments": callArgs})
 	if err != nil {
 		return mcp.NewToolResultError("failed to encode tool arguments: " + err.Error())

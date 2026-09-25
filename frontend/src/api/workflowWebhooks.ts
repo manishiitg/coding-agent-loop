@@ -25,6 +25,7 @@ export interface WorkflowFunctionInput {
   required?: boolean
   description?: string
   enum?: string[]
+  default?: string | number | boolean
 }
 
 export interface WorkflowFunctionSpec {
@@ -47,6 +48,7 @@ export interface WebhookPayloadMappings {
 }
 
 export interface APITriggerOptions {
+  workflow_id?: string
   steps?: { step_id: string; title: string }[]
   triggers: WorkflowAPITrigger[]
   routes: { step_id: string; step_title: string; route_id: string; route_name: string }[]

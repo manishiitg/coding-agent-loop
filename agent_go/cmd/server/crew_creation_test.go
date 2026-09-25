@@ -344,6 +344,42 @@ func TestCreateCrewProjectAppliesSalesTemplateOnBuilderAction(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesCustomerSuccessTemplateOnBuilderAction(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	req := CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Onboarding Coordinator",
+		Role: "Customer onboarding coordinator", Purpose: "Track first-value milestones",
+		TemplateID: "customer-onboarding-coordinator", StepInstruction: "Return an owned milestone register.",
+		IdempotencyKey: "customer-success-onboarding-1",
+	}
+	created, err := svc.CreateCrewProject(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := created.WorkspacePath
+	for _, relative := range []string{
+		"skills/customer-onboarding-coordinator/SKILL.md",
+		"templates/customer-onboarding-coordinator/SETUP.md",
+		"templates/customer-onboarding-coordinator/TEMPLATE_SETUP.json",
+	} {
+		if mock.files[base+"/"+relative] == "" {
+			t.Fatalf("Builder-created Customer Success Crew lacks %s", relative)
+		}
+	}
+	var product struct {
+		Templates []struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/product.json"]), &product); err != nil {
+		t.Fatal(err)
+	}
+	if len(product.Templates) != 1 || product.Templates[0].ID != req.TemplateID || product.Templates[0].Version != 1 {
+		t.Fatalf("Customer Success template receipt = %+v", product.Templates)
+	}
+}
+
 func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	svc, _, ctx := newCrewCreationTestEnv(t)
 	valid := CreateCrewRequest{

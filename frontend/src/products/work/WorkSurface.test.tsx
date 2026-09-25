@@ -120,6 +120,29 @@ describe('CreateWorkProjectDialog', () => {
     await act(async () => { root.unmount() })
   })
 
+  it('finds Customer Success onboarding without activating a customer action', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onCreate = vi.fn()
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
+    })
+    const search = container.querySelector('[aria-label="Search Crew templates"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'milestone register')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(container.textContent).toContain('1 result')
+    await act(async () => {
+      (container!.querySelector('[data-testid="work-template-customer-onboarding-coordinator"]') as HTMLInputElement).click()
+    })
+    expect(container.textContent).toContain('Connections, schedules, triggers, functions, and Automations are not activated.')
+    await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
+    expect(onCreate).toHaveBeenCalledWith('Customer Onboarding Coordinator', expect.stringContaining('Turn an authorized new-customer handoff'), '🚀', 'customer-onboarding-coordinator')
+    await act(async () => { root.unmount() })
+  })
+
   it('finds a finance specialist by a tool the customer already uses', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)

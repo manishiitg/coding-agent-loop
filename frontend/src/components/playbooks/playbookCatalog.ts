@@ -86,6 +86,14 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
     { id: 'qualification-to-research', from: 'qualification', to: 'research', artifact_type: 'lead-qualification-brief/v1', required: false },
     { id: 'research-to-followup', from: 'research', to: 'followup', artifact_type: 'account-research-brief/v1', required: false },
   ], setupChecks: ['goal_owner', 'source_scope', 'policy_metric', 'team_bindings', 'access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'new-customer-to-first-value', title: 'New Customer to First Value', description: 'Coordinate onboarding milestones and observed product adoption so a new B2B customer reaches an agreed first result.', version: '0.1.0', category: 'Customer Success', order: 1, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'onboarding', agent_playbook_id: 'customer-onboarding-coordinator', required: true, output: 'onboarding-milestone-register/v1' },
+    { id: 'adoption', agent_playbook_id: 'product-adoption-analyst', required: true, output: 'first-value-readout/v1' },
+    { id: 'health', agent_playbook_id: 'customer-health-coordinator', required: false, output: 'customer-health-brief/v1' },
+  ], handoffs: [
+    { id: 'onboarding-to-adoption', from: 'onboarding', to: 'adoption', artifact_type: 'onboarding-milestone-register/v1', required: true },
+    { id: 'adoption-to-health', from: 'adoption', to: 'health', artifact_type: 'first-value-readout/v1', required: false },
+  ], setupChecks: ['goal_owner', 'account_scope', 'first_value_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'finance-operations-review', title: 'Finance Operations Review', description: 'Coordinate billing exceptions and a sourced finance impact review, with optional accounting close and payables specialists.', version: '0.1.0', category: 'Finance', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'billing-exception-queue/v1' },
     { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'finance-impact-readout/v1' },

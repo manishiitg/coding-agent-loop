@@ -1,6 +1,6 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Five Finance, ten Website Growth, and three Sales Crew templates are available in the Crew creation dialog and through Builder's trusted `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-25. Five Finance, ten Website Growth, three Sales, and three Customer Success Crew templates are available in the Crew creation dialog and through Builder's trusted `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
 
 ## Product model
 
@@ -8,7 +8,7 @@ A **Crew template** currently provides a reusable capability pack: a local skill
 
 Each template must work as a useful interactive Crew after the user provides its minimum inputs. Connected accounts, schedules, outbound messages, payments, production changes, and other consequential actions require explicit setup and the product's normal permissions and approvals. Never prefill a customer's target metric with an illustrative website number.
 
-The catalog tracks candidate jobs in seven categories. Several related jobs should become capabilities of one Crew rather than separate Crew identities. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Marketing & Growth, and Website Growth for the specific new-site traffic journey. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
+The catalog tracks candidate jobs in eight categories. Several related jobs should become capabilities of one Crew rather than separate Crew identities. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Customer Success, Marketing & Growth, and Website Growth for specific lifecycle journeys. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
 The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
 
@@ -47,14 +47,24 @@ The Billing Operations Coordinator v1 skill can inspect these case types from au
 
 Tax Export keeps its own setup checklist, so a Finance Analyst can be ready for a sourced brief while tax export remains pending. The analyst's processor, SaaS metric, reconciliation, and cash procedures require source and definition checks for each actual request; the basic Crew checklist does not certify them all. Builder should inspect the existing Finance Analyst Crew before proposing a new one and create another only when the permission, owner, cadence, or independent-review boundary makes sharing inappropriate. Adding a pack never imports another Crew's connections or activates a schedule, function, trigger, refund, payment action, or delivery channel.
 
+## Customer Success
+
+For a B2B SaaS company, the first useful post-sale journey is **new customer to first value**. Start with Customer Onboarding Coordinator and Product Adoption Analyst. Add Customer Health Coordinator when a distinct account owner needs a broader review of adoption, support and renewal context. These are reusable capabilities; one Crew may carry several when access and ownership are compatible.
+
+The **New Customer to First Value** Automation Playbook is an installable chat proposal. Builder inspects the signed customer handoff, purchased scope, owner, onboarding tracker, product event source, and the customer's actual first-value definition. It proposes an owned milestone register → validated adoption readout → optional health review. Its ten setup checks require real source access, identity mapping, evidence rules, Crew bindings, validators, an owner-reviewed plan, and a real manual run. Selection does not contact customers, update accounts, or enable recurrence. The [Customer Success guide](customer_success_first_value.md) defines the handoffs and evidence boundaries.
+
+| Crew template | Job and first useful output | Minimum user input | Suggested Automation |
+| --- | --- | --- | --- |
+| **Customer Onboarding Coordinator** — available v1 | Turn an authorized handoff into an owned milestone register with evidence and blockers. | Customer account, purchased scope, first-value goal, owner, target date, authorized handoff. | New Customer to First Value |
+| **Product Adoption Analyst** — available v1 | Verify the agreed first-value event from product records and expose instrumentation gaps. | Account, event definition, observation window, authorized usage or setup export. | New Customer to First Value |
+| **Customer Health Coordinator** — available v1, optional specialist | Review adoption, support and renewal signals in a sourced account brief. | Account, health rules, owner, first-value readout and authorized context. | Optional health slot in New Customer to First Value |
+
 ## Customer Support
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
 | **Support Triage Assistant** | Classify incoming cases, identify urgency, and propose an owner and next action. | Case examples, priority rules, support channels. | Inbox Triage |
 | **Support Reply Drafter** | Draft grounded replies from approved help content and show citations or source links. | Help docs, tone guide, escalation rules. | Support First Response |
-| **Customer Onboarding Assistant** | Guide a new customer through setup and track unresolved onboarding questions. | Onboarding guide, product access boundaries, handoff owner. | Onboarding Check-in |
-| **Customer Success Analyst** | Review account health and summarize risk, adoption, and follow-up opportunities. | Account data, health definitions, account ownership. | Account Health Review |
 | **Escalation Coordinator** | Keep a customer escalation brief current and coordinate human handoffs. | Escalation policy, case history, responsible team. | Escalation Watch |
 | **Feedback & Review Analyst** | Cluster feedback and reviews into themes, draft responses, and flag urgent issues. | Review or feedback export, response policy, product context. | Review Responder |
 

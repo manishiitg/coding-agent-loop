@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(26)
+    expect(PLAYBOOK_CATALOG).toHaveLength(27)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -44,5 +44,14 @@ describe('small-team catalog', () => {
     expect(sales?.agentSlots?.find(slot => slot.id === 'research')?.required).toBe(false)
     expect(sales?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('lead-qualification-brief/v1')
     expect(sales?.setupChecks).toContain('action_ledger')
+  })
+
+  it('exposes Customer Success with onboarding and adoption handoffs', () => {
+    const success = PLAYBOOK_CATALOG.find(item => item.id === 'new-customer-to-first-value')
+    expect(success?.category).toBe('Customer Success')
+    expect(success?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual(['customer-onboarding-coordinator', 'product-adoption-analyst'])
+    expect(success?.agentSlots?.find(slot => slot.id === 'health')?.required).toBe(false)
+    expect(success?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('onboarding-milestone-register/v1')
+    expect(success?.setupChecks).toContain('first_value_rule')
   })
 })

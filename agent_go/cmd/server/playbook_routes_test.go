@@ -126,13 +126,52 @@ func TestSalesPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	}
 }
 
+func TestCustomerSuccessPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("new-customer-to-first-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/customer-success"
+	const skill = "agentworks-playbook-new-customer-to-first-value"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_customer_success_artifact.py", "examples/onboarding-milestone-register.json", "examples/first-value-readout.json", "examples/customer-health-brief.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Customer Success playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("Customer Success setup was pre-completed: %+v", setup)
+	}
+}
+
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 26 {
-		t.Fatalf("catalog has %d playbooks, want 26", len(items))
+	if len(items) != 27 {
+		t.Fatalf("catalog has %d playbooks, want 27", len(items))
+	}
+	success, err := findPlaybook("new-customer-to-first-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if success.Category != "Customer Success" || len(success.AgentSlots) != 3 || len(success.SetupChecks) != 10 {
+		t.Fatalf("new customer to first value = %+v", success)
 	}
 	sales, err := findPlaybook("inbound-lead-to-meeting-review")
 	if err != nil {

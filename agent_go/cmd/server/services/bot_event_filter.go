@@ -1346,7 +1346,12 @@ func (f *BotEventFilter) flushStreamingMessage(ctx context.Context, finalText st
 		f.mu.Unlock()
 		return false
 	}
-	if sameBotMainText(text, f.streamingSentText) {
+	// Only an identical message is left as is. sameBotMainText also matches
+	// when the streamed text merely contains the answer, which kept the turn's
+	// running narration ("I'll check…", "Switching to us-east-2…") in front
+	// of the final answer in Slack, while the web chat showed the answer
+	// alone (RTS 2026-09-25, QA bot).
+	if normalizeBotMainText(text) == normalizeBotMainText(f.streamingSentText) {
 		f.mainTextSent = true
 		f.lastMainText = strings.TrimSpace(f.streamingSentText)
 		f.mu.Unlock()

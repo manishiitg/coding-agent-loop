@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `umbrella: durable-log refactor complete on main (RTS verification pending); turn-delivery hardening diagnosed 2026-09-25, fix deferred` |
+| Status | `umbrella: durable-log refactor complete on main (RTS verification pending, CLI-reading follow-ups 2026-09-24/25 on main); turn-delivery hardening diagnosed 2026-09-25, fix deferred` |
 | Priority | P0 reliability track |
 | Owner | platform (chat reliability) |
 | Reported | 2026-09-22 (umbrella declared 2026-09-25) |
@@ -650,6 +650,35 @@ mixed journal. Implementation verification must additionally prove that
 workflow-step and scheduled-run events do not create journal rows, interactive
 chat restore survives restart, large payloads are referenced rather than
 copied, and conversation deletion removes its durable rows.
+
+## Follow-up 2026-09-24/25 — the same rule for reading coding-CLI output
+
+The chat is now one ordered log, and turns run one at a time (PLAT-178
+FIFO). Several fixes in these two days apply the same rule, "no second
+source, nothing to reconcile", to how each turn's output is read from the
+coding CLIs. Each came from a real failure on RTS or local.
+
+| Area | Failure | Fix | Commit | Verified |
+|---|---|---|---|---|
+| Cursor turn recording | An auto-notification turn saved every assistant message since the session started as its reply (RTS, automationtesting). Two per-session "already recorded" bookmarks drifted: live-typed turns advanced one, normal turns read the other. | Each turn records only what Cursor committed after the store snapshot taken before its prompt. The per-session recording bookmark is removed; the live display keeps its own display-only reader. | multi-llm `6262fe0` (stop-gap `f360a47` removed) | Live: MultiTurnNoHistoryLeakage, LiveInputProcessesQueuedFollowup, CrossRestartResume, TranscriptStreamNoHistoryReplay |
+| Claude backgrounded tool calls | A tool call over 120 s was moved to the background; Claude ended its turn, then continued on its own when the task finished, and none of that reached the chat (RTS, SDE crew). | The turn stays open while any backgrounded task has no `<task-notification>` yet, the same as pending background agents. | multi-llm `79b7c32` | Unit (this incident's transcript); not live |
+| Claude live input lost | Pasted text vanished, leaving two blank lines, and the message was lost (RTS 13:20). | If the submit check cannot confirm and Claude's transcript has neither a user row nor a queue row within 6 s, the composer is emptied and the message sent once more. Blank lines are cleared before every paste. | multi-llm `89a7c49` | Live: RealDurableAckContract, LiveInputProcessesQueuedFollowup |
+| Claude Escape presses | Two Escapes at a ready prompt opened Claude's Rewind list; its `❯ (current)` entry was taken for a stale draft, and two sends failed for a minute each (local 07:49). Likely trigger: the startup popup check misread the redrawn conversation of a resumed session. | Escape is sent only to interrupt (Stop) and to close a Rewind list. Startup popups are prevented at launch (`--no-chrome`, classic renderer, pre-seeded trust, onboarding and theme), never dismissed; an unexpected one is reported with the screen. The pre-send question-menu Escape is gone (`AskUserQuestion` is not in `--tools`). | multi-llm `bc50ef2`, `89880ae` | Live on Claude Code 2.1.282: RealDurableAckContract, NativeResume, LiveInputProcessesQueuedFollowup, RealCrossRestartResume |
+| Failed send in the UI | A lost message showed only a faint red "!". | The row says "Not delivered · Resend"; Resend uses the chat's normal send path. | builder `838d0cdfa` | Unit |
+| Blocked native tool call | Muse's policy-blocked `read_file` showed a green check and read as a policy leak (QA #218). | A "tool blocked by hook" result renders as an error. | builder `d2d5e6277` | Unit |
+
+Still open:
+- Codex still presses keys to accept its hook-trust dialog. It is tied to
+  that dialog's exact wording, so it is lower risk, but it should also be
+  prevented by pre-trusting hooks in Codex's config.
+- Claude Code auto-updated locally from the certified 2.1.278 to 2.1.282
+  without a P0 run. CLI versions on servers should either be pinned or
+  trigger P0 when they change (owner decision pending).
+- The P0 fixtures use short synthetic conversations. Add a resume test
+  whose conversation contains a numbered list and "no thanks", and a test
+  that sends a message after a Rewind list was opened.
+- Control keys sent to a CLI (Escape, Enter, Ctrl-C) are not logged with a
+  reason, so the local 07:49 trigger could only be inferred.
 
 ## Appendix: event-type audit (2026-09-22)
 

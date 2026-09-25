@@ -161,3 +161,16 @@ func TestBotReplyClearsPlaceholderAndStopsHeartbeat(t *testing.T) {
 		t.Fatal("reply not recorded")
 	}
 }
+
+// Thinking (Cursor reasoning, Pi thinking blocks) is never forwarded to a bot
+// thread; only the reply text is.
+func TestBotNeverForwardsThinking(t *testing.T) {
+	connector := &testBotConnector{}
+	filter := NewBotEventFilter(connector, ThreadID{Platform: "slack"}, "session-1", "", "user-1")
+	filter.baseHierarchySet, filter.baseHierarchy = true, 0
+	thinking := &events.ConversationThinkingEvent{Thinking: "Identifying session clues."}
+	thinking.Metadata = map[string]interface{}{"presentation": "assistant_update"}
+	if filter.processEvent(context.Background(), BotEventData{Type: "conversation_thinking", Data: &events.AgentEvent{HierarchyLevel: 0, Data: thinking}}) || len(connector.sent) != 0 {
+		t.Fatalf("thinking reached the bot thread: %q", connector.sent)
+	}
+}

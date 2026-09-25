@@ -94,13 +94,52 @@ func TestFinancePlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) 
 	}
 }
 
+func TestSalesPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("inbound-lead-to-meeting-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/sales"
+	const skill = "agentworks-playbook-inbound-lead-to-meeting-review"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_sales_artifact.py", "examples/lead-qualification-brief.json", "examples/account-research-brief.json", "examples/sales-followup-draft.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("sales playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("sales setup was pre-completed: %+v", setup)
+	}
+}
+
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 25 {
-		t.Fatalf("catalog has %d playbooks, want 25", len(items))
+	if len(items) != 26 {
+		t.Fatalf("catalog has %d playbooks, want 26", len(items))
+	}
+	sales, err := findPlaybook("inbound-lead-to-meeting-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sales.Category != "Sales" || len(sales.AgentSlots) != 3 || len(sales.SetupChecks) != 10 {
+		t.Fatalf("inbound lead review = %+v", sales)
 	}
 	finance, err := findPlaybook("finance-operations-review")
 	if err != nil {

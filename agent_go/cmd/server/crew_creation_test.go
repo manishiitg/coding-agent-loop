@@ -297,6 +297,53 @@ func TestCreateCrewProjectAppliesFinanceTemplateOnBuilderAction(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesSalesTemplateOnBuilderAction(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	req := CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Lead Intake",
+		Role: "Inbound lead qualifier", Purpose: "Review inbound enquiries",
+		TemplateID: "lead-intake-qualifier", StepInstruction: "Return a sourced qualification brief.",
+		IdempotencyKey: "sales-intake-specialist-1",
+	}
+	created, err := svc.CreateCrewProject(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := created.WorkspacePath
+	for _, relative := range []string{
+		"skills/lead-intake-qualifier/SKILL.md",
+		"templates/lead-intake-qualifier/SETUP.md",
+		"templates/lead-intake-qualifier/TEMPLATE_SETUP.json",
+	} {
+		if mock.files[base+"/"+relative] == "" {
+			t.Fatalf("Builder-created Sales Crew lacks %s", relative)
+		}
+	}
+	var product struct {
+		Templates []struct {
+			ID string `json:"id"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/product.json"]), &product); err != nil {
+		t.Fatal(err)
+	}
+	if len(product.Templates) != 1 || product.Templates[0].ID != req.TemplateID {
+		t.Fatalf("Sales template receipt = %+v", product.Templates)
+	}
+	var runtime struct {
+		Capabilities struct {
+			SelectedSkills  []string `json:"selected_skills"`
+			SelectedServers []string `json:"selected_servers"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/workflow.json"]), &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Capabilities.SelectedSkills) != 1 || runtime.Capabilities.SelectedSkills[0] != req.TemplateID || len(runtime.Capabilities.SelectedServers) != 0 {
+		t.Fatalf("unexpected Sales Crew capabilities = %+v", runtime.Capabilities)
+	}
+}
+
 func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	svc, _, ctx := newCrewCreationTestEnv(t)
 	valid := CreateCrewRequest{

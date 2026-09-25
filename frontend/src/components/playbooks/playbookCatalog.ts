@@ -77,6 +77,15 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   { id: 'growth-experimentation-follow-through', title: 'Growth Experimentation and Follow-Through', description: 'Prioritize evidence-backed experiments, create tracked actions, and verify KPI improvement after shipping.', version: '0.2.0', category: 'Growth Analytics', order: 4, inputCount: 6, toolCount: 4, teamScope: 'small_team' },
   { id: 'seo-intelligence', title: 'SEO Intelligence', description: 'Find winnable keywords, diagnose technical SEO issues, and close content gaps with page-level briefs.', version: '0.1.0', category: 'Growth Analytics', order: 5, inputCount: 7, toolCount: 4, teamScope: 'small_team' },
   { id: 'ai-visibility-intelligence', title: 'AI Visibility Intelligence', description: 'Track AI-assistant brand citations against competitors and close gaps with content and authority changes.', version: '0.1.0', category: 'Growth Analytics', order: 6, inputCount: 6, toolCount: 3, teamScope: 'small_team' },
+  { id: 'inbound-lead-to-meeting-review', title: 'Inbound Lead-to-Meeting Review', description: 'Qualify an inbound enquiry, optionally research its account, and prepare an owner-reviewed follow-up that can be tracked through a booked meeting.', version: '0.1.0', category: 'Sales', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
+    { id: 'qualification', agent_playbook_id: 'lead-intake-qualifier', required: true, output: 'lead-qualification-brief/v1' },
+    { id: 'research', agent_playbook_id: 'account-researcher', required: false, output: 'account-research-brief/v1' },
+    { id: 'followup', agent_playbook_id: 'sales-followup-coordinator', required: true, output: 'sales-followup-draft/v1' },
+  ], handoffs: [
+    { id: 'qualification-to-followup', from: 'qualification', to: 'followup', artifact_type: 'lead-qualification-brief/v1', required: true },
+    { id: 'qualification-to-research', from: 'qualification', to: 'research', artifact_type: 'lead-qualification-brief/v1', required: false },
+    { id: 'research-to-followup', from: 'research', to: 'followup', artifact_type: 'account-research-brief/v1', required: false },
+  ], setupChecks: ['goal_owner', 'source_scope', 'policy_metric', 'team_bindings', 'access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'finance-operations-review', title: 'Finance Operations Review', description: 'Coordinate billing exceptions and a sourced finance impact review, with optional accounting close and payables specialists.', version: '0.1.0', category: 'Finance', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'billing-exception-queue/v1' },
     { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'finance-impact-readout/v1' },

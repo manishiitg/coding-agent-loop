@@ -17,8 +17,9 @@ import websiteGrowthSkill from './templates/website-growth-starter/SKILL.md?raw'
 import websiteGrowthSetup from './templates/website-growth-starter/SETUP.md?raw'
 import websiteGrowthSetupState from './templates/website-growth-starter/TEMPLATE_SETUP.json?raw'
 import { websiteGrowthSpecialists, type WebsiteGrowthSpecialistId } from './websiteGrowthSpecialists'
+import { salesSpecialists, type SalesSpecialistId } from './salesSpecialists'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId | SalesSpecialistId
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -204,7 +205,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'templates/website-growth-starter/SETUP.md': websiteGrowthSetup,
     'templates/website-growth-starter/TEMPLATE_SETUP.json': websiteGrowthSetupState,
   },
-}, ...websiteGrowthSpecialists]
+}, ...websiteGrowthSpecialists, ...salesSpecialists]
 
 export function parseCrewTemplateSetupState(content: string, template: CrewTemplate): CrewTemplateSetupState | null {
   try {

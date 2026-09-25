@@ -97,6 +97,29 @@ describe('CreateWorkProjectDialog', () => {
     await act(async () => { root.unmount() })
   })
 
+  it('finds the Sales lead intake template and keeps message delivery pending', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onCreate = vi.fn()
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
+    })
+    const search = container.querySelector('[aria-label="Search Crew templates"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Lead Intake Qualifier')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(container.textContent).toContain('1 result')
+    await act(async () => {
+      (container!.querySelector('[data-testid="work-template-lead-intake-qualifier"]') as HTMLInputElement).click()
+    })
+    expect(container.textContent).toContain('Connections, schedules, triggers, functions, and Automations are not activated.')
+    await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
+    expect(onCreate).toHaveBeenCalledWith('Lead Intake & Qualifier', expect.stringContaining('Turn an authorized inbound enquiry'), '📥', 'lead-intake-qualifier')
+    await act(async () => { root.unmount() })
+  })
+
   it('finds a finance specialist by a tool the customer already uses', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)

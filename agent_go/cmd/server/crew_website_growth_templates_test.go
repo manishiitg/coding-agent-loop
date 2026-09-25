@@ -58,3 +58,22 @@ func TestFinanceCrewCatalogHasInstallableRoles(t *testing.T) {
 		}
 	}
 }
+
+func TestSalesCrewCatalogHasInstallableRoles(t *testing.T) {
+	for _, id := range []string{"lead-intake-qualifier", "account-researcher", "sales-followup-coordinator"} {
+		item, err := loadCrewAgentTemplate(id)
+		if err != nil {
+			t.Fatalf("load %s: %v", id, err)
+		}
+		var setup struct {
+			TemplateID string            `json:"template_id"`
+			Checks     []json.RawMessage `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(item.Files["templates/"+id+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+			t.Fatalf("decode %s setup: %v", id, err)
+		}
+		if item.ID != id || item.Version != 1 || len(item.Files) != 3 || setup.TemplateID != id || len(setup.Checks) != 9 {
+			t.Fatalf("incomplete %s template: %+v, %+v", id, item, setup)
+		}
+	}
+}

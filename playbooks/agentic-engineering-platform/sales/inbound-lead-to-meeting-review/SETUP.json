@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "playbook_id": "inbound-lead-to-meeting-review",
+  "playbook_version": "0.1.0",
+  "checks": [
+    { "id": "goal_owner", "title": "Confirm sales goal and owner", "instructions": "Record the named lead owner, offer, target buyer and market, intended useful meeting, excluded actions, and first review outcome." },
+    { "id": "source_scope", "title": "Verify the inbound source", "instructions": "Identify an authorized form, inbox, CRM, or export; account, live/test scope, fields, time coverage, freshness, duplicate IDs, and prior-contact visibility. A file is enough for a manual first result." },
+    { "id": "policy_metric", "title": "Agree on fit, contact policy, and metric", "instructions": "Record qualification and routing criteria, suppression/opt-out checks, allowed channels, approval owner, useful-meeting definition and source, and actual baseline or baseline-first decision. Do not invent consent or a conversion rate." },
+    { "id": "team_bindings", "title": "Bind two ready Crews", "instructions": "Record distinct authorized Crew IDs with lead-intake-qualifier and sales-followup-coordinator selected skills and verified setup. Add account-researcher only if needed, with its own access and setup evidence." },
+    { "id": "access", "title": "Test source and policy access", "instructions": "Read one representative authorized inbound record in Qualification and the approved offer/contact history needed by Follow-up. Record what cannot be checked without CRM or inbox access; never copy credentials across Crews." },
+    { "id": "handoff_contract", "title": "Validate every selected handoff", "instructions": "Run the bundled deterministic validator on real lead-qualification-brief/v1 with --require-ready before any consumer, then sales-followup-draft/v1; if Research is included, validate account-research-brief/v1 and its link to the lead. Save run IDs, paths and results, and prove invalid and blocked lead fixtures stop the consumer." },
+    { "id": "plan_review", "title": "Review the Automation plan", "instructions": "Show actual Crew IDs, bounded fields and source access, validator steps, cost/budget, draft approval point, contact and CRM write boundaries, and manual activation state to the owner." },
+    { "id": "test_run", "title": "Run the first route manually", "instructions": "Record one bounded run on a real authorized inbound lead, with Crew run IDs, artifact paths, validator results, reviewable draft or internal disposition, and explicit blockers. A fictional fixture alone does not complete this check." },
+    { "id": "action_ledger", "title": "Track reviewed next action", "instructions": "Record stable lead/action IDs, owner, draft versus approved/sent state, source links, suppression check, current reply or meeting state, and next-check date. Re-read state before any later contact; prevent duplicate sends." },
+    { "id": "activation_choice", "title": "Choose run policy", "instructions": "Record manual-only or a reviewed paused authenticated event/schedule with timezone, concurrency, retries, budget, notifications, and duplicate handling. Completion does not enable recurrence or sending." }
+  ],
+  "completed_steps": [],
+  "evidence": {}
+}

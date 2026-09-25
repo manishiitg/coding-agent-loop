@@ -173,9 +173,10 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
   const selectedDocumentPath = useSelectedReportDocument(workspacePath, documentPath)
 
   const refresh = useCallback(() => setRefreshNonce(value => value + 1), [])
-  // Re-run the dashboard when a run in this workflow finishes or its report
-  // files change. No polling: without the live feed, manual refresh remains.
-  useLiveRefetch(refresh, { kinds: ['report'], workflow: workspacePath, fallbackMs: 0, safetyMs: 0, minIntervalMs: 10_000 })
+  // Re-run the dashboard when its HTML or its workflow DB is written through
+  // the tools, or a run in this workflow finishes (at most every 2s during a
+  // burst). No polling: without the live feed, manual refresh remains.
+  useLiveRefetch(refresh, { kinds: ['report'], workflow: workspacePath, fallbackMs: 0, safetyMs: 0, minIntervalMs: 2_000 })
   useEffect(() => {
     const sync = () => setPreviewPreference(readReportPreviewPreference(workspacePath))
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, sync)

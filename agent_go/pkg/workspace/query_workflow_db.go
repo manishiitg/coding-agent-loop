@@ -122,5 +122,6 @@ func (c *Client) MutateAuthorizedWorkflowDB(ctx context.Context, params MutateWo
 		}
 		return MutateWorkflowDBResult{}, fmt.Errorf("mutation failed: %s", apiResp.Message)
 	}
+	noteWorkflowDBWrite(params.DBPath)
 	return apiResp.Data, nil
 }

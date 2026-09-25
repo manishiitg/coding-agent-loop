@@ -52,5 +52,6 @@ func (c *Client) InitializeWorkflowDB(ctx context.Context, params InitializeWork
 			return InitializeWorkflowDBResult{}, fmt.Errorf("decode database initialization result: %w", err)
 		}
 	}
+	noteWorkflowDBWrite(params.DBPath)
 	return result, nil
 }

@@ -135,6 +135,14 @@ scheduled run or a step never shows up by itself.
   `HtmlReportFrame` cannot re-run in place, the dashboard is swapped only
   after the new HTML has loaded, so it never flashes blank.
 
+**Dashboard edits and DB writes go through tools only.** Report HTML
+(`db/reports/`) and workflow-DB data are never edited by hand. So
+`pkg/workspace` publishes `report` on every successful tool write
+(`live_feed_hooks.go`). That covers update, diff/patch, move, delete and
+upload under `db/reports/`, and the workflow-DB mutate and migration tools.
+Open Report views refresh within about 1s, at most once every 2s during a
+burst. No file watching is needed.
+
 ### Server
 
 **Package `agent_go/internal/livefeed`.** It is importable from both

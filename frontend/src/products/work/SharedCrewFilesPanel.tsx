@@ -3,7 +3,6 @@ import { FileText, Folder, Loader2 } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { sharedCrewFileClient, sharedCrewRelativePath } from './sharedCrewFiles'
 import { WorkspacePanelGuideButton } from '../../components/workflow/WorkspacePanelGuideButton'
-import { getWorkspacePanelGuide } from '../../components/workflow/workspacePanelGuides'
 
 /**
  * Read-only file browser for someone else's Crew (Crew Run mode). The
@@ -99,7 +98,7 @@ export function SharedCrewFilesPanel({ projectId, crewRoot, request, headerActio
           )}
         </div>
         {headerAction}
-        <WorkspacePanelGuideButton guide={getWorkspacePanelGuide('Files')} />
+        <WorkspacePanelGuideButton topic="Files" />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {loading ? (

@@ -1,9 +1,12 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { CircleHelp, X } from 'lucide-react'
-import type { WorkspacePanelGuide } from './workspacePanelGuides'
+import { getWorkspacePanelGuide } from './workspacePanelGuides'
+import { WorkspacePanelGuideContext } from './WorkspacePanelGuideContext'
 
 /** A small, on-demand explanation attached to a workspace panel header. */
-export function WorkspacePanelGuideButton({ guide }: { guide: WorkspacePanelGuide }) {
+export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
+  const surface = useContext(WorkspacePanelGuideContext)
+  const guide = getWorkspacePanelGuide(topic, surface)
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -54,6 +57,7 @@ export function WorkspacePanelGuideButton({ guide }: { guide: WorkspacePanelGuid
           aria-label={`${guide.title} walkthrough`}
           className="absolute right-0 top-full z-50 mt-2 max-h-[min(28rem,calc(100vh-5rem))] w-[min(20rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl"
         >
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{guide.surface === 'crew' ? 'Crew' : 'AgentWorks'} · {guide.group}</p>
           <div className="flex items-start justify-between gap-3">
             <h3 className="text-sm font-semibold">About {guide.title}</h3>
             <button type="button" onClick={close} aria-label="Close panel walkthrough" className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>

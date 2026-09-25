@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { AskAIButton } from '../../components/workflow/AskAIButton'
 import { WorkspaceViewActions } from '../../components/workflow/WorkspaceViewActions'
+import { WorkspacePanelGuideContext } from '../../components/workflow/WorkspacePanelGuideContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip'
 import { WorkspaceToolbarGroup } from '../../components/workspace/WorkspaceToolbarGroup'
 import { ReportDocumentSwitcher } from '../../components/workflow/ReportDocumentSwitcher'
@@ -273,6 +274,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
   }
 
   return (
+    <WorkspacePanelGuideContext.Provider value="crew">
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
         {view === 'files' && (readOnly ? <SharedCrewFilesPanel
@@ -389,5 +391,6 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
         </Suspense>
       </div>
     </div>
+    </WorkspacePanelGuideContext.Provider>
   )
 }

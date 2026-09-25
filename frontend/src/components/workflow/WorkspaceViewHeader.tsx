@@ -1,7 +1,6 @@
 import { Children, Fragment, cloneElement, isValidElement, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { WorkspaceViewTabs, type WorkspaceViewTabOption } from './WorkspaceViewTabs'
 import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
-import { getWorkspacePanelGuide } from './workspacePanelGuides'
 import { WorkspaceViewActions } from './WorkspaceViewActions'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
@@ -104,8 +103,7 @@ export function WorkspaceViewHeader({
 }: WorkspaceViewHeaderProps) {
   const tabExtra = tabs ? tabActions?.[tabs.value] : undefined
   const guideTopic = helpTopic ?? (typeof title === 'string' ? title : '')
-  const guide = guideTopic ? getWorkspacePanelGuide(guideTopic) : null
-  const walkthrough = guide ? <WorkspacePanelGuideButton key="walkthrough" guide={guide} /> : null
+  const walkthrough = guideTopic ? <WorkspacePanelGuideButton key="walkthrough" topic={guideTopic} /> : null
   const renderIcon = () => {
     if (!icon) return null
     if (isValidElement(icon)) return icon

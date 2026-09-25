@@ -44,7 +44,6 @@ import { useWorkspaceViewData, type WorkflowImageExportFormat } from './workspac
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { WorkspacePanelGuideButton } from '../WorkspacePanelGuideButton'
-import { getWorkspacePanelGuide } from '../workspacePanelGuides'
 import { useChatStore } from '../../../stores/useChatStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
@@ -2532,7 +2531,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 Build Plan
               </button>
             )}
-            <WorkspacePanelGuideButton guide={getWorkspacePanelGuide('Plan')} />
+            <WorkspacePanelGuideButton topic="Plan" />
             <button
               type="button"
               onClick={() => void (async () => {
@@ -2578,7 +2577,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               aria-label="Fit plan to view" title="Fit plan to view">
               <Maximize className="h-3.5 w-3.5" />
             </button>
-            <WorkspacePanelGuideButton guide={getWorkspacePanelGuide('Plan')} />
+            <WorkspacePanelGuideButton topic="Plan" />
             <button
               type="button"
               onPointerDown={event => event.stopPropagation()}

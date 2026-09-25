@@ -82,7 +82,7 @@ func (api *StreamingAPI) watchLiveInputDurableRecording(sessionID, provider, mes
 		// Whatever the verdict, the message was sent: record it now, at the
 		// point the CLI took it (or gave up), then its receipt.
 		if deferred != nil {
-			api.eventStore.CompleteDeferredSteer(sessionID, deferredUserMessageAt(*deferred, time.Now()))
+			api.eventStore.CompleteDeferredSteer(sessionID, events.UserMessageAt(*deferred, time.Now()))
 		}
 		api.recordLiveInputConfirmed(sessionID, messageID, outcome, proof, provider, latencyMs, clientMessageID)
 	}()
@@ -150,21 +150,4 @@ func (api *StreamingAPI) recordLiveInputConfirmed(sessionID, messageID, outcome,
 		SessionID: sessionID,
 	}
 	api.eventStore.AddEvent(sessionID, event)
-}
-
-// deferredUserMessageAt dates a deferred steer at the moment the CLI took it,
-// so any time-ordered view agrees with its journal position.
-func deferredUserMessageAt(event events.Event, at time.Time) events.Event {
-	event.Timestamp = at
-	if event.Data != nil {
-		agentEvent := *event.Data
-		agentEvent.Timestamp = at
-		if message, ok := agentEvent.Data.(*unifiedevents.UserMessageEvent); ok && message != nil {
-			copied := *message
-			copied.Timestamp = at
-			agentEvent.Data = &copied
-		}
-		event.Data = &agentEvent
-	}
-	return event
 }

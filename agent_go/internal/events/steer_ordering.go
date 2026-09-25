@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	pkgevents "github.com/manishiitg/mcpagent/events"
 )
 
 // A steered message is journalled when the CLI confirms it took the message,
@@ -118,6 +120,7 @@ func (es *EventStore) CompleteDeferredSteer(sessionID string, user Event) {
 		}
 	}
 	remaining := len(hold.pending)
+	user = datedBeforeHeldAnswer(user, hold.held)
 	state.mu.Unlock()
 	_ = es.addEventUnheld(sessionID, user)
 	if remaining == 0 {
@@ -140,9 +143,7 @@ func (es *EventStore) timeoutSteerHold(sessionID string) {
 		if !pending.written {
 			pending.written = true
 			state.timedOut[steerKey(sessionID, pending.event.ID)] = true
-			event := pending.event
-			event.Timestamp = time.Now()
-			users = append(users, event)
+			users = append(users, datedBeforeHeldAnswer(UserMessageAt(pending.event, time.Now()), hold.held))
 		}
 	}
 	hold.pending = nil
@@ -151,6 +152,44 @@ func (es *EventStore) timeoutSteerHold(sessionID string) {
 		_ = es.addEventUnheld(sessionID, user)
 	}
 	es.releaseSteerHold(sessionID, hold)
+}
+
+// UserMessageAt dates a user row (envelope, agent event and message payload)
+// at the given moment.
+func UserMessageAt(event Event, at time.Time) Event {
+	event.Timestamp = at
+	if event.Data != nil {
+		agentEvent := *event.Data
+		agentEvent.Timestamp = at
+		if message, ok := agentEvent.Data.(*pkgevents.UserMessageEvent); ok && message != nil {
+			copied := *message
+			copied.Timestamp = at
+			agentEvent.Data = &copied
+		}
+		event.Data = &agentEvent
+	}
+	return event
+}
+
+// datedBeforeHeldAnswer keeps the user row's time no later than the first
+// held answer row. The row is dated at the ack, but a held answer row keeps
+// the time it was produced, which can precede the ack (Cursor writes its chat
+// store only once output begins). The chat orders the main conversation by
+// timestamp, so an ack-dated question sorted below its own reply: the reply was
+// processed but rendered above the question, never as the newest row. Equal
+// times fall back to journal sequence, where the user row comes first.
+// Callers hold state.mu.
+func datedBeforeHeldAnswer(user Event, held []Event) Event {
+	var earliest time.Time
+	for _, event := range held {
+		if !event.Timestamp.IsZero() && (earliest.IsZero() || event.Timestamp.Before(earliest)) {
+			earliest = event.Timestamp
+		}
+	}
+	if earliest.IsZero() || !user.Timestamp.After(earliest) {
+		return user
+	}
+	return UserMessageAt(user, earliest)
 }
 
 func (es *EventStore) releaseSteerHold(sessionID string, hold *deferredSteerHold) {

@@ -7,17 +7,19 @@ import (
 )
 
 // DedicatedSlackRouteFunc resolves the destination a scoped Slack app
-// serves. A connection scoped to a workflow or crew project is that
-// destination's own bot: it answers for it in any channel it is invited to,
-// and channel routes never apply to it. Unscoped (platform) connections are
-// shared bots and keep channel routing.
+// serves in a channel. A connection scoped to a workflow or crew project is
+// that destination's own bot: it answers for it in any channel it is
+// invited to, except channels its owner routed on the connection itself
+// (SlackConnection.ChannelRoutes) to another destination they can write.
+// The platform's shared-bot channel routes never apply to it. Unscoped
+// (platform) connections are shared bots and keep channel routing.
 //
 // dedicated reports whether connectionID names a scoped connection. A
 // dedicated connection whose destination no longer resolves returns a
 // revoked route, never nil: falling through to the channel route would
 // answer as another workflow's bot. connectionID "" is the root listener
 // (the default connection).
-type DedicatedSlackRouteFunc func(ctx context.Context, connectionID string) (route *ChannelRoute, dedicated bool)
+type DedicatedSlackRouteFunc func(ctx context.Context, connectionID, channelID string) (route *ChannelRoute, dedicated bool)
 
 var dedicatedSlackRoute atomic.Pointer[DedicatedSlackRouteFunc]
 
@@ -31,14 +33,15 @@ func SetDedicatedSlackRouteFunc(fn DedicatedSlackRouteFunc) {
 	dedicatedSlackRoute.Store(&fn)
 }
 
-// DedicatedSlackRoute returns the scoped app's own route, or dedicated=false
+// DedicatedSlackRoute returns the scoped app's route for a channel (a
+// connection channel route, else its own destination), or dedicated=false
 // for shared apps (and when no resolver is installed).
-func DedicatedSlackRoute(ctx context.Context, connectionID string) (*ChannelRoute, bool) {
+func DedicatedSlackRoute(ctx context.Context, connectionID, channelID string) (*ChannelRoute, bool) {
 	fn := dedicatedSlackRoute.Load()
 	if fn == nil {
 		return nil, false
 	}
-	route, dedicated := (*fn)(ctx, strings.TrimSpace(connectionID))
+	route, dedicated := (*fn)(ctx, strings.TrimSpace(connectionID), NormalizeSlackChannelID(channelID))
 	if !dedicated {
 		return nil, false
 	}
@@ -68,9 +71,10 @@ func RouteWorkspaceUserID(route ChannelRoute, fallback string) string {
 }
 
 // ResolveSlackRoute is the single inbound routing rule: a dedicated app
-// serves its own destination; a shared app follows the channel route.
-func ResolveSlackRoute(ctx context.Context, connectionID string, channelRoute func() *ChannelRoute) *ChannelRoute {
-	if route, dedicated := DedicatedSlackRoute(ctx, connectionID); dedicated {
+// serves the destination its owner routed the channel to, else its own; a
+// shared app follows the platform channel route.
+func ResolveSlackRoute(ctx context.Context, connectionID, channelID string, channelRoute func() *ChannelRoute) *ChannelRoute {
+	if route, dedicated := DedicatedSlackRoute(ctx, connectionID, channelID); dedicated {
 		return route
 	}
 	if channelRoute == nil {

@@ -35,6 +35,38 @@ type SlackConnection struct {
 	// ProfileID names the agent profile for product-scoped connections
 	// (crew projects). Empty for workflow and platform scopes.
 	ProfileID string `json:"profile_id,omitempty"`
+	// ChannelRoutes lets the owner of a scoped connection share it with
+	// other workflows or crew projects they can write: a channel listed here
+	// is answered by that route's destination instead of the connection's
+	// own. Keyed by Slack channel ID; one destination per channel. Ignored
+	// on platform (unscoped) connections, which route through the shared
+	// bot's channel routes instead.
+	ChannelRoutes map[string]SlackConnectionRoute `json:"channel_routes,omitempty"`
+}
+
+// SlackConnectionRoute is one channel route on a scoped connection. It names
+// a destination only; the server resolves the workflow ID or crew
+// conversation from it on every message, the same way it resolves the
+// connection's own destination.
+type SlackConnectionRoute struct {
+	// WorkspacePath is the destination workflow folder or crew project.
+	WorkspacePath string `json:"workspace_path"`
+	// ProfileID names the agent profile for crew destinations; empty for
+	// workflows.
+	ProfileID string `json:"profile_id,omitempty"`
+	// AddedBy records who created the route, for audit.
+	AddedBy string `json:"added_by,omitempty"`
+}
+
+// SameDestination reports whether the route points at the given scope.
+func (r SlackConnectionRoute) SameDestination(workspacePath, profileID string) bool {
+	return strings.TrimSpace(r.WorkspacePath) == strings.TrimSpace(workspacePath) &&
+		strings.TrimSpace(r.ProfileID) == strings.TrimSpace(profileID)
+}
+
+// NormalizeSlackChannelID canonicalizes a channel ID used as a route key.
+func NormalizeSlackChannelID(channelID string) string {
+	return strings.ToUpper(strings.TrimSpace(channelID))
 }
 
 // maskedSlackConnection returns a copy with credential values replaced by
@@ -42,6 +74,12 @@ type SlackConnection struct {
 // paths as "no change".
 func (c SlackConnection) masked() SlackConnection {
 	out := c
+	if len(c.ChannelRoutes) > 0 {
+		out.ChannelRoutes = make(map[string]SlackConnectionRoute, len(c.ChannelRoutes))
+		for channel, route := range c.ChannelRoutes {
+			out.ChannelRoutes[channel] = route
+		}
+	}
 	out.BotToken = maskSlackToken("xoxb-", c.BotToken)
 	out.AppToken = maskSlackToken("xapp-", c.AppToken)
 	return out
@@ -98,6 +136,7 @@ func normalizeSlackConnections(cfg *SlackConfig) {
 		if c.DisplayName == "" {
 			c.DisplayName = c.ID
 		}
+		c.ChannelRoutes = normalizeSlackConnectionRoutes(c)
 		seen[c.ID] = true
 		out = append(out, c)
 	}
@@ -109,6 +148,30 @@ func normalizeSlackConnections(cfg *SlackConfig) {
 	if cfg.DefaultConnectionID == "" && len(cfg.Connections) == 1 && cfg.Connections[0].WorkspacePath == "" {
 		cfg.DefaultConnectionID = cfg.Connections[0].ID
 	}
+}
+
+// normalizeSlackConnectionRoutes keeps only well-formed routes on a scoped
+// connection: canonical channel keys, a destination path, and never the
+// connection's own destination (it already answers there everywhere).
+func normalizeSlackConnectionRoutes(c SlackConnection) map[string]SlackConnectionRoute {
+	if c.WorkspacePath == "" || len(c.ChannelRoutes) == 0 {
+		return nil
+	}
+	out := make(map[string]SlackConnectionRoute, len(c.ChannelRoutes))
+	for channel, route := range c.ChannelRoutes {
+		channel = NormalizeSlackChannelID(channel)
+		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+		route.ProfileID = strings.TrimSpace(route.ProfileID)
+		route.AddedBy = strings.TrimSpace(route.AddedBy)
+		if channel == "" || route.WorkspacePath == "" || route.SameDestination(c.WorkspacePath, c.ProfileID) {
+			continue
+		}
+		out[channel] = route
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // migrateLegacySlackConfig moves pre-registry credentials (top-level

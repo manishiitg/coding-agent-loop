@@ -3187,7 +3187,7 @@ func (m *BotConversationManager) resolveRoute(platform, connectionID, channelID 
 	if !strings.EqualFold(strings.TrimSpace(platform), "slack") {
 		return m.resolveChannelWorkflow(platform, channelID)
 	}
-	return ResolveSlackRoute(context.Background(), connectionID, func() *ChannelRoute {
+	return ResolveSlackRoute(context.Background(), connectionID, channelID, func() *ChannelRoute {
 		return m.resolveChannelWorkflow(platform, channelID)
 	})
 }

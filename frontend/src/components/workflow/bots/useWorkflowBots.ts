@@ -4,7 +4,7 @@ import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestSto
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import type {
     BotRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
-    GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
+    GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, SlackUsableBot, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
@@ -15,6 +15,14 @@ type WaRoute = WhatsAppRoute
 
 const SLUG_RE = /^[a-z0-9-]+$/
 const SLACK_CHANNEL_RE = /^[CDG][A-Z0-9]{2,}$/
+
+// Server errors come back as plain-text bodies; prefer them over axios's
+// generic "Request failed with status code 409".
+const serverErrorMessage = (err: unknown, fallback: string): string => {
+  const data = (err as { response?: { data?: unknown } })?.response?.data
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  return err instanceof Error ? err.message : fallback
+}
 
 const normalizeGmailEmails = (values: string | string[] | undefined): string[] => {
   const source = Array.isArray(values) ? values : [values || '']
@@ -215,12 +223,27 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } catch { /* ignore */ }
   }, [])
 
+  // ── "One of my bots": workflow/crew bots this user manages ────────────────
+  const [myBots, setMyBots] = useState<SlackUsableBot[]>([])
+  const [newMyBotChannel, setNewMyBotChannel] = useState('')
+  const [myBotSaving, setMyBotSaving] = useState<string | null>(null)
+  const [myBotError, setMyBotError] = useState<string | null>(null)
+  const loadMyBots = useCallback(async () => {
+    try {
+      const data = await agentApi.listUsableSlackBots()
+      setMyBots(Array.isArray(data.bots) ? data.bots : [])
+    } catch {
+      // Listing is best effort: the option then explains how to add a bot.
+      setMyBots([])
+    }
+  }, [])
+
   const [projectSlackSelectionId, setProjectSlackSelectionId] = useState<string>('')
   const loadSlack = useCallback(async () => {
     try {
       setSlackLoading(true)
       setSlackError(null)
-      const data = await agentApi.getSlackFeedbackConfig()
+      const [data] = await Promise.all([agentApi.getSlackFeedbackConfig(), loadMyBots()])
       setSlackConfig(data)
       setSlackOriginal(data)
       if (hasTarget && workspacePath) {
@@ -236,7 +259,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } finally {
       setSlackLoading(false)
     }
-  }, [hasTarget, targetProfileId, workspacePath])
+  }, [hasTarget, targetProfileId, workspacePath, loadMyBots])
 
   const loadWaStatus = useCallback(async () => {
     try {
@@ -1183,6 +1206,73 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       : !waReady ? 'Not paired'
         : waStatus.connected || waLinkedDevices.some(device => device.connected) ? 'Connected' : 'Paired, offline'
 
+  // ── "One of my bots": share a bot this user manages with this target ─────
+  // A route names this workflow folder (or crew project); the server checks
+  // the user manages the bot and can write this target.
+  const myBotDestination = useMemo(() => {
+    const path = hasTarget ? (workspacePath || '') : (workflow?.workspace_path || workspacePath || '')
+    return { workspace_path: path, ...(hasTarget && targetProfileId ? { profile_id: targetProfileId } : {}) }
+  }, [hasTarget, targetProfileId, workflow?.workspace_path, workspacePath])
+  const routesHere = useCallback((bot: SlackUsableBot) => (bot.channel_routes || []).filter(route =>
+    route.workspace_path === myBotDestination.workspace_path && (route.profile_id || '') === (myBotDestination.profile_id || '')), [myBotDestination])
+  // Bots other than this target's own, with the channels routed here.
+  const myOtherBots = useMemo(
+    () => myBots.filter(bot => !(bot.workspace_path === myBotDestination.workspace_path && (bot.profile_id || '') === (myBotDestination.profile_id || ''))),
+    [myBots, myBotDestination],
+  )
+
+  const replaceMyBot = (updated: SlackUsableBot) => {
+    setMyBots(prev => prev.map(bot => bot.id === updated.id ? { ...bot, ...updated, channel_routes: updated.channel_routes || [] } : bot))
+  }
+
+  const addMyBotChannel = async (botId: string) => {
+    const bot = myBots.find(entry => entry.id === botId)
+    if (!bot || !myBotDestination.workspace_path) return
+    const channels = Array.from(new Set(
+      newMyBotChannel.split(/[\s,;]+/).map(value => value.trim().toUpperCase()).filter(Boolean),
+    ))
+    if (channels.length === 0) return
+    const invalid = channels.find(channel => !SLACK_CHANNEL_RE.test(channel))
+    if (invalid) {
+      setMyBotError(`Slack channel ID "${invalid}" is invalid. Use IDs like C1234567890 or G1234567890.`)
+      return
+    }
+    const taken = channels.map(channel => (bot.channel_routes || []).find(route => route.channel_id === channel)).find(Boolean)
+    if (taken) {
+      const here = taken.workspace_path === myBotDestination.workspace_path && (taken.profile_id || '') === (myBotDestination.profile_id || '')
+      setMyBotError(here
+        ? `${taken.channel_id} already answers here on ${bot.display_name}.`
+        : `${taken.channel_id} on ${bot.display_name} already answers for ${taken.label || taken.workspace_path}. Remove it there first.`)
+      return
+    }
+    setMyBotError(null)
+    setMyBotSaving(`add:${botId}`)
+    try {
+      for (const channel of channels) {
+        replaceMyBot(await agentApi.addSlackBotChannelRoute(botId, channel, myBotDestination))
+      }
+      setNewMyBotChannel('')
+    } catch (err) {
+      setMyBotError(serverErrorMessage(err, 'Failed to add the channel'))
+      void loadMyBots()
+    } finally {
+      setMyBotSaving(null)
+    }
+  }
+
+  const removeMyBotChannel = async (botId: string, channelId: string) => {
+    setMyBotError(null)
+    setMyBotSaving(`remove:${botId}:${channelId}`)
+    try {
+      replaceMyBot(await agentApi.removeSlackBotChannelRoute(botId, channelId))
+    } catch (err) {
+      setMyBotError(serverErrorMessage(err, 'Failed to remove the channel'))
+      void loadMyBots()
+    } finally {
+      setMyBotSaving(null)
+    }
+  }
+
   const slackHasChanges = JSON.stringify(slackConfig) !== JSON.stringify(slackOriginal)
 
   return {
@@ -1204,6 +1294,9 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     slackConnConfirmDelete, slackConnShowBot, setSlackConnShowBot, slackConnShowApp, setSlackConnShowApp,
     slackConnHasChanges, saveWorkflowSlackConnection, selectWorkflowSlackConnection,
     testWorkflowSlackConnection, removeWorkflowSlackConnection,
+    // slack: "One of my bots"
+    myOtherBots, myBotRoutesHere: routesHere, newMyBotChannel, setNewMyBotChannel,
+    myBotSaving, myBotError, setMyBotError, addMyBotChannel, removeMyBotChannel,
     // whatsapp
     waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
     waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,

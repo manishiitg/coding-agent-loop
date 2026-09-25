@@ -1066,6 +1066,32 @@ export interface SlackConnection {
   profile_id?: string  // Agent profile for product scopes; empty = workflow/platform
 }
 
+// One channel route on a workflow's or crew's own bot: that channel answers
+// for another workflow or crew the bot's owner can write.
+export interface SlackBotChannelRoute {
+  channel_id: string
+  workspace_path: string
+  profile_id?: string
+  label?: string
+}
+
+// A workflow's or crew's own bot the caller manages ("One of my bots").
+// Never carries tokens.
+export interface SlackUsableBot {
+  id: string
+  display_name: string
+  enabled: boolean
+  configured: boolean
+  workspace_path: string
+  profile_id?: string
+  owner_label?: string
+  channel_routes: SlackBotChannelRoute[]
+}
+
+export interface SlackUsableBotsResponse {
+  bots: SlackUsableBot[]
+}
+
 export interface SlackConnectionsResponse {
   connections: SlackConnection[]
   default_connection_id?: string

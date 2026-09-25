@@ -76,6 +76,8 @@ import type {
   SlackConnection,
   SlackConnectionRequest,
   SlackConnectionsResponse,
+  SlackUsableBot,
+  SlackUsableBotsResponse,
   ProjectSlackSelectionResponse,
   SlackTestResponse,
   SlackTestReplyResponse,
@@ -1518,6 +1520,23 @@ export const agentApi = {
 
   testSlackConnectionEntry: async (id: string): Promise<SlackTestResponse> => {
     const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/test`)
+    return apiResponse.data
+  },
+
+  // "One of my bots": workflow/crew bots the caller manages, and the channel
+  // routes that share one with another workflow or crew they can write.
+  listUsableSlackBots: async (): Promise<SlackUsableBotsResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/connections/mine', { timeout: 10000 })
+    return apiResponse.data
+  },
+
+  addSlackBotChannelRoute: async (id: string, channelId: string, destination: { workspace_path: string; profile_id?: string }): Promise<SlackUsableBot> => {
+    const apiResponse = await api.put(`/api/human-feedback/slack/connections/${id}/channel-routes/${encodeURIComponent(channelId)}`, destination)
+    return apiResponse.data
+  },
+
+  removeSlackBotChannelRoute: async (id: string, channelId: string): Promise<SlackUsableBot> => {
+    const apiResponse = await api.delete(`/api/human-feedback/slack/connections/${id}/channel-routes/${encodeURIComponent(channelId)}`)
     return apiResponse.data
   },
 

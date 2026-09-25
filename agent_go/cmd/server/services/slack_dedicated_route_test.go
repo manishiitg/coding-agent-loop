@@ -11,7 +11,7 @@ import (
 
 func installDedicatedSlackRoutes(t *testing.T, routes map[string]*ChannelRoute) {
 	t.Helper()
-	SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID string) (*ChannelRoute, bool) {
+	SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID, _ string) (*ChannelRoute, bool) {
 		route, dedicated := routes[connectionID]
 		return route, dedicated
 	})
@@ -27,16 +27,16 @@ func TestResolveSlackRouteDedicatedAppIgnoresChannelRoute(t *testing.T) {
 	channelRoute := &ChannelRoute{WorkflowID: "wf-testing", WorkspacePath: "Workflow/testing", BotGrant: "run"}
 	channel := func() *ChannelRoute { return channelRoute }
 
-	if got := ResolveSlackRoute(context.Background(), "app-v3", channel); got != own {
+	if got := ResolveSlackRoute(context.Background(), "app-v3", "C1", channel); got != own {
 		t.Fatalf("dedicated app routed to %+v, want its own workflow", got)
 	}
-	if got := ResolveSlackRoute(context.Background(), "shared", channel); got != channelRoute {
+	if got := ResolveSlackRoute(context.Background(), "shared", "C1", channel); got != channelRoute {
 		t.Fatalf("shared app routed to %+v, want the channel route", got)
 	}
-	if got := ResolveSlackRoute(context.Background(), "", channel); got != channelRoute {
+	if got := ResolveSlackRoute(context.Background(), "", "C1", channel); got != channelRoute {
 		t.Fatalf("default listener routed to %+v, want the channel route", got)
 	}
-	got := ResolveSlackRoute(context.Background(), "app-gone", channel)
+	got := ResolveSlackRoute(context.Background(), "app-gone", "C1", channel)
 	if got == nil || !IsRevokedSlackRoute(*got) {
 		t.Fatalf("unresolvable dedicated app routed to %+v, want the revoked sentinel", got)
 	}

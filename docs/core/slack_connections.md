@@ -1,25 +1,36 @@
 # Slack Connections (Per-Workflow and Per-Project Slack Apps)
 
 Each workflow either has its own Slack bot (a Slack app with its own bot
-token + app token pair) or uses the shared bot (the platform default app).
-Crew projects work the same way. This document describes who answers,
+token + app token pair), uses one of its owner's other bots, or uses the
+shared bot (the platform default app). Crew projects work the same way. This document describes who answers,
 the registry, the multi-listener runtime, and the ownership rules.
 
-## Who answers: own bot vs shared bot
+## Who answers: three options
 
-| | Own bot (one bot, one workflow) | Shared bot (one bot, many workflows) |
-|---|---|---|
-| Which app | A connection scoped to a workflow or crew project (`workspace_path` set) | The default connection, or any unscoped one |
-| Which workflow runs | Always its own, in any channel it is invited to | The channel route (channel ID → workflow/project) |
-| Channel routes | Ignored for this app; none needed | Required per channel |
-| Managed by | The workflow/project owner (its Slack tab) | Admin (Access → Slack) for the app; owners add channels |
+The Slack tab asks "Who answers for this workflow in Slack?":
 
-- Inbound rule (`services.ResolveSlackRoute`): a message's arrival app
-  decides. A dedicated app serves its own destination
-  (`StreamingAPI.dedicatedSlackRoute`, Run mode); a shared app follows the
-  channel route. A dedicated app whose workflow/project no longer resolves
-  gets the revoked sentinel and refuses loudly; it never falls back to the
-  channel's workflow.
+| | Its own bot | One of my bots | Shared bot |
+|---|---|---|---|
+| Which app | A connection scoped to this workflow or crew project (`workspace_path` set) | A connection scoped to another workflow or crew the user manages | The default connection, or any unscoped one |
+| Which workflow runs | Its own, in any channel it is invited to | This one in the channels picked here; the bot's own workflow everywhere else | The channel route (channel ID → workflow/project) |
+| Channel routes | None needed | Stored on that bot (`channel_routes`) | Stored in the shared bot config (`allowed_channels`) |
+| Managed by | The workflow/project owner | The bot's manager, who must also be able to write this workflow | Admin (Access → Slack) for the app; owners add channels |
+| Admin needed | No | No | Yes, to set the bot up |
+
+"One of my bots" exists because one Slack app can only be connected once
+(`slackTokensInUse`): to answer for workflow B with the app workflow A
+already owns, the owner adds channel routes to A's bot instead of
+connecting the app twice.
+
+- Inbound rule (`services.ResolveSlackRoute(ctx, connection, channel, …)`):
+  a message's arrival app decides. A dedicated (scoped) app answers for the
+  destination its own `channel_routes` names for the channel, else for its
+  own destination (`StreamingAPI.dedicatedSlackRoute`, Run mode). A shared
+  app follows the platform channel route. A dedicated app whose
+  destination (own or routed) no longer resolves gets the revoked sentinel
+  and refuses loudly; it never falls back to another workflow.
+- One channel maps to one destination per app. Another app in the same
+  channel keeps its own rule.
 - Crew bots: the owner comes from the project's `_users/<id>/` path and the
   conversation key from its `product.json`, re-checked through
   `resolveProductConversationBinding` like a saved route.
@@ -46,7 +57,9 @@ the registry, the multi-listener runtime, and the ownership rules.
 ```text
 slack-config.json
   connections[]: [{ id, display_name, bot_token, app_token,
-                    enabled, workspace_path, profile_id }]
+                    enabled, workspace_path, profile_id,
+                    channel_routes: { "C123": { workspace_path,
+                                                profile_id, added_by } } }]
   default_connection_id: "slack_001"
 
 workflow.json capabilities (workflows)
@@ -63,6 +76,11 @@ project runtime manifest capabilities (crew projects)
   Empty means platform-managed. A lone scoped connection never
   auto-becomes the default; inheriting platform traffic is an explicit
   admin decision.
+- `channel_routes` only applies to scoped connections. Normalization drops
+  routes on unscoped connections, routes with no destination, and routes
+  to the connection's own destination. Changing a connection's scope
+  (admin only) clears its routes: they were granted by the old scope's
+  owner.
 - Pre-registry single-credential configs migrate on load into an unscoped
   `slack_001` "Default" connection. Legacy save shapes fold onto the
   default connection.
@@ -109,6 +127,9 @@ BotConversationManager (connection rides ThreadID / BotIncomingMessage)
 | Select an app on a workflow (`slack_connection_id`) | Anyone who can edit the manifest; unknown IDs fail validation. Saving a workflow's own bot selects it automatically. |
 | Select an app on a project (`slack_connection_id`) | Product owner (reads need product access); unknown IDs fail validation |
 | Delete a connection | Blocked while it is the default or still selected by any workflow or project |
+| Add a channel route on a scoped connection ("One of my bots") | Someone who manages the connection (owner of its workflow/crew, or admin) **and** can write the destination (workflow Owner/Editor, or owner of the crew project) |
+| Remove a channel route | The same two checks; if the destination no longer exists, managing the connection is enough |
+| List "bots I can use" (`GET …/slack/connections/mine`) | Returns only scoped connections the caller manages, with their routes and no tokens |
 
 Bot-route principals can never manage connections. WhatsApp turns are not
 bot-route principals: they run as the paired owner (`bot_owner` — the bot is
@@ -143,10 +164,11 @@ these gates as the owner would. All API responses carry masked tokens only.
 | Runtime mux, children, routing | `agent_go/cmd/server/services/slack_service.go` |
 | Connection threading, scoped helpers | `agent_go/cmd/server/services/bot_connector.go` |
 | Connections API + permission gates | `agent_go/cmd/server/slack_connection_routes.go` |
+| "One of my bots" API (`/mine`, `/{id}/channel-routes/{channel}`) | `agent_go/cmd/server/slack_connection_channel_routes.go` |
 | Manifest selection + validation | `agent_go/cmd/server/workflow_manifest*.go` |
 | Project selection + product ownership | `agent_go/cmd/server/slack_connection_routes.go` (`productSlackConnectionID`, `requireProductSlackScopeOwner`) |
 | Own-bot routing rule | `agent_go/cmd/server/services/slack_dedicated_route.go`, `agent_go/cmd/server/slack_dedicated_route.go` |
 | Tool owner branches | `agent_go/cmd/server/slack_bot_tools.go` |
-| Slack tab (own bot vs shared bot) | `frontend/src/components/workflow/bots/SlackSetup.tsx`, `useWorkflowBots.ts` |
+| Slack tab (own bot, one of my bots, shared bot) | `frontend/src/components/workflow/bots/SlackSetup.tsx`, `useWorkflowBots.ts` |
 | Admin shared bot + bot list (Access → Slack) | `frontend/src/components/admin/SlackAdminPanel.tsx` |
 | Agent guidance | `agent_go/cmd/server/guidance/templates/system/slack-bot-routing.md` |

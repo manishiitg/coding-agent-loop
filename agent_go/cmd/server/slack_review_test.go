@@ -633,7 +633,7 @@ func TestSlackOwnAppTurnNeedsNoSharedConnectorConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := ChannelRoute{ProfileID: "work", ConversationKey: "acme", WorkspacePath: "Chats/Work/projects/acme", WorkspaceUserID: "alice", BotGrant: "run"}
-	services.SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID string) (*ChannelRoute, bool) {
+	services.SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID, _ string) (*ChannelRoute, bool) {
 		if connectionID != "own-app" {
 			return nil, false
 		}

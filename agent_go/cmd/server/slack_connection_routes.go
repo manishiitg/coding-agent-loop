@@ -76,6 +76,8 @@ func SlackConnectionRoutes(router *mux.Router, api *StreamingAPI) {
 	r := router.PathPrefix("/api/human-feedback/slack/connections").Subrouter()
 	r.HandleFunc("", listSlackConnectionsHandler(api)).Methods("GET")
 	r.HandleFunc("", createSlackConnectionHandler(api)).Methods("POST", "OPTIONS")
+	// Before "/{id}" so "/mine" is not read as a connection ID.
+	registerSlackConnectionChannelRoutes(r, api)
 	r.HandleFunc("/{id}", getSlackConnectionHandler(api)).Methods("GET")
 	r.HandleFunc("/{id}", updateSlackConnectionHandler(api)).Methods("PATCH", "POST", "OPTIONS")
 	r.HandleFunc("/{id}", deleteSlackConnectionHandler(api)).Methods("DELETE", "OPTIONS")

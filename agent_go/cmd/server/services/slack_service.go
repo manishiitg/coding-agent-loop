@@ -1273,7 +1273,7 @@ func slackTokensInUse(cfg *SlackConfig, exceptID, botToken, appToken string) err
 		case other.WorkspacePath != "":
 			where = "the workflow " + other.WorkspacePath
 		}
-		return fmt.Errorf("%w: this Slack app is already connected as %q (%s). Each Slack app can be connected once; to serve several workflows with one bot, use the shared bot with channel routes", ErrSlackTokenInUse, other.DisplayName, where)
+		return fmt.Errorf("%w: this Slack app is already connected as %q (%s). Each Slack app can be connected once; to serve several workflows with one bot, keep it on one of them and pick it under \"One of my bots\" on the others, or use the shared bot with channel routes", ErrSlackTokenInUse, other.DisplayName, where)
 	}
 	return nil
 }
@@ -1311,8 +1311,74 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 				return SlackConnection{}, err
 			}
 			conn.Enabled = input.Enabled
-			conn.WorkspacePath = strings.TrimSpace(input.WorkspacePath)
-			conn.ProfileID = strings.TrimSpace(input.ProfileID)
+			nextPath, nextProfile := strings.TrimSpace(input.WorkspacePath), strings.TrimSpace(input.ProfileID)
+			if nextPath != conn.WorkspacePath || nextProfile != conn.ProfileID {
+				// Channel routes were granted by the old scope's owner; a
+				// rescoped app must not keep answering for their destinations.
+				conn.ChannelRoutes = nil
+			}
+			conn.WorkspacePath = nextPath
+			conn.ProfileID = nextProfile
+			cfg.Connections[i] = conn
+			return conn, nil
+		}
+		return SlackConnection{}, fmt.Errorf("slack connection %q not found", connID)
+	})
+}
+
+// ErrSlackChannelRouted refuses a channel route that would replace another
+// destination's route on the same connection: one channel answers for one
+// destination per app.
+var ErrSlackChannelRouted = errors.New("slack channel already routed")
+
+// SetSlackConnectionChannelRoute adds (route != nil) or removes (route == nil)
+// one channel route on a scoped connection. Adding a channel that already
+// routes to another destination fails with ErrSlackChannelRouted; the
+// caller removes it first. Authorization is the caller's job.
+func (s *SlackService) SetSlackConnectionChannelRoute(ctx context.Context, connID, channelID string, route *SlackConnectionRoute) (SlackConnection, error) {
+	connID = strings.TrimSpace(connID)
+	channelID = NormalizeSlackChannelID(channelID)
+	if connID == "" || channelID == "" {
+		return SlackConnection{}, fmt.Errorf("slack connection id and channel id are required")
+	}
+	return s.modifySlackRegistry(ctx, func(cfg *SlackConfig) (SlackConnection, error) {
+		for i, conn := range cfg.Connections {
+			if conn.ID != connID {
+				continue
+			}
+			if strings.TrimSpace(conn.WorkspacePath) == "" {
+				return SlackConnection{}, fmt.Errorf("the shared platform bot routes channels in Access > Slack, not here")
+			}
+			existing, found := conn.ChannelRoutes[channelID]
+			if route == nil {
+				if !found {
+					return SlackConnection{}, fmt.Errorf("channel %s has no route on this bot", channelID)
+				}
+				delete(conn.ChannelRoutes, channelID)
+				cfg.Connections[i] = conn
+				return conn, nil
+			}
+			next := *route
+			next.WorkspacePath = strings.TrimSpace(next.WorkspacePath)
+			next.ProfileID = strings.TrimSpace(next.ProfileID)
+			if next.WorkspacePath == "" {
+				return SlackConnection{}, fmt.Errorf("a route needs a destination workflow or crew project")
+			}
+			if next.SameDestination(conn.WorkspacePath, conn.ProfileID) {
+				return SlackConnection{}, fmt.Errorf("this bot already answers for its own %s in every channel", map[bool]string{true: "crew", false: "workflow"}[next.ProfileID != ""])
+			}
+			if found {
+				if existing.SameDestination(next.WorkspacePath, next.ProfileID) {
+					return SlackConnection{}, fmt.Errorf("channel %s already answers for this destination on this bot", channelID)
+				}
+				return SlackConnection{}, fmt.Errorf("%w: channel %s on this bot already answers for %s; remove that route first", ErrSlackChannelRouted, channelID, existing.WorkspacePath)
+			}
+			routes := make(map[string]SlackConnectionRoute, len(conn.ChannelRoutes)+1)
+			for key, value := range conn.ChannelRoutes {
+				routes[key] = value
+			}
+			routes[channelID] = next
+			conn.ChannelRoutes = routes
 			cfg.Connections[i] = conn
 			return conn, nil
 		}
@@ -2368,7 +2434,7 @@ func (s *SlackService) resolveUserEmail(userID string) string {
 // dedicated (scoped) app serves its own destination, a shared app follows
 // the channel route.
 func (s *SlackService) resolveSlackRoute(ctx context.Context, channelID string) *ChannelRoute {
-	return ResolveSlackRoute(ctx, s.connectionID, func() *ChannelRoute {
+	return ResolveSlackRoute(ctx, s.connectionID, channelID, func() *ChannelRoute {
 		return s.resolveSlackChannelWorkflow(channelID)
 	})
 }

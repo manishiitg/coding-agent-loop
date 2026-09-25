@@ -31,7 +31,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<WorkIntegrationTab, string> = {
   slack: "Help me with this Crew project's Slack bot. Explain what's connected and ask what I want to change.",
   whatsapp: "Help me with this Crew project's WhatsApp bot. Explain what's connected and ask what I want to change.",
   gmail: "Help me with this Crew project's Gmail. Explain the setup and ask what I want to change.",
-  cli: "Help me connect the command line or an AI assistant to this installation. Explain browser sign-in, the login command, and the MCP bridge, and ask what I want to do first.",
+  cli: "Help me connect an AI agent to this installation through MCP. Explain the HTTP MCP URL and browser sign-in, and ask which AI app I use.",
 }
 
 function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServersChange }: {
@@ -159,9 +159,8 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
   onSelectedServersChange: (servers: string[]) => Promise<unknown>
   onSelectedSkillsChange: (skills: string[]) => Promise<unknown>
 }) {
-  // The Connect tab points at this installation's API origin, on servers and
-  // local installs alike. Remote assistants need a public origin; local-only
-  // origins can still drive the CLI and local MCP bridges.
+  // The Connect tab points at this installation's API origin. Hosted apps need
+  // a public origin; local agents can connect directly to a loopback MCP URL.
   const visibleTabs = INTEGRATION_TABS.filter(option =>
     isWorkIntegrationTabEnabled(option.value, enabledPanels))
   const [tab, setTab] = usePersistentTab<WorkIntegrationTab>('agentworks.tab.crew-integrations', 'apps', INTEGRATION_TABS.map(option => option.value))

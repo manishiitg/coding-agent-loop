@@ -1,6 +1,6 @@
 ---
 name: agentworks
-description: Read and run AgentWorks workflows and Crews through the CLI or MCP bridge (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Load when the task touches an AgentWorks workflow or when agentworks tools are available.
+description: Read and run AgentWorks workflows and Crews through MCP (list workflows, read files, plans, runs, guidance, and knowledge; execute steps, workflows, and schedules; ask Crews and call their functions). Load when the task touches an AgentWorks workflow or when AgentWorks MCP tools are available.
 ---
 
 # AgentWorks
@@ -12,19 +12,18 @@ This connection reads and runs, like the Slack and WhatsApp run-mode channels: t
 ## Connect
 
 ```sh
-agentworks login --server https://your-server
-claude mcp add agentworks -e AGENTWORKS_SERVER='https://your-server' -- agentworks mcp serve
+claude mcp add --transport http agentworks 'https://your-server/api/external/v1/mcp'
 ```
 
-Approve the CLI in your browser. The CLI and MCP bridge share that connection. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access, and reading (`crews:read`) and asking or calling (`crews:run`) its Crews. Unavailable tools are omitted from the catalog.
+Approve the MCP connection in your browser. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access, and reading (`crews:read`) and asking or calling (`crews:run`) its Crews. The remote MCP surface has `get_api_spec` to discover available tool names and schemas, then `call_tool` to invoke one by name. Unavailable tools are omitted from the catalog.
 
 ## First step
 
-Call `get_agent_context` for token capabilities, available tools, and the guidance version. Discover workflow IDs with `list_workflows` first — IDs are never filesystem paths.
+Use `get_api_spec` to inspect the available tools, then call `get_agent_context` through `call_tool` for your capabilities and guidance version. Discover workflow IDs with `list_workflows` first — IDs are never filesystem paths.
 
 ## Guidance per task
 
-List topics with `list_guidance_topics` and load only relevant ones via `get_guidance_topic`. Inspect workflow knowledge with `list_workflow_knowledge` / `read_workflow_knowledge` (learnings, knowledgebase notes, workspace skills, skill wiring). Use `get_file_link` for preview/download URLs and `files download` for local copies.
+List topics with `list_guidance_topics` and load only relevant ones via `get_guidance_topic`. Inspect workflow knowledge with `list_workflow_knowledge` / `read_workflow_knowledge` (learnings, knowledgebase notes, workspace skills, skill wiring). Use `get_file_link` for preview/download URLs.
 
 ## Run
 

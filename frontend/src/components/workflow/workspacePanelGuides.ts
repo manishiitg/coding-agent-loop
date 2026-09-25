@@ -308,11 +308,10 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     ],
   }),
   'Integrations · Connect': () => ({
-    purpose: 'Let a terminal, local AI app, or hosted AI app use this AgentWorks installation.',
-    howTo: 'Choose where you will use AgentWorks. This tab lets another client access AgentWorks; the MCPs tab gives AgentWorks tools from external apps.',
+    purpose: 'Let an AI agent use this AgentWorks installation through MCP.',
+    howTo: 'Choose a local or hosted AI app. This tab lets another client access AgentWorks; the MCPs tab gives AgentWorks tools from external apps.',
     steps: [
-      'Terminal or scripts: install the AgentWorks CLI and approve its browser sign-in.',
-      'AI app on this computer: install and sign in to the CLI, then add the shown MCP bridge to Codex, Claude Code, or another local client.',
+      'AI agent on this computer: add the shown HTTP MCP URL to Codex, Claude Code, or another local client and approve browser sign-in.',
       'Hosted AI app: use the HTTPS MCP URL from a public AgentWorks server and approve the OAuth permission screen. A localhost URL cannot be reached from the cloud.',
       'Review connected clients below and revoke access when a client should no longer use AgentWorks.',
     ],

@@ -28,20 +28,20 @@ function button(host: HTMLElement, label: string) {
   return found
 }
 
-describe('CLI and MCP setup', () => {
-  it('installs and signs in through the browser without a token', async () => {
+describe('MCP setup', () => {
+  it('connects local and hosted agents directly through MCP without a token or binary', async () => {
     const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
     try {
-      expect(host.textContent).toContain("install-agentworks.sh' | sh -s -- --server 'https://agentworks.example.com'")
+      expect(host.textContent).toContain("claude mcp add --transport http agentworks 'https://agentworks.example.com/api/external/v1/mcp'")
       expect(host.textContent).not.toContain('Create connection')
       expect(host.textContent).not.toContain('aw_pat_')
-      await act(async () => button(host, 'AI app on this computer').click())
-      expect(host.textContent).toContain("claude mcp add agentworks -e AGENTWORKS_SERVER='https://agentworks.example.com' -- agentworks mcp serve")
+      expect(host.textContent).not.toContain('install-agentworks.sh')
       expect(host.textContent).not.toContain('AGENTWORKS_TOKEN')
       await act(async () => Array.from(host.querySelectorAll('button')).find(item => item.textContent === 'Codex')!.click())
-      expect(host.textContent).toContain("codex mcp add agentworks --env AGENTWORKS_SERVER='https://agentworks.example.com' -- agentworks mcp serve")
+      expect(host.textContent).toContain("codex mcp add agentworks --url 'https://agentworks.example.com/api/external/v1/mcp'")
+      expect(host.textContent).toContain('codex mcp login agentworks')
       await act(async () => button(host, 'JSON MCP client').click())
-      expect(host.querySelector('pre')?.textContent).toContain('"AGENTWORKS_SERVER"')
+      expect(host.querySelector('pre')?.textContent).toContain('"url": "https://agentworks.example.com/api/external/v1/mcp"')
       expect(host.querySelector('pre')?.textContent).not.toContain('AGENTWORKS_TOKEN')
       await act(async () => button(host, 'Hosted AI app').click())
       expect(host.textContent).toContain('https://agentworks.example.com/api/external/v1/mcp')
@@ -82,9 +82,19 @@ describe('CLI and MCP setup', () => {
     vi.mocked(api.get).mockResolvedValue({ data: '<!doctype html><html></html>' })
     const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
     try {
-      expect(host.textContent).toContain('install-agentworks.sh')
+      expect(host.textContent).toContain('https://agentworks.example.com/api/external/v1/mcp')
       expect(host.textContent).toContain('Restart or update the AgentWorks server')
       expect(host.textContent).not.toContain('Revoke')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('offers local HTTP MCP on a loopback install and warns hosted apps', async () => {
+    vi.mocked(getApiBaseUrl).mockReturnValue('http://127.0.0.1:18743')
+    const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
+    try {
+      expect(host.textContent).toContain("claude mcp add --transport http agentworks 'http://127.0.0.1:18743/api/external/v1/mcp'")
+      await act(async () => button(host, 'Hosted AI app').click())
+      expect(host.textContent).toContain('Hosted apps need a public server URL')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 })

@@ -131,15 +131,11 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
     case 'Connect': return [
       {
         title: 'How do I choose a connection path?',
-        answer: <>Choose <b>Terminal or scripts</b> to run AgentWorks commands yourself, <b>AI app on this computer</b> for a local MCP client, or <b>Hosted AI app</b> for an app that connects from the cloud.</>,
-      },
-      {
-        title: 'How do I use AgentWorks from a terminal?',
-        answer: <>Select <b>Terminal or scripts</b>, copy <b>Install and sign in</b>, run it in your terminal, and approve the browser sign-in it opens.</>,
+        answer: <>Choose <b>AI agent on this computer</b> for Claude Code, Codex, or another local MCP client. Choose <b>Hosted AI app</b> for ChatGPT or Claude Cowork.</>,
       },
       {
         title: 'How do I connect Codex or Claude Code on this computer?',
-        answer: <>Select <b>AI app on this computer</b>. Run <b>Install CLI for local MCP</b>, then choose <b>Codex</b> or <b>Claude Code</b> and copy the shown add command. For another local client, choose <b>JSON MCP client</b> and copy its config.</>,
+        answer: <>Select <b>AI agent on this computer</b>, choose <b>Codex</b> or <b>Claude Code</b>, and run the shown MCP command. Codex also shows a login command. Approve access in your browser. No AgentWorks binary is needed.</>,
       },
       {
         title: 'How do I connect ChatGPT?',
@@ -159,7 +155,7 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
       },
       {
         title: 'How is Connect different from MCPs?',
-        answer: <>Connect lets a terminal or outside AI app use AgentWorks. The <b>MCPs</b> tab gives AgentWorks tools from outside apps and services.</>,
+        answer: <>Connect lets an outside AI agent use AgentWorks tools. The <b>MCPs</b> tab gives AgentWorks tools from outside apps and services.</>,
       },
     ]
   }

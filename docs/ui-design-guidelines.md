@@ -111,25 +111,14 @@ Setup → Integrations carries a `Connect` tab (tab value `cli`) on Crew
 projects and Builder automations, both rendering one shared
 `CliMcpSetupPanel`
 (`frontend/src/components/integrations/CliMcpSetupPanel.tsx`). The tab
-points at the installation's hosted API origin, so it is server-only:
-gated on `isMultiUserMode` from `useAuthStore`, never shown on local
-installs.
+points at the installation's API origin on both hosted and local installs.
 
-- The panel provisions its own read-only token — no separate token
-  dialog. The secret is kept in browser storage and reused on every
-  visit until it is revoked or expires; each visit verifies the token
-  id against the server token list and falls back to Generate when it
-  is gone. Generating also revokes orphaned same-name tokens.
-- Ready-to-paste commands, one per consumer: the CLI installer curl
-  (installs the server-matched binary and logs in), the MCP bridge
-  registration, and the skill install. Each ships with the token
-  prefilled in a copyable command row (mono `code` block + ghost icon
-  copy button with a Copied acknowledgement). No usage examples
-  beyond the setup commands.
-- A plain-words explainer up front states the read-only scope, the 30-day
-  expiry, and that the token can be revoked here anytime. Rotate and
-  Revoke are the card's right-side actions (`ghost`/`outline` `sm`,
-  Revoke in destructive text).
+- Lead with AI agent connection over HTTP MCP. Claude Code and Codex get
+  direct registration commands; ChatGPT and Cowork get the same URL or a
+  Cowork plugin. No CLI binary or pasted token is needed.
+- Browser OAuth handles consent. List connected clients with a Revoke action.
+- Hosted apps need a public HTTPS URL. A local AI agent may use a configured
+  loopback HTTP URL from the same computer.
 
 ## Access and users
 

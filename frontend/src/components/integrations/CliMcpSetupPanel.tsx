@@ -4,7 +4,7 @@ import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
 import api, { externalSkillApi, getApiBaseUrl } from '../../services/api'
 
-type Destination = 'terminal' | 'local-assistant' | 'hosted-assistant'
+type Destination = 'local-assistant' | 'hosted-assistant'
 type LocalClient = 'claude-code' | 'codex' | 'json-client'
 type HostedClient = 'chatgpt' | 'cowork'
 interface OAuthConnection { id: string; client_name: string; scopes: string[]; expires_at: string }
@@ -40,7 +40,7 @@ function JsonBlock({ json, label, hint }: { json: string; label: string; hint: s
 
 /** One connection path at a time. Browser approval keeps credentials out of setup instructions. */
 export function CliMcpSetupPanel() {
-  const [destination, setDestination] = useState<Destination>('terminal')
+  const [destination, setDestination] = useState<Destination>('local-assistant')
   const [localClient, setLocalClient] = useState<LocalClient>('claude-code')
   const [hostedClient, setHostedClient] = useState<HostedClient>('chatgpt')
   const [connections, setConnections] = useState<OAuthConnection[]>([])
@@ -51,8 +51,8 @@ export function CliMcpSetupPanel() {
   const [pluginMsg, setPluginMsg] = useState<string | null>(null)
   const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-  const installer = `curl -fsSL ${quoted(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${quoted(origin)}`
-  const mcpJson = JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_SERVER: origin } } } }, null, 2)
+  const mcpUrl = `${origin}/api/external/v1/mcp`
+  const mcpJson = JSON.stringify({ mcpServers: { agentworks: { url: mcpUrl } } }, null, 2)
   const isLoopbackOrigin = (() => { try { return ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(new URL(origin).hostname) } catch { return false } })()
 
   useEffect(() => {
@@ -117,41 +117,37 @@ export function CliMcpSetupPanel() {
   }
 
   const destinations = [
-    { id: 'terminal', icon: Terminal, title: 'Terminal or scripts', description: 'Run agentworks commands yourself.' },
-    { id: 'local-assistant', icon: Plug, title: 'AI app on this computer', description: 'Claude Code, Codex, or another local MCP client.' },
+    { id: 'local-assistant', icon: Terminal, title: 'AI agent on this computer', description: 'Claude Code, Codex, or another local MCP client.' },
     { id: 'hosted-assistant', icon: Globe, title: 'Hosted AI app', description: 'ChatGPT or Claude Cowork.' },
   ] as const
 
   return <div className="space-y-5">
     <div className="space-y-3">
-      <div><h3 className="text-base font-semibold text-foreground">Where will you use AgentWorks?</h3>
-        <p className="mt-1 text-sm text-muted-foreground">Choose one setup path. Sign in through your browser when prompted.</p></div>
+      <div><h3 className="text-base font-semibold text-foreground">Connect an AI agent to AgentWorks</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Choose your app, add the MCP URL, and approve access in your browser.</p></div>
       <div className="grid gap-2" role="group" aria-label="Connection destination">
         {destinations.map(({ id, icon: Icon, title, description }) => <button key={id} type="button" aria-pressed={destination === id} onClick={() => setDestination(id)} className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${destination === id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50 hover:bg-muted/30'}`}>
           <Icon className="h-4 w-4 shrink-0 text-primary" /><span className="flex min-w-0 flex-col gap-0.5"><span className="text-sm font-medium text-foreground">{title}</span><span className="text-xs text-muted-foreground">{description}</span></span>
         </button>)}
       </div>
     </div>
-    <SettingsCard icon={destination === 'terminal' ? <Terminal className="h-4 w-4 text-primary" /> : destination === 'local-assistant' ? <Plug className="h-4 w-4 text-primary" /> : <Globe className="h-4 w-4 text-primary" />}
-      title={destination === 'terminal' ? 'Set up the command line' : destination === 'local-assistant' ? 'Connect a local AI app' : 'Connect a hosted AI app'}
-      description={destination === 'terminal' ? 'Install the CLI and approve it in your browser.' : destination === 'local-assistant' ? 'Install and sign in to the CLI, then add its MCP bridge.' : 'Use the HTTPS MCP URL in an AI app that connects from the cloud.'}>
-      {destination === 'terminal' ? <div className="space-y-2">
-        <p className="text-xs font-medium text-foreground">Paste this in your terminal. The installer will open a browser sign-in link.</p>
-        <CommandRow label="Install and sign in" command={installer} />
-      </div> : destination === 'local-assistant' ? <div className="space-y-4">
-        <div className="space-y-2"><p className="text-xs font-medium text-foreground">1. Install and sign in on this computer</p><CommandRow label="Install CLI for local MCP" command={installer} /></div>
+    <SettingsCard icon={destination === 'local-assistant' ? <Plug className="h-4 w-4 text-primary" /> : <Globe className="h-4 w-4 text-primary" />}
+      title={destination === 'local-assistant' ? 'Connect a local AI agent' : 'Connect a hosted AI app'}
+      description={destination === 'local-assistant' ? 'Connect directly to the AgentWorks MCP server. No AgentWorks binary is needed.' : 'Use the MCP URL in an AI app that connects from the cloud.'}>
+      {destination === 'local-assistant' ? <div className="space-y-4">
         <div className="space-y-2">
-          <p className="text-xs font-medium text-foreground">2. Choose your AI app</p>
+          <p className="text-xs font-medium text-foreground">Choose your AI agent</p>
           <div className="flex flex-wrap gap-2" role="group" aria-label="Local MCP client">
             <Button variant={localClient === 'claude-code' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'claude-code'} onClick={() => setLocalClient('claude-code')}>Claude Code</Button>
             <Button variant={localClient === 'codex' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'codex'} onClick={() => setLocalClient('codex')}>Codex</Button>
             <Button variant={localClient === 'json-client' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'json-client'} onClick={() => setLocalClient('json-client')}>JSON MCP client</Button>
           </div>
-          {localClient === 'claude-code' ? <CommandRow label="Add AgentWorks to Claude Code" command={`claude mcp add agentworks -e AGENTWORKS_SERVER=${quoted(origin)} -- agentworks mcp serve`} />
-            : localClient === 'codex' ? <CommandRow label="Add AgentWorks to Codex" command={`codex mcp add agentworks --env AGENTWORKS_SERVER=${quoted(origin)} -- agentworks mcp serve`} />
-              : <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into a JSON-configured local MCP client. If it cannot find agentworks, use the full path from which agentworks." />}
+          {localClient === 'claude-code' ? <CommandRow label="Add AgentWorks to Claude Code" command={`claude mcp add --transport http agentworks ${quoted(mcpUrl)}`} />
+            : localClient === 'codex' ? <div className="space-y-2"><CommandRow label="Add AgentWorks to Codex" command={`codex mcp add agentworks --url ${quoted(mcpUrl)}`} /><CommandRow label="Sign in to AgentWorks" command="codex mcp login agentworks" /></div>
+              : <JsonBlock label="MCP client config" json={mcpJson} hint="Use the URL with your client's HTTP MCP transport and OAuth sign-in." />}
         </div>
-        {localClient === 'claude-code' && <details className="rounded-md border border-border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Optional: install the AgentWorks skill</summary><p className="mt-2 mb-2">The skill teaches Claude Code how to use the workflow tools.</p><CommandRow label="Install skill for Claude Code" command="agentworks skills install --dir ~/.claude/skills" /></details>}
+        <p className="text-xs text-muted-foreground">Approve the OAuth connection in your browser when your agent asks. A local server URL works only for agents on this computer.</p>
+        {localClient === 'claude-code' && <details className="rounded-md border border-border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Optional: use the AgentWorks skill</summary><p className="mt-2">The skill teaches Claude Code how to use the workflow tools. Copy its text into your agent&apos;s skills folder.</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}><Copy className="mr-1 h-3.5 w-3.5" />Copy skill text</Button></div>{skillMsg && <p className="mt-2">{skillMsg}</p>}</details>}
       </div> : <div className="space-y-4">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Hosted MCP client">
           <Button variant={hostedClient === 'chatgpt' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'chatgpt'} onClick={() => setHostedClient('chatgpt')}>ChatGPT</Button>
@@ -163,7 +159,7 @@ export function CliMcpSetupPanel() {
           <Button variant="outline" size="sm" disabled={skillBusy !== null || isLoopbackOrigin} onClick={() => void downloadCoworkPlugin()}><Download className="mr-1 h-3.5 w-3.5" />Download Cowork plugin</Button>
           {pluginMsg && <p className="text-xs text-muted-foreground">{pluginMsg}</p>}
         </div> : <p className="text-xs text-muted-foreground">In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.</p>}
-        {hostedClient === 'chatgpt' ? <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} /> : <details className="rounded-md border border-border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Connect manually instead</summary><p className="mt-2 mb-2">In Cowork, open Customize → Connectors → Add custom connector, then use this URL.</p><CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp`} /></details>}
+        {hostedClient === 'chatgpt' ? <CommandRow label="Remote MCP URL" command={mcpUrl} /> : <details className="rounded-md border border-border p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">Connect manually instead</summary><p className="mt-2 mb-2">In Cowork, open Customize → Connectors → Add custom connector, then use this URL.</p><CommandRow label="Remote MCP URL" command={mcpUrl} /></details>}
         {isLoopbackOrigin && <p className="text-xs text-amber-500">Hosted apps need a public server URL; open Connect on that server instead.</p>}
         <p className="text-xs text-muted-foreground">Choose OAuth when the app asks how to authenticate. AgentWorks will open a sign-in and permission screen.</p>
         {hostedClient === 'chatgpt' && <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
@@ -178,7 +174,7 @@ export function CliMcpSetupPanel() {
       </div>}
     </SettingsCard>
     {connectionLoadError && <p role="alert" className="text-sm text-amber-600">Connected apps are unavailable. Restart or update the AgentWorks server to use browser sign-in.</p>}
-    {connections.length > 0 && <SettingsCard icon={<Plug className="h-4 w-4 text-primary" />} title="Connected apps" description="Revoke access to a CLI or hosted AI app when you are done.">
+    {connections.length > 0 && <SettingsCard icon={<Plug className="h-4 w-4 text-primary" />} title="Connected apps" description="Revoke access to an AI app when you are done.">
       <div className="space-y-2">{connections.map(item => <div key={item.id} className="flex items-center justify-between gap-2 text-sm"><span className="min-w-0 truncate">{item.client_name}</span><Button variant="outline" size="sm" onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </SettingsCard>}

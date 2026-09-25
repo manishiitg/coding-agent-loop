@@ -1,18 +1,32 @@
-# AgentWorks CLI and MCP
+# Connect an AI agent to AgentWorks with MCP
 
-Use a hosted AgentWorks server from Claude Code, another MCP client, or scripts.
-The CLI and MCP bridge use the same authenticated API. Tokens read and run,
-like the Slack and WhatsApp run-mode channels: tools read, and run-mode tools
+Connect Claude Code, Codex, ChatGPT, Claude Cowork, or another MCP client to
+`https://your-server/api/external/v1/mcp`. The client signs in through AgentWorks
+OAuth in your browser. Claude Code and Codex can use this HTTP connection directly;
+you do not need to install the AgentWorks CLI for a terminal AI agent.
+
+```sh
+claude mcp add --transport http agentworks 'https://your-server/api/external/v1/mcp'
+codex mcp add agentworks --url 'https://your-server/api/external/v1/mcp'
+codex mcp login agentworks
+```
+
+Open **Setup → Integrations → Connect** for commands using your installation's
+URL. A local AI agent can connect to a local AgentWorks server using a loopback
+URL; a hosted AI app needs a public HTTPS URL. AgentWorks must have `PUBLIC_URL`
+configured to that same origin. Remote MCP OAuth accepts HTTP only for a
+configured loopback address.
+
+The MCP tools read and run like the Slack and WhatsApp run-mode channels:
+read tools inspect data, and run-mode tools
 execute in pinned Run-mode sessions. Nothing creates, edits, or authors. File
 writes, plan mutations, and Builder execution are not exposed; the dispatch
 paths stay in the server for a future write-enabled API version.
 
-## Install the CLI
+## Legacy CLI for existing installations
 
-Open Setup → Integrations → Connect on any installation — server or local —
-and choose **Terminal or scripts**, **AI app on this computer**, or
-**Hosted AI app**. The local options use browser sign-in; the hosted
-option shows its OAuth URL immediately. The terminal installer downloads the
+Existing scripts and stdio-only MCP clients can continue using the CLI. New
+AI agent connections should use HTTP MCP as shown above. The installer downloads the
 CLI build matching that server, verifies its checksum, installs it to
 `~/.local/bin`, and opens a browser approval link. macOS and Linux on arm64/amd64 are
 supported.
@@ -86,10 +100,10 @@ does not execute the copied workflow, and does not test a live Builder model
 conversation. See [local workflow isolation](isolated-workflow-testing.md) for
 the procedure for live agent testing.
 
-## Connect the CLI
+## Connect the legacy CLI
 
-Run the installer shown under **Setup → Integrations → Connect → Terminal or
-scripts**, or sign in with an installed binary:
+Run the installer from `/api/downloads/cli/install-agentworks.sh`, or sign in
+with an installed binary:
 
 ```sh
 agentworks login --server https://agentworks.example.com
@@ -135,28 +149,21 @@ Redirects are refused to avoid forwarding credentials to another location.
 
 ## Connect a local AI app
 
-Choose **AI app on this computer** in Connect. Install the CLI first, then
-choose Claude Code, Codex, or a JSON-configured MCP client. The commands
-include your server; the bridge reads the CLI's saved browser login. Claude Code uses:
+Choose **AI agent on this computer** in Connect. Claude Code uses HTTP MCP:
 
 ```sh
-claude mcp add agentworks -e AGENTWORKS_SERVER=https://your-server -- agentworks mcp serve
+claude mcp add --transport http agentworks 'https://your-server/api/external/v1/mcp'
 ```
-
-Run `agentworks login` on that computer first. The CLI and bridge share the
-saved connection and refresh credentials when needed.
 
 Codex uses its own registration command:
 
 ```sh
-codex mcp add agentworks --env AGENTWORKS_SERVER=https://your-server -- agentworks mcp serve
+codex mcp add agentworks --url 'https://your-server/api/external/v1/mcp'
+codex mcp login agentworks
 ```
 
-The command follows [Codex's documented stdio MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
-
-The bridge runs locally and calls your configured hosted server. It discovers
-all tool schemas from that server at startup. Restart the bridge after upgrading
-the server to refresh its catalog.
+Both clients approve access through the browser. Existing stdio registrations
+using `agentworks mcp serve` continue to work, but new setups do not need them.
 
 Example request:
 
@@ -168,9 +175,8 @@ the task needs a change, it says so instead of attempting one.
 
 ## Connect hosted assistants
 
-ChatGPT and Claude Cowork cannot spawn the local stdio bridge, so the server
-also exposes the catalog over MCP Streamable HTTP at
-`POST/GET/DELETE /api/external/v1/mcp`. Unlike the CLI and stdio bridge,
+All supported AI apps connect to the server over MCP Streamable HTTP at
+`POST/GET/DELETE /api/external/v1/mcp`. Unlike the legacy CLI and stdio bridge,
 which list every tool, the remote surface is exactly two self-describing
 tools: `get_api_spec` (no arguments lists every available tool, names return
 JSON schemas) and `call_tool` (executes by name). The full catalog —
@@ -193,7 +199,7 @@ https://your-server/api/external/v1/mcp
   → Add custom connector with the URL above and OAuth authentication.
 
 The assistant discovers AgentWorks OAuth metadata from the server. Sign in to
-Confida when prompted, review the requested permissions, and allow access.
+AgentWorks when prompted, review the requested permissions, and allow access.
 The connection uses short-lived MCP-only access tokens and rotating refresh
 tokens. Revoke it under **Connect → Connected apps**. The CLI and local stdio
 MCP bridge use their own browser-approved OAuth connections.

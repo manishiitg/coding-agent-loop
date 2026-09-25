@@ -64,7 +64,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<IntegrationTabId, { label: string; 
   },
   cli: {
     label: 'Integrations · Connect',
-    summary: "Help me connect the command line or an AI assistant to this installation. Explain browser sign-in, the login command, and the MCP bridge, and ask what I want to do first.",
+    summary: "Help me connect an AI agent to this installation through MCP. Explain the HTTP MCP URL and browser sign-in, and ask which AI app I use.",
   },
 }
 

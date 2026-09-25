@@ -186,7 +186,7 @@ func (s *FilesystemStore) GetBotConnectorConfig(ctx context.Context, id string) 
 	defer s.botCfgMu.RUnlock()
 	cfg, ok := s.botCfgs[id]
 	if !ok || cfg == nil {
-		return nil, fmt.Errorf("bot connector config not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrBotConnectorConfigNotFound, id)
 	}
 	out := *cfg
 	return &out, nil

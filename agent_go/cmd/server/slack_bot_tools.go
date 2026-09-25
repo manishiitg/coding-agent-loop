@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -271,11 +272,16 @@ func (api *StreamingAPI) slackRoutes(ctx context.Context) (*chathistory.BotConne
 	if api.chatStore == nil {
 		return nil, nil, fmt.Errorf("bot store unavailable")
 	}
+	routes := map[string]ChannelRoute{}
 	cfg, err := api.chatStore.GetBotConnectorConfig(ctx, "slack")
+	if errors.Is(err, chathistory.ErrBotConnectorConfigNotFound) {
+		// No shared Slack bot is saved: there are no channel routes, and a
+		// workflow's or crew's own Slack app still authorizes itself.
+		return nil, routes, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	routes := map[string]ChannelRoute{}
 	if cfg != nil && cfg.AllowedChannels != "" && cfg.AllowedChannels != "[]" {
 		if err := json.Unmarshal([]byte(cfg.AllowedChannels), &routes); err != nil {
 			return nil, nil, err

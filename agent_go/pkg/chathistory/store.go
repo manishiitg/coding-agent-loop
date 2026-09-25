@@ -15,6 +15,7 @@ package chathistory
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -29,6 +30,10 @@ const (
 )
 
 // BotConnectorConfig represents configuration for a bot connector platform.
+// ErrBotConnectorConfigNotFound means no connector config is saved under the
+// requested ID (e.g. no shared Slack bot, only workflow-owned Slack apps).
+var ErrBotConnectorConfigNotFound = errors.New("bot connector config not found")
+
 type BotConnectorConfig struct {
 	ID              string    `json:"id"`
 	Enabled         bool      `json:"enabled"`

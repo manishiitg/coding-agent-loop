@@ -2707,8 +2707,13 @@ func botSessionFailureMessage(err error) string {
 		return "I couldn't start this request. Please try again."
 	}
 	detail := strings.ToLower(err.Error())
-	if strings.Contains(detail, "workflow access denied") || strings.Contains(detail, "status 403") {
+	if strings.Contains(detail, "workflow access denied") {
 		return "You don't currently have access to this workflow. Ask a workflow owner to share it with your AgentWorks account, then try again."
+	}
+	// Other refusals are about the bot's setup (route, grant, app binding),
+	// not the person's access; don't send them chasing a sharing problem.
+	if strings.Contains(detail, "status 403") {
+		return "This bot isn't set up to start this conversation. Ask the workflow owner to check its Slack setup in AgentWorks (Setup > Bots)."
 	}
 	return "I couldn't start this request. Please try again. If it keeps failing, ask an administrator to check the connector logs."
 }

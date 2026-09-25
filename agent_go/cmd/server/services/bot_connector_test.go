@@ -1442,6 +1442,10 @@ func TestBotSessionFailureMessageDoesNotExposeInternalHTTPError(t *testing.T) {
 	if strings.Contains(got, "handleQuery") || strings.Contains(got, "403") || !strings.Contains(got, "don't currently have access") {
 		t.Fatalf("user-facing access error = %q", got)
 	}
+	got = botSessionFailureMessage(fmt.Errorf("handleQuery returned status 403: bot connector config not found: slack"))
+	if strings.Contains(got, "access") || strings.Contains(got, "connector config") || !strings.Contains(got, "Slack setup") {
+		t.Fatalf("a setup refusal must not read as missing access: %q", got)
+	}
 	got = botSessionFailureMessage(fmt.Errorf("dial tcp: private backend failed"))
 	if strings.Contains(got, "dial tcp") || strings.Contains(got, "private backend") {
 		t.Fatalf("user-facing internal error leaked details: %q", got)

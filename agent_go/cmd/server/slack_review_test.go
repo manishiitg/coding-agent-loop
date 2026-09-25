@@ -623,3 +623,32 @@ func TestSlackEmailBlockTakesEffectOnNextTurn(t *testing.T) {
 		t.Fatalf("trusted app treated as human: %v", err)
 	}
 }
+
+// A workflow's own Slack app works with no shared Slack bot saved at all
+// (RTS 2026-09-25: the turn failed with "bot connector config not found:
+// slack" and Slack showed "You don't currently have access").
+func TestSlackOwnAppTurnNeedsNoSharedConnectorConfig(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{ProfileID: "work", ConversationKey: "acme", WorkspacePath: "Chats/Work/projects/acme", WorkspaceUserID: "alice", BotGrant: "run"}
+	services.SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID string) (*ChannelRoute, bool) {
+		if connectionID != "own-app" {
+			return nil, false
+		}
+		owned := route
+		return &owned, true
+	})
+	t.Cleanup(func() { services.SetDedicatedSlackRouteFunc(nil) })
+	api := &StreamingAPI{chatStore: store}
+	claims := botRouteUserClaims("synthetic", route)
+	req := QueryRequest{AgentProfileID: "work", AgentProfileConversationKey: "acme", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C777", BotConnectionID: "own-app", BotUserID: "sender-a"}
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err != nil {
+		t.Fatalf("own-app turn rejected without a shared connector config: %v", err)
+	}
+	req.BotConnectionID = "shared-app"
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("an unrouted shared-app channel must still be refused, err = %v", err)
+	}
+}

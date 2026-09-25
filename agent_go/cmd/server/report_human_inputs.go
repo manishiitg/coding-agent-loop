@@ -1071,6 +1071,12 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 			if err != nil {
 				return "", err
 			}
+			// Pulse decisions land in the user's Needs you list.
+			if isPulseDecisionSource(req.Source) {
+				if err := checkPulsePlainText("context", plainTextField{name: "question", text: req.Question, maxLen: 300}); err != nil {
+					return "", err
+				}
+			}
 			if req.CreatedBy == "" {
 				req.CreatedBy = "agent"
 			}

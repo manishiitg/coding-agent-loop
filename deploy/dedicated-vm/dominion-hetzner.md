@@ -406,7 +406,11 @@ Live on the target host, first deployed 2026-08-24:
   entry to stay scoped the way this doc describes.
 - Crew is available to the `manish` admin account only. The deploy script
   adds `work` to the staged frontend surfaces and sets the admin-only backend
-  boundary before activation. `john` remains limited to Dominion.
+  boundary before activation. `john` remains limited to Dominion. Each release
+  also versions the `runtime-config.js` script URL in `index.html` because the
+  public CDN has served that file with a four-hour browser cache lifetime,
+  despite the gateway's `no-cache` header. This makes newly enabled surfaces
+  visible after a page reload.
 - `/srv/dominion/home/Downloads` created 2026-08-25 — its absence broke the
   shell sandbox's Folder Guard policy setup for every session
   (`SANDBOX_UNAVAILABLE: ... stat /srv/dominion/home/Downloads: no such file

@@ -209,6 +209,18 @@ echo "    all 5 binaries verified as real, runnable ELF executables"
 echo "==> Building frontend"
 (cd "$REPO/frontend" && npm ci && VITE_API_BASE_URL='' VITE_WORKSPACE_API_URL=/api/wp npm run build)
 cp -R "$REPO/frontend/dist/." "$RELEASE_DIR/frontend/"
+# Cloudflare can override the gateway's no-cache header for runtime-config.js.
+# Give each release a new script URL so browsers reload the product allowlist.
+python3 - "$RELEASE_DIR/frontend/index.html" "$RELEASE_ID" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+updated, count = re.subn(r'(/runtime-config\.js)(?:\?[^"\s]*)?',
+                         lambda match: match.group(1) + '?v=' + sys.argv[2], source)
+if count != 1:
+    raise SystemExit(f'FATAL: expected one runtime-config.js script in {path}, found {count}')
+path.write_text(updated)
+PY
 node "$REPO/frontend/scripts/check-release-assets.mjs" "$RELEASE_DIR/frontend"
 
 # frontend's build:report-preview step (part of `npm run build` above) writes

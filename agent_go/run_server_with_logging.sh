@@ -395,15 +395,31 @@ if [ "$ONLY_FRONTEND" = true ]; then
     # The process scan reads --port from the actual go binary's argv, so when
     # the user starts the backend on a different port than last time, the
     # frontend won't follow a stale runtime-config.js into a dead port.
+    # Several checkouts can run backends at once (P0 gate worktrees, sibling
+    # worktrees). Only a backend started from THIS checkout counts; picking the
+    # first one in ps order connected the UI to another checkout's workflows.
+    detect_checkout_server_port() {
+        local pattern="$1" pid cwd
+        for pid in $(pgrep -f "$pattern" 2>/dev/null); do
+            cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+            case "$cwd" in
+                "$CHECKOUT_ROOT"|"$CHECKOUT_ROOT"/*)
+                    ps -o args= -p "$pid" 2>/dev/null | grep -oE -- '--port[[:space:]]+[0-9]+' | awk '{print $2}' | head -1
+                    return 0
+                    ;;
+            esac
+        done
+    }
+    CHECKOUT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
     if [ -z "${AGENT_PORT:-}" ]; then
-        detected_agent_port="$(ps -axo args 2>/dev/null | grep '/main server' | grep -v 'grep' | grep -oE -- '--port[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)"
+        detected_agent_port="$(detect_checkout_server_port '/main server')"
         if [ -n "$detected_agent_port" ]; then
             AGENT_PORT="$detected_agent_port"
             echo "🔎 Detected AGENT_PORT=$AGENT_PORT from running backend process"
         fi
     fi
     if [ -z "${WORKSPACE_PORT:-}" ]; then
-        detected_workspace_port="$(ps -axo args 2>/dev/null | grep '/workspace server' | grep -v 'grep' | grep -oE -- '--port[[:space:]]+[0-9]+' | awk '{print $2}' | head -1)"
+        detected_workspace_port="$(detect_checkout_server_port '/workspace server')"
         if [ -n "$detected_workspace_port" ]; then
             WORKSPACE_PORT="$detected_workspace_port"
             echo "🔎 Detected WORKSPACE_PORT=$WORKSPACE_PORT from running workspace process"
@@ -586,7 +602,11 @@ EOF
         echo "🚀 Electron Session Started: $(date)" > "$ELECTRON_LOG_PATH"
         ELECTRON_EXTRA_ARGS=""
         if [ "$DEBUG_MEMORY" = true ]; then
-            ELECTRON_EXTRA_ARGS="--remote-debugging-port=9222 --js-flags=--expose-gc"
+            # Not 9222: a Chrome started with remote debugging (e.g. for browser
+            # automation) usually holds it, and Electron then silently has no
+            # DevTools endpoint ("Cannot start http server for devtools").
+            ELECTRON_DEBUG_PORT="${ELECTRON_DEBUG_PORT:-9333}"
+            ELECTRON_EXTRA_ARGS="--remote-debugging-port=${ELECTRON_DEBUG_PORT} --js-flags=--expose-gc"
         fi
         if [ "$BACKGROUND_MODE" = true ]; then
             # shellcheck disable=SC2086
@@ -601,7 +621,7 @@ EOF
         ELECTRON_PID=$!
         echo "✅ Electron started (PID: $ELECTRON_PID)"
         if [ "$DEBUG_MEMORY" = true ]; then
-            echo "🧠 Memory debug on: heap snapshots at http://127.0.0.1:9222 (open in Chrome → inspect → Memory)"
+            echo "🧠 Memory debug on: heap snapshots at http://127.0.0.1:${ELECTRON_DEBUG_PORT} (open in Chrome → inspect → Memory)"
             echo "🧠 RSS sampler logging to $ELECTRON_LOG_PATH every 30s"
             (
                 while kill -0 "$ELECTRON_PID" 2>/dev/null; do

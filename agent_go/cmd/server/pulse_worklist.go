@@ -2836,6 +2836,11 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				Severity: stringToolArg(args, "severity"), Summary: stringToolArg(args, "summary"), Impact: stringToolArg(args, "impact"), Workaround: stringToolArg(args, "workaround"),
 				Evidence: stringSliceFromToolArg(args["evidence"]), Reproduction: reproduction,
 			}}
+			if err := checkPulsePlainText("impact, evidence and reproduction",
+				plainTextField{name: "concern", text: input.Concern, maxLen: 140},
+				plainTextField{name: "summary", text: input.Summary, maxLen: 500}); err != nil {
+				return "", err
+			}
 			reviewRunID := pulseReviewRunIDForSession(ctx, pulseRunID)
 			record, err := step_based_workflow.RecordPulseReviewFinding(ctx, workspacePath, pulseRunID, reviewRunID, input)
 			if err != nil {
@@ -3677,6 +3682,12 @@ func recordPulseResultFromToolArgs(ctx context.Context, args map[string]interfac
 	}
 	if command != "" && (noteOnly || reviewNote != "") {
 		return "", fmt.Errorf("review notes belong to modules, not final commands")
+	}
+	// A module's terminal reason is the result the user reads on the Pulse tab.
+	if module != "" && !noteOnly && !strings.EqualFold(strings.TrimSpace(result), "running") {
+		if err := checkPulsePlainText("review_note", plainTextField{name: "reason", text: reason, maxLen: 600}); err != nil {
+			return "", err
+		}
 	}
 	if noteOnly {
 		if !strings.EqualFold(strings.TrimSpace(result), "running") {

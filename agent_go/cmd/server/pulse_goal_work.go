@@ -234,6 +234,13 @@ func recordPulseGoalWorkFromToolArgs(ctx context.Context, args map[string]interf
 	if workspacePath == "" {
 		return "", fmt.Errorf("record_pulse_goal_work requires workspace_path")
 	}
+	if err := checkPulsePlainText("links and the files under pulse/work/",
+		plainTextField{name: "title", text: stringToolArg(args, "title"), maxLen: 140},
+		plainTextField{name: "action_taken", text: stringToolArg(args, "action_taken"), maxLen: 500},
+		plainTextField{name: "detail", text: stringToolArg(args, "detail"), maxLen: 1500, idsOnly: true},
+		plainTextField{name: "effect_note", text: stringToolArg(args, "effect_note"), maxLen: 300}); err != nil {
+		return "", err
+	}
 	item, err := recordPulseGoalWork(ctx, workspacePath, PulseGoalWorkItem{
 		ID: stringToolArg(args, "item_id"), Kind: stringToolArg(args, "kind"), Title: stringToolArg(args, "title"),
 		Detail: stringToolArg(args, "detail"), Status: stringToolArg(args, "status"), ActionTaken: stringToolArg(args, "action_taken"),

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "playbook_id": "website-growth-loop",
+  "playbook_version": "0.2.0",
+  "checks": [
+    { "id": "goal_owner", "title": "Confirm the goal and owner", "instructions": "Record the named owner, authorized website, offer, audience, market, primary visitor action, and excluded actions." },
+    { "id": "metric_policy", "title": "Choose a useful metric", "instructions": "Record the metric definition and source, plus a comparable baseline or an explicit baseline-first start date." },
+    { "id": "team_bindings", "title": "Bind the Crew team", "instructions": "Record at least two distinct authorized Crew IDs, their actual roles, selected skills, and first-result capability." },
+    { "id": "site_scope", "title": "Verify site scope", "instructions": "Inspect the approved page set or owner export; record crawl boundary, source dates, and known gaps." },
+    { "id": "capabilities", "title": "Verify access", "instructions": "Test each required Crew's selected skill and source access. Record optional connection decisions without copying credentials." },
+    { "id": "handoff_contract", "title": "Test the strategist-to-search handoff", "instructions": "Validate a sourced growth-priority-brief/v1 and confirm the search Crew receives its bounded artifact or reference." },
+    { "id": "plan_review", "title": "Review the Automation plan", "instructions": "Show the actual team, Crew steps, permissions, budget, publication boundary, and activation policy to the owner." },
+    { "id": "test_run", "title": "Run the first route manually", "instructions": "Record a bounded manual run with both Crew run IDs, valid artifacts, a combined result, and visible blockers." },
+    { "id": "activation_choice", "title": "Choose the run policy", "instructions": "Record manual-only or a reviewed paused trigger with cadence, timezone, concurrency, retries, budget, and notifications. Do not enable it by completing setup." }
+  ],
+  "completed_steps": [],
+  "evidence": {}
+}

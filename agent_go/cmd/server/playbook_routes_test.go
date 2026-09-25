@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,8 +20,25 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if growth.Category != "Website Growth" || growth.Version != "0.1.0" {
+	if growth.Category != "Website Growth" || growth.Version != "0.2.0" {
 		t.Fatalf("website growth loop = %+v", growth)
+	}
+	setupSource, err := os.ReadFile(filepath.Join(growth.SourceDir, "SETUP.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var setup struct {
+		PlaybookID      string `json:"playbook_id"`
+		PlaybookVersion string `json:"playbook_version"`
+		Checks          []struct {
+			ID string `json:"id"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(setupSource, &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != growth.ID || setup.PlaybookVersion != growth.Version || len(setup.Checks) != len(growth.SetupChecks) {
+		t.Fatalf("website growth setup = %+v", setup)
 	}
 	intelligence, err := findPlaybook("engineering-operations-intelligence")
 	if err != nil {

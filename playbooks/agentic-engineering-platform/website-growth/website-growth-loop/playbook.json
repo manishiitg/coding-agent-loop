@@ -2,8 +2,11 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "website-growth-loop",
-  "version": "0.1.0",
-  "changelog": [{ "version": "0.1.0", "summary": "Adds a chat-led Website Growth team proposal with two required Crew roles, typed handoffs, a baseline-first path, and a manual test before recurrence." }],
+  "version": "0.2.0",
+  "changelog": [
+    { "version": "0.2.0", "summary": "Adds a saved nine-check setup checklist with evidence references for Builder chat and the Playbook screen." },
+    { "version": "0.1.0", "summary": "Adds a chat-led Website Growth team proposal with two required Crew roles, typed handoffs, a baseline-first path, and a manual test before recurrence." }
+  ],
   "title": "Website Growth Loop",
   "description": "Help a newly launched website attract more relevant visitors by coordinating a growth strategist and search specialist, then extending to content and measurement when ready.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Website Growth"],

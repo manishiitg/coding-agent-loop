@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import PlaybooksPanel from './PlaybooksPanel'
 import { playbooksApi } from '../../api/playbooks'
+import { agentApi } from '../../services/api'
 
 vi.mock('../../api/playbooks', () => ({
   playbooksApi: {
@@ -34,6 +35,14 @@ vi.mock('../../api/playbooks', () => ({
 vi.mock('../../hooks/useCanWriteWorkflow', () => ({
   useCanWriteWorkflow: () => true,
   READ_ONLY_TITLE: 'Read only',
+}))
+
+vi.mock('../../services/api', () => ({
+  agentApi: { getPlannerFileContent: vi.fn().mockResolvedValue({ data: { content: JSON.stringify({
+    schema_version: 1, playbook_id: 'website-growth-loop', playbook_version: '0.2.0',
+    checks: [{ id: 'goal_owner' }, { id: 'team_bindings' }, { id: 'test_run' }],
+    completed_steps: ['goal_owner'], evidence: { goal_owner: 'Reviewed owner and site in Builder chat' },
+  }) } }) },
 }))
 
 vi.mock('../workflow/AskAIButton', () => ({
@@ -136,13 +145,13 @@ it('shows an available version and refreshes the installed playbook without clai
 
 it('shows Website Growth as a team proposal whose setup continues in Builder chat', async () => {
   vi.mocked(playbooksApi.install).mockResolvedValueOnce({
-    id: 'website-growth-loop', title: 'Website Growth Loop', version: '0.1.0',
+    id: 'website-growth-loop', title: 'Website Growth Loop', version: '0.2.0',
     category: 'Website Growth', skill_name: 'agentworks-playbook-website-growth-loop',
     source_hash: 'sha256:growth', status: 'draft', installed_at: '2026-09-25T00:00:00Z',
   })
   vi.mocked(playbooksApi.list).mockResolvedValueOnce([{
     id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Grow relevant website traffic.',
-    version: '0.1.0', category: 'Website Growth', order: 1, inputCount: 4, toolCount: 2,
+    version: '0.2.0', category: 'Website Growth', order: 1, inputCount: 4, toolCount: 2,
     setupPrompt: 'Inspect existing Crews and propose a team before creating agents.',
     agentSlots: [
       { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
@@ -167,7 +176,9 @@ it('shows Website Growth as a team proposal whose setup continues in Builder cha
     expect(container.textContent).toContain('team bindings')
     expect(container.textContent).toContain('Use proposal')
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use proposal')) || null)
-    expect(container.textContent).toContain('Proposal saved v0.1.0 · draft')
+    expect(container.textContent).toContain('Proposal saved v0.2.0 · draft')
+    expect(agentApi.getPlannerFileContent).toHaveBeenCalledWith('Workflow/growth/skills/agentworks-playbook-website-growth-loop/SETUP.json')
+    expect(container.textContent).toContain('1 of 3 checks recorded with evidence')
     expect(container.textContent).toContain('Continue setup in Builder')
     const setup = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Continue setup in Builder'))
     expect(setup?.getAttribute('data-message')).toContain('Inspect existing Crews and propose a team')

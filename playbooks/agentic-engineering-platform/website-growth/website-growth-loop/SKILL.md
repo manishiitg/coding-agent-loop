@@ -7,7 +7,7 @@ description: Build a chat-led, multi-Crew Website Growth Automation for a newly 
 
 ## Outcome
 
-Coordinate specialist Crews to find useful website traffic opportunities, prepare reviewable improvements, and measure progress against the owner's visitor goal.
+Coordinate Crews to find traffic opportunities, prepare improvements, and measure the owner's visitor goal.
 
 ## When to use
 
@@ -15,11 +15,13 @@ Use for a recently launched website whose owner wants sustained relevant traffic
 
 ## Discovery and user direction
 
-Treat this Playbook as a proposal. Inspect the current Automation, goals, Crews, templates, skills, integrations, and access first. Show which agents can be reused, which must be created, their handoffs, cost and permissions, and what remains unknown. Ask only for material decisions; record the owner's answers. Selecting or installing the guidance is not approval to create agents or activate runs.
+Inspect the Automation, goals, Crews, skills, integrations, and access. Propose Crew reuse or creation, handoffs, cost, permissions, and blockers. Ask for material decisions and record answers. Selection alone does not authorize creation or runs.
+
+Track setup in `SETUP.json` beside this skill. Verify each check before adding its ID to `completed_steps`; save a source or artifact reference under `evidence[id]`. Preserve existing progress and report blockers.
 
 ## Required inputs
 
-Resolve the canonical site or page export, offer, audience, market, primary visitor action, site/crawl scope, named owner, goal metric, baseline or baseline-first decision, and publication boundary. Search Console and analytics are optional for the first plan; never invent traffic or ranking history.
+Resolve site, offer, audience, market, visitor action, crawl scope, owner, metric, baseline decision, and publication boundary. Search Console and analytics are optional initially; never invent history.
 
 ## Plan and AgentWorks tools
 
@@ -27,7 +29,7 @@ Start with two distinct Crew roles: Website Growth Starter as strategist and Sea
 
 ## Knowledge and persistence
 
-Keep owner decisions, site scope, audience, metric definitions, and Crew bindings in durable Workflow context. Persist source-linked briefs, opportunity lists, review decisions, shipped changes, and measurement windows as run artifacts. Pass only bounded artifacts between Crews.
+Save owner decisions, site scope, metrics, Crew bindings, source-linked results, and measurement windows. Pass bounded artifacts between Crews.
 
 ## Validation and reporting
 
@@ -42,6 +44,7 @@ Do not infer indexing from a public fetch, fabricate keyword volume or traffic, 
 - [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goal, route, and schedule decisions.
 - [Team and handoff contract](references/team-and-handoffs.md): exact roles, setup checks, artifacts, and run proof.
 - [Example run record](examples/website-growth-run.json): fictional evidence shape.
+- [Setup progress](SETUP.json): nine checks, saved evidence, and completed IDs.
 - [Catalog metadata](playbook.json): roster, inputs, and recommendations.
 
 ## Completion contract

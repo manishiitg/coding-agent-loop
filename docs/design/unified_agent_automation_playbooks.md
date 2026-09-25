@@ -1,6 +1,6 @@
 # Unified Playbooks for Crews and Automations
 
-Status: product contract with a Website Growth pilot, 2026-09-25. Ten Website Growth Crew templates are selectable in Crew creation, and the Website Growth Loop is available in the existing Workflow Builder Playbook catalog as a chat-led team proposal. Builder can create an approved Crew with `template_id`, local skill, and checklist. The shared v2 catalog, durable setup journal, typed handoff validation, and readiness gate below remain planned work; the pilot uses the current `agentworks-playbook/v1` installation and Workflow execution paths.
+Status: product contract with a Website Growth pilot, 2026-09-25. Ten Website Growth Crew templates are selectable in Crew creation, and the Website Growth Loop is available in the existing Workflow Builder Playbook catalog as a chat-led team proposal with a saved nine-check progress file. Builder can create an approved Crew with `template_id`, local skill, and checklist. The shared v2 catalog, action journal, server-verified handoff validation, and readiness gate below remain planned work; the pilot uses the current `agentworks-playbook/v1` installation and Workflow execution paths.
 
 ## The model
 

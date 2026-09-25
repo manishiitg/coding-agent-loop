@@ -283,7 +283,7 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     purpose: `Let people talk to this ${surface === 'crew' ? 'Crew member' : 'workflow'} from Slack.`,
     howTo: 'Choose whether it answers through its own Slack bot or a shared bot used by several projects and workflows.',
     steps: [
-      'Own bot: create a Slack app using “How to create a Slack app,” save its Bot and App tokens in this form, then test the connection.',
+      'Own bot: open “Where to get Slack tokens and set up the app,” copy the Bot and App tokens from Slack into this form, then test the connection.',
       'Invite the own bot to a Slack channel and @mention it. It answers for this work wherever you invite it.',
       `Shared bot: if it is not connected, ask an admin to set it up. Invite it to a channel, then add that channel’s ID here to route messages to this ${surface === 'crew' ? 'project' : 'workflow'}.`,
     ],

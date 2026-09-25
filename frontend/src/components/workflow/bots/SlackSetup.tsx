@@ -12,7 +12,7 @@ import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { SharedSlackBotSettings } from '../../admin/SlackAdminPanel'
 import { RouteChip } from './RouteChips'
-import { SlackAppSetupSteps, SlackChecksView } from './SlackAppSetupSteps'
+import { SlackAppSetupSteps, SlackChecksView, SlackTokenHint } from './SlackAppSetupSteps'
 import { routeId } from './types'
 
 // The Slack tab for one workflow or crew project answers a single question:
@@ -188,8 +188,8 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
         <Label className="mb-2 block">Bot name</Label>
         <Input type="text" value={slackConnName} onChange={e => setSlackConnName(e.target.value)} disabled={!canManageWorkflowSlack} placeholder="e.g. Support bot" title={ownTitle} />
       </div>
-      <SecretField label="Bot Token" value={slackConnBot} onChange={setSlackConnBot} disabled={!canManageWorkflowSlack} placeholder="xoxb-..." disabledTitle={ownTitle} />
-      <SecretField label="App Token (Socket Mode)" value={slackConnApp} onChange={setSlackConnApp} disabled={!canManageWorkflowSlack} placeholder="xapp-..." disabledTitle={ownTitle} />
+      <SecretField label="Bot Token" hint={<SlackTokenHint kind="bot" />} value={slackConnBot} onChange={setSlackConnBot} disabled={!canManageWorkflowSlack} placeholder="xoxb-..." disabledTitle={ownTitle} />
+      <SecretField label="App Token (Socket Mode)" hint={<SlackTokenHint kind="app" />} value={slackConnApp} onChange={setSlackConnApp} disabled={!canManageWorkflowSlack} placeholder="xapp-..." disabledTitle={ownTitle} />
       {own && (
         <ToggleRow label="Bot enabled" checked={slackConnEnabled} onCheckedChange={setSlackConnEnabled} disabled={!canManageWorkflowSlack} disabledTitle={ownTitle} />
       )}

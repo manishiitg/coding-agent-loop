@@ -7,7 +7,7 @@ import { Button } from '../ui/Button'
 import { SecretField } from '../ui/SecretField'
 import { ToggleRow } from '../ui/ToggleRow'
 import { StatusBanner } from '../workflow/bots/StatusBanner'
-import { SlackAppSetupSteps, SlackChecksView } from '../workflow/bots/SlackAppSetupSteps'
+import { SlackAppSetupSteps, SlackChecksView, SlackTokenHint } from '../workflow/bots/SlackAppSetupSteps'
 
 /**
  * Access → Slack (admins): the platform side of Slack. The shared bot is the
@@ -123,8 +123,8 @@ function SlackAdminSections({ showWorkflowBots = false, onSaved }: { showWorkflo
           disabledTitle={disabledTitle}
         />
         <SlackAppSetupSteps finalStep={<>Save below. Owners then invite the bot to their channels and add those channels in their workflow's Slack tab.</>} />
-        <SecretField label="Bot Token" value={botToken} onChange={setBotToken} disabled={!canManage} placeholder="xoxb-..." disabledTitle={disabledTitle} />
-        <SecretField label="App Token (Socket Mode)" value={appToken} onChange={setAppToken} disabled={!canManage} placeholder="xapp-..." disabledTitle={disabledTitle} />
+        <SecretField label="Bot Token" hint={<SlackTokenHint kind="bot" />} value={botToken} onChange={setBotToken} disabled={!canManage} placeholder="xoxb-..." disabledTitle={disabledTitle} />
+        <SecretField label="App Token (Socket Mode)" hint={<SlackTokenHint kind="app" />} value={appToken} onChange={setAppToken} disabled={!canManage} placeholder="xapp-..." disabledTitle={disabledTitle} />
         <div className="flex items-center gap-2">
           <Button onClick={() => void save()} disabled={!canManage || !dirty || saving || testing} title={disabledTitle} className="flex items-center gap-2">
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" />Saving...</> : <><CheckCircle className="h-4 w-4" />Save</>}

@@ -74,6 +74,19 @@ it("asks one question and defaults a fresh workflow to its own bot", async () =>
   expect(host.textContent).not.toContain("Add channel");
 });
 
+it("shows where to get each Slack token next to its field", async () => {
+  const host = await render(makeBots());
+  const botField = host.querySelector<HTMLInputElement>('input[placeholder="xoxb-..."]')?.parentElement?.parentElement;
+  const appField = host.querySelector<HTMLInputElement>('input[placeholder="xapp-..."]')?.parentElement?.parentElement;
+  expect(botField?.textContent).toContain("OAuth & Permissions → OAuth Tokens");
+  expect(botField?.textContent).toContain("Bot User OAuth Token");
+  expect(appField?.textContent).toContain("Basic Information → App-Level Tokens");
+  expect(appField?.textContent).toContain("connections:write");
+  expect(botField?.querySelector('a')?.getAttribute('href')).toBe('https://api.slack.com/apps');
+  expect(appField?.querySelector('a')?.getAttribute('href')).toBe('https://api.slack.com/apps');
+  expect(host.querySelector('summary')?.textContent).toContain('Where to get Slack tokens');
+});
+
 it("shows a configured own bot as a summary with no channel setup", async () => {
   const host = await render(makeBots({ own: ownBot }));
   expect(radio(host, /Its own bot/).checked).toBe(true);

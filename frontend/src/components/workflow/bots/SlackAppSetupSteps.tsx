@@ -9,10 +9,19 @@ const Code = ({ children }: { children: ReactNode }) => (
   <code className="rounded bg-muted px-1 font-mono">{children}</code>
 )
 
+export function SlackTokenHint({ kind }: { kind: 'bot' | 'app' }) {
+  return <>
+    In your <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">Slack app settings</a>,{' '}
+    {kind === 'bot'
+      ? <>open <b>OAuth &amp; Permissions → OAuth Tokens</b>. Install the app to your workspace, then copy the <b>Bot User OAuth Token</b> (<Code>xoxb-</Code>).</>
+      : <>open <b>Basic Information → App-Level Tokens</b>. Generate a token with <Code>connections:write</Code> and copy it (<Code>xapp-</Code>). Enable <b>Socket Mode</b> too.</>}
+  </>
+}
+
 export function SlackAppSetupSteps({ finalStep }: { finalStep: ReactNode }) {
   return (
     <details className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-      <summary className="cursor-pointer select-none font-medium text-foreground">How to create a Slack app</summary>
+      <summary className="cursor-pointer select-none font-medium text-foreground">Where to get Slack tokens and set up the app</summary>
       <ol className="mt-3 list-decimal space-y-3 pl-4 text-muted-foreground">
         <li>
           Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">api.slack.com/apps</a> → <b>Create New App</b> → <b>From scratch</b>. Pick a name and your workspace.
@@ -21,7 +30,7 @@ export function SlackAppSetupSteps({ finalStep }: { finalStep: ReactNode }) {
           <b>OAuth &amp; Permissions</b> → <b>Bot Token Scopes</b>. Add <Code>app_mentions:read</Code>, <Code>channels:history</Code>, <Code>groups:history</Code>, <Code>channels:read</Code>, <Code>groups:read</Code>, <Code>chat:write</Code>, <Code>chat:write.public</Code>, <Code>reactions:write</Code>, <Code>users:read</Code>, <Code>users:read.email</Code>, and optionally <Code>files:read</Code> for attachments.
         </li>
         <li>
-          <b>Socket Mode</b> → enable it and create an App-Level Token with <Code>connections:write</Code>. It starts with <Code>xapp-</Code>: that is the <b>App Token</b>.
+          <b>Basic Information</b> → <b>App-Level Tokens</b> → <b>Generate Token and Scopes</b>. Add <Code>connections:write</Code> and copy the <Code>xapp-</Code> <b>App Token</b>. Then enable <b>Socket Mode</b>.
         </li>
         <li>
           <b>Event Subscriptions</b> → enable and subscribe to the bot events <Code>app_mention</Code>, <Code>message.channels</Code> and <Code>message.groups</Code>. All three are required; leave the Request URL empty.

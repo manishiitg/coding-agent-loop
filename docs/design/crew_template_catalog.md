@@ -1,6 +1,6 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Finance Analyst v1, Tax Export Preparer v1, and Website Growth Starter v1 are available in the Crew creation dialog. They can be installed together in one Crew. The other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-25. Finance Analyst v1, Tax Export Preparer v1, and all ten Website Growth v1 specialists are available in the Crew creation dialog. They can be combined as capabilities in one Crew. The other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
 
 ## Product model
 
@@ -48,20 +48,20 @@ The creation picker is designed for a larger installed catalog: keep Blank Crew 
 
 ## Website Growth
 
-For a new company with a recently launched site, start with a result that can be produced from the public website and owner context. Add Search Console and analytics when available; a new site may not have enough history to support trend claims. One Crew can install several packs, while a separate Website Growth Loop Automation can revisit the agreed goal and measure whether actions shipped and useful traffic changed. The first pack is implemented; the specialists below are planned.
+For a new company with a recently launched site, start with a result that can be produced from the public website and owner context. Add Search Console and analytics when available; a new site may not have enough history to support trend claims. One Crew can install several packs, while the Website Growth Loop Workflow Playbook guides Builder through a separate multi-Crew Automation proposal. The ten specialist Crew templates below are available; the Automation Playbook guides setup in chat and does not start recurrence when selected.
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
 | **Website Growth Starter** | Audit the public site and produce a source-linked 30-day plan for attracting relevant visitors. **Available v1.** | Site URL or page export, offer, target audience, primary visitor action. | Website Growth Loop |
-| **SEO Analyst** | Prioritize crawl, indexability, internal-link, and on-page issues with page-level evidence. | Site, approved crawl scope, Search Console if available. | SEO Intelligence |
-| **Search Opportunity Mapper** | Map buyer questions and search intent to existing pages and a ranked content gap list. | Offer, audience, market, site pages, optional search data. | Search Opportunity Review |
-| **Content Brief Writer** | Create a sourced page brief with audience, angle, claims to verify, and success signal. | Topic, buyer need, brand guide, source material. | Content Brief Queue |
-| **Content Page Builder** | Draft a useful, reviewable page with sources, internal links, and a clear next action. | Approved brief, existing site content, publishing format. | Content Page Queue |
-| **Search Console Optimizer** | Find pages with measurable query opportunities and propose natural title, copy, or link improvements. | Authorized Search Console property or export with page/query data. | Search Query Review |
-| **Traffic & Engagement Analyst** | Explain landing-page, source, and conversion changes with a prioritized action list. | Analytics export or connection, event definitions, comparison window. | Website Traffic Review |
-| **AI Visibility Analyst** | Test buyer questions across chosen answer engines and summarize citation gaps. | Brand, competitors, buyer questions, measurement method. | AI Visibility Intelligence |
-| **Landing Page Optimizer** | Audit one conversion path and prepare a bounded page test or revision for review. | Page URL, visitor intent, target action, available conversion data. | Landing Page Experiment Review |
-| **Content Distribution Coordinator** | Find relevant channels and prepare a reviewable distribution plan and outreach drafts. | Published asset, audience, approved channels, contact policy. | Content Distribution Review |
+| **SEO Analyst** | Prioritize crawl, indexability, internal-link, and on-page issues with page-level evidence. **Available v1.** | Site, approved crawl scope, Search Console if available. | SEO Intelligence |
+| **Search Opportunity Mapper** | Map buyer questions and search intent to existing pages and a ranked content gap list. **Available v1.** | Offer, audience, market, site pages, optional search data. | Search Opportunity Review |
+| **Content Brief Writer** | Create a sourced page brief with audience, angle, claims to verify, and success signal. **Available v1.** | Topic, buyer need, brand guide, source material. | Content Brief Queue |
+| **Content Page Builder** | Draft a useful, reviewable page with sources, internal links, and a clear next action. **Available v1.** | Approved brief, existing site content, publishing format. | Content Page Queue |
+| **Search Console Optimizer** | Find pages with measurable query opportunities and propose natural title, copy, or link improvements. **Available v1.** | Authorized Search Console property or export with page/query data. | Search Query Review |
+| **Traffic & Engagement Analyst** | Explain landing-page, source, and conversion changes with a prioritized action list. **Available v1.** | Analytics export or connection, event definitions, comparison window. | Website Traffic Review |
+| **AI Visibility Analyst** | Test buyer questions across chosen answer engines and summarize citation gaps. **Available v1.** | Brand, competitors, buyer questions, measurement method. | AI Visibility Intelligence |
+| **Landing Page Optimizer** | Audit one conversion path and prepare a bounded page test or revision for review. **Available v1.** | Page URL, visitor intent, target action, available conversion data. | Landing Page Experiment Review |
+| **Content Distribution Coordinator** | Find relevant channels and prepare a reviewable distribution plan and outreach drafts. **Available v1.** | Published asset, audience, approved channels, contact policy. | Content Distribution Review |
 
 Suggested sequence: **audit and baseline → choose audience/search opportunities → improve or create pages → distribute → measure and repeat**. The first Website Growth Brief must not claim a ranking or traffic increase that has not been observed. Installing a template never grants Search Console, analytics, CMS, repository, email, or outreach access.
 

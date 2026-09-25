@@ -1,0 +1,14 @@
+{
+  "illustrative": true,
+  "site_url": "https://example.test",
+  "goal": { "visitor_action": "request a demo", "metric": "qualified organic demo requests", "baseline_mode": "baseline_first" },
+  "team": [
+    { "slot": "strategist", "crew_id": "example-growth-crew", "run_id": "example-run-1" },
+    { "slot": "search", "crew_id": "example-search-crew", "run_id": "example-run-2" }
+  ],
+  "handoffs": [
+    { "id": "strategy-to-search", "artifact_type": "growth-priority-brief/v1", "artifact_ref": "runs/example/brief.json", "validated": true }
+  ],
+  "result": { "status": "needs_owner_review", "priorities": ["Clarify the product page's buyer question", "Add a source-backed answer page"], "traffic_change": null },
+  "run_policy": { "mode": "manual", "scheduled": false }
+}

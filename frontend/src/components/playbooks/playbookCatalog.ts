@@ -15,7 +15,13 @@ export type PlaybookCatalogItem = {
   recommendedTools?: PlaybookRecommendedTool[]
   pulseFocus?: PlaybookPulseFocus[]
   outputs?: string[]
+  agentSlots?: PlaybookAgentSlot[]
+  handoffs?: PlaybookHandoff[]
+  setupChecks?: string[]
 }
+
+export type PlaybookAgentSlot = { id: string; agent_playbook_id: string; accepts?: string[]; required: boolean; output: string }
+export type PlaybookHandoff = { id: string; from: string; to: string; artifact_type: string; required: boolean }
 
 export type PlaybookChangelogEntry = {
   version: string
@@ -71,6 +77,16 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   { id: 'growth-experimentation-follow-through', title: 'Growth Experimentation and Follow-Through', description: 'Prioritize evidence-backed experiments, create tracked actions, and verify KPI improvement after shipping.', version: '0.2.0', category: 'Growth Analytics', order: 4, inputCount: 6, toolCount: 4, teamScope: 'small_team' },
   { id: 'seo-intelligence', title: 'SEO Intelligence', description: 'Find winnable keywords, diagnose technical SEO issues, and close content gaps with page-level briefs.', version: '0.1.0', category: 'Growth Analytics', order: 5, inputCount: 7, toolCount: 4, teamScope: 'small_team' },
   { id: 'ai-visibility-intelligence', title: 'AI Visibility Intelligence', description: 'Track AI-assistant brand citations against competitors and close gaps with content and authority changes.', version: '0.1.0', category: 'Growth Analytics', order: 6, inputCount: 6, toolCount: 3, teamScope: 'small_team' },
+  { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and search specialist to find relevant website traffic opportunities, then extend to content and measurement.', version: '0.1.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
+    { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
+    { id: 'search', agent_playbook_id: 'search-opportunity-mapper', accepts: ['seo-analyst'], required: true, output: 'search-opportunity-list/v1' },
+    { id: 'content', agent_playbook_id: 'content-brief-writer', required: false, output: 'content-brief/v1' },
+    { id: 'measurement', agent_playbook_id: 'traffic-engagement-analyst', required: false, output: 'traffic-readout/v1' },
+  ], handoffs: [
+    { id: 'strategy-to-search', from: 'strategist', to: 'search', artifact_type: 'growth-priority-brief/v1', required: true },
+    { id: 'search-to-content', from: 'search', to: 'content', artifact_type: 'search-opportunity-list/v1', required: false },
+    { id: 'shipped-work-to-measurement', from: 'content', to: 'measurement', artifact_type: 'shipped-change/v1', required: false },
+  ], setupChecks: ['goal_owner', 'metric_policy', 'team_bindings', 'site_scope', 'capabilities', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
 ] as const
 
 export const PLAYBOOK_CATEGORIES = [...new Set(PLAYBOOK_CATALOG.map(playbook => playbook.category))]

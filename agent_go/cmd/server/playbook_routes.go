@@ -38,8 +38,27 @@ type playbookCatalogItem struct {
 	RecommendedTools     []map[string]interface{} `json:"recommended_tools"`
 	PulseFocus           []map[string]interface{} `json:"pulse_focus"`
 	Outputs              []string                 `json:"outputs"`
+	AgentSlots           []playbookAgentSlot      `json:"agent_slots,omitempty"`
+	Handoffs             []playbookHandoff        `json:"handoffs,omitempty"`
+	SetupChecks          []string                 `json:"setup_checks,omitempty"`
 	Category             string                   `json:"category"`
 	SourceDir            string                   `json:"-"`
+}
+
+type playbookAgentSlot struct {
+	ID              string   `json:"id"`
+	AgentPlaybookID string   `json:"agent_playbook_id"`
+	Accepts         []string `json:"accepts,omitempty"`
+	Required        bool     `json:"required"`
+	Output          string   `json:"output"`
+}
+
+type playbookHandoff struct {
+	ID           string `json:"id"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	ArtifactType string `json:"artifact_type"`
+	Required     bool   `json:"required"`
 }
 
 type playbookChangelogEntry struct {

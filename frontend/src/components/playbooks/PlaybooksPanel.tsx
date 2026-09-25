@@ -97,6 +97,9 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
     const recommendedTools = selected.recommendedTools || []
     const pulseFocus = (selected.pulseFocus || []).filter(focus => focus.module === 'strategic_review')
     const outputs = selected.outputs || []
+    const agentSlots = selected.agentSlots || []
+    const handoffs = selected.handoffs || []
+    const setupChecks = selected.setupChecks || []
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <Button type="button" variant="link" size="sm" onClick={() => setSelected(null)} className="mb-4">
@@ -134,12 +137,29 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
               )}
               {requiredCapabilities.length > 0 && (
                 <div className="mt-4">
-                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Capabilities configured</div>
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Capabilities to set up</div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {requiredCapabilities.map(capability => <span key={capability} className="rounded-full border border-border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">{capability.replaceAll('_', ' ')}</span>)}
                   </div>
                 </div>
               )}
+            </section>
+          )}
+          {agentSlots.length > 0 && (
+            <section className="mt-4 rounded-lg border border-primary/20 bg-primary/[0.04] p-4" aria-label="Proposed Crew team">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Layers3 className="h-4 w-4 text-primary" /> Proposed Crew team</div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Builder will inspect your existing Crews, propose which specialists to reuse or create, and set up the reviewed team in chat. Choosing this Playbook creates no Crew members.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {agentSlots.map(slot => <div key={slot.id} className="rounded-lg border border-border bg-background p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold capitalize text-foreground">{slot.id.replaceAll('-', ' ')}</span><span className="text-[10px] text-muted-foreground">{slot.required ? 'Required' : 'Optional'}</span></div><p className="mt-1 text-xs text-muted-foreground">{slot.agent_playbook_id.replaceAll('-', ' ')}{slot.accepts?.length ? ` or ${slot.accepts.map(id => id.replaceAll('-', ' ')).join(', ')}` : ''}</p><p className="mt-1 text-[11px] text-muted-foreground">Output: {slot.output}</p></div>)}
+              </div>
+              {handoffs.length > 0 && <div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">Handoffs:</span> {handoffs.map(handoff => `${handoff.from} → ${handoff.to} (${handoff.artifact_type})`).join(' · ')}</div>}
+            </section>
+          )}
+          {setupChecks.length > 0 && (
+            <section className="mt-4 rounded-lg border border-border p-4" aria-label="Setup checks">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><CheckCircle2 className="h-4 w-4 text-primary" /> Setup checks</div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Builder verifies these with your actual team and first run. This is a setup plan, not a completed checklist.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">{setupChecks.map(check => <div key={check} className="flex items-center gap-2 rounded-md bg-muted/30 px-2.5 py-2 text-xs text-foreground/90"><CircleDot className="h-3 w-3 shrink-0 text-muted-foreground" />{check.replaceAll('_', ' ')}</div>)}</div>
             </section>
           )}
           {outputs.length > 0 && (
@@ -183,11 +203,11 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           {error && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</p>}
           <div className="mt-5 rounded-lg border border-dashed border-border p-4">
             <div className="flex items-center gap-2 text-sm font-medium"><CheckCircle2 className="h-4 w-4 text-muted-foreground" /> Setup with Builder</div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record. Builder first inspects the current workflow, shows what can be reused and what is missing, then asks focused questions before proposing changes. Installing guidance is not approval to edit or run the workflow.</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{agentSlots.length > 0 ? 'Using this proposal saves its guidance in the workflow. Continue in Builder chat to inspect existing Crews, review a concrete team and plan, and create or bind agents. Choosing the proposal starts no Crew, schedule, or run.' : 'Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record. Builder first inspects the current workflow, shows what can be reused and what is missing, then asks focused questions before proposing changes. Installing guidance is not approval to edit or run the workflow.'}</p>
             {installedSelection ? (
               <>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Installed v{installedSelection.version} · {installedSelection.status}</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> {agentSlots.length > 0 ? 'Proposal saved' : 'Installed'} v{installedSelection.version} · {installedSelection.status}</span>
                   <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. First inspect the existing workflow and summarize what can be reused and what is missing. Ask focused questions for unresolved customer choices before changing the workflow, record the answers as customer direction, and treat installation as guidance rather than approval. ${selected.setupPrompt || ''}`.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
                 </div>
                 {updateAvailable && (
@@ -207,7 +227,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                 )}
               </>
             ) : (
-              <Button type="button" size="sm" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : 'Use playbook'}</Button>
+              <Button type="button" size="sm" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : agentSlots.length > 0 ? 'Use proposal' : 'Use playbook'}</Button>
             )}
           </div>
         </div>

@@ -133,3 +133,45 @@ it('shows an available version and refreshes the installed playbook without clai
     await act(async () => root.unmount())
   }
 })
+
+it('shows Website Growth as a team proposal whose setup continues in Builder chat', async () => {
+  vi.mocked(playbooksApi.install).mockResolvedValueOnce({
+    id: 'website-growth-loop', title: 'Website Growth Loop', version: '0.1.0',
+    category: 'Website Growth', skill_name: 'agentworks-playbook-website-growth-loop',
+    source_hash: 'sha256:growth', status: 'draft', installed_at: '2026-09-25T00:00:00Z',
+  })
+  vi.mocked(playbooksApi.list).mockResolvedValueOnce([{
+    id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Grow relevant website traffic.',
+    version: '0.1.0', category: 'Website Growth', order: 1, inputCount: 4, toolCount: 2,
+    setupPrompt: 'Inspect existing Crews and propose a team before creating agents.',
+    agentSlots: [
+      { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
+      { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },
+    ],
+    handoffs: [{ id: 'strategy-to-search', from: 'strategist', to: 'search', artifact_type: 'growth-priority-brief/v1', required: true }],
+    setupChecks: ['goal_owner', 'team_bindings', 'test_run'],
+  }])
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    await act(async () => {
+      root.render(<PlaybooksPanel workspacePath="Workflow/growth" />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Open Website Growth Loop details"]'))
+    expect(container.textContent).toContain('Proposed Crew team')
+    expect(container.textContent).toContain('website growth starter')
+    expect(container.textContent).toContain('search opportunity mapper')
+    expect(container.textContent).toContain('Choosing this Playbook creates no Crew members')
+    expect(container.textContent).toContain('Setup checks')
+    expect(container.textContent).toContain('team bindings')
+    expect(container.textContent).toContain('Use proposal')
+    await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use proposal')) || null)
+    expect(container.textContent).toContain('Proposal saved v0.1.0 · draft')
+    expect(container.textContent).toContain('Continue setup in Builder')
+    const setup = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Continue setup in Builder'))
+    expect(setup?.getAttribute('data-message')).toContain('Inspect existing Crews and propose a team')
+  } finally {
+    await act(async () => root.unmount())
+  }
+})

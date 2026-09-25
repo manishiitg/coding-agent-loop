@@ -1,0 +1,37 @@
+package server
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestWebsiteGrowthCrewCatalogHasInstallableSpecialists(t *testing.T) {
+	ids := []string{
+		"website-growth-starter", "seo-analyst", "search-opportunity-mapper",
+		"content-brief-writer", "content-page-builder", "search-console-optimizer",
+		"traffic-engagement-analyst", "ai-visibility-analyst",
+		"landing-page-optimizer", "content-distribution-coordinator",
+	}
+	for _, id := range ids {
+		item, err := loadWebsiteGrowthCrewTemplate(id)
+		if err != nil {
+			t.Fatalf("load %s: %v", id, err)
+		}
+		if item.ID != id || item.Version != 1 || item.Role == "" || len(item.Files) != 3 {
+			t.Fatalf("incomplete %s template: %+v", id, item)
+		}
+		var setup struct {
+			TemplateID string            `json:"template_id"`
+			Checks     []json.RawMessage `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(item.Files["templates/"+id+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+			t.Fatalf("decode %s setup: %v", id, err)
+		}
+		if setup.TemplateID != id || len(setup.Checks) < 5 || len(setup.Checks) > 10 {
+			t.Fatalf("invalid %s setup: %+v", id, setup)
+		}
+	}
+	if _, err := loadWebsiteGrowthCrewTemplate("not-a-template"); err == nil {
+		t.Fatal("unknown template was accepted")
+	}
+}

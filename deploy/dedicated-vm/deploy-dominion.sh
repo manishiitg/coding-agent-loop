@@ -134,12 +134,14 @@ rm -f "$GOWORK_FILE" # regenerate fresh each run so it can never point at a stal
 
 RELEASE_ID="$(git -C "$REPO" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 RELEASE_DIR="$RELEASES_ROOT/$RELEASE_ID"
-mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/configs" "$RELEASE_DIR/frontend"
+mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/configs" "$RELEASE_DIR/frontend" "$RELEASE_DIR/playbooks"
 touch "$RELEASE_DIR/.deploying"
 trap 'rm -f "$RELEASE_DIR/.deploying"' EXIT
 cp "$REPO/deploy/common/prune-releases.py" "$RELEASE_DIR/prune-releases.py"
 ln -sfn /srv/dominion/logs "$RELEASE_DIR/logs"
 echo "==> Staging release $RELEASE_ID at $RELEASE_DIR"
+cp -a "$REPO/playbooks/." "$RELEASE_DIR/playbooks/"
+test -f "$RELEASE_DIR/playbooks/crew-agents/website-growth/catalog.json" || { echo 'FATAL: Website Growth Crew catalog is missing from release' >&2; exit 1; }
 
 export GOWORK="$GOWORK_FILE"
 

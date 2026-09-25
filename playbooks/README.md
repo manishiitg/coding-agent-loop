@@ -2,7 +2,7 @@
 
 Versioned, authorable skill packages for AgentWorks' workflow builder.
 
-Playbooks provide concise outcome guidance, decision criteria, and proven patterns for small engineering teams. They do not override the user's requested process or require one fixed workflow graph. The builder starts with one understandable workflow, preserves explicit user choices, and adds a separate workflow only for incompatible access or lifecycle boundaries.
+Playbooks provide concise outcome guidance, decision criteria, and proven patterns for small teams, including Website Growth. They do not override the user's requested process or require one fixed workflow graph. The builder starts with one understandable workflow, preserves explicit user choices, and adds a separate workflow only for incompatible access or lifecycle boundaries.
 
 ```text
 AgentWorks
@@ -31,13 +31,15 @@ AgentWorks
     │   ├── Incident Investigation and Coordination
     │   ├── Governed Remediation and Recovery
     │   └── Post-Incident Review and Actions
-    └── Growth Analytics
-        ├── Growth Data Foundation
-        ├── Funnel and Conversion Intelligence
-        ├── Activation and Retention Intelligence
-        ├── Growth Experimentation and Follow-Through
-        ├── SEO Intelligence
-        └── AI Visibility Intelligence
+    ├── Growth Analytics
+    │   ├── Growth Data Foundation
+    │   ├── Funnel and Conversion Intelligence
+    │   ├── Activation and Retention Intelligence
+    │   ├── Growth Experimentation and Follow-Through
+    │   ├── SEO Intelligence
+    │   └── AI Visibility Intelligence
+    └── Website Growth
+        └── Website Growth Loop
 ```
 
 ### Browser QA
@@ -107,6 +109,14 @@ All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engin
 | [AI Visibility Intelligence](agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) | Track AI-assistant brand citations against competitors and close gaps with content and authority changes. |
 
 Growth Analytics shares the [growth data model](agentic-engineering-platform/growth-analytics/references/growth-data-model.md) for identity, lineage, metric definitions, and data-quality rules.
+
+### Website Growth
+
+| Playbook | Outcome |
+| --- | --- |
+| [Website Growth Loop](agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) | Propose and build a multi-Crew path from site audit to buyer-question opportunities, then add reviewed content and measurement when useful. |
+
+The Website Growth Loop is installed as guidance in a Workflow. Builder chat inspects existing Crews, proposes a concrete team, and uses the `create_crew` template option to set up missing specialists after review. The ten Website Growth agent templates live in the Crew catalog; selecting this Workflow Playbook alone creates no Crew or recurring run.
 
 ## Authoring contract
 

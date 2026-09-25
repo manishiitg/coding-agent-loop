@@ -203,6 +203,53 @@ func TestCreateCrewProjectIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesWebsiteGrowthTemplateOnBuilderAction(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	req := CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Search Researcher",
+		Role: "Buyer-question and search opportunity researcher", Purpose: "Map site content gaps",
+		TemplateID: "search-opportunity-mapper", StepInstruction: "Return a sourced opportunity list.",
+		IdempotencyKey: "website-growth-specialist-1",
+	}
+	created, err := svc.CreateCrewProject(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := mock.files[created.WorkspacePath+"/skills/search-opportunity-mapper/SKILL.md"]; !ok {
+		t.Fatal("Builder-created Crew lacks its local specialist skill")
+	}
+	if _, ok := mock.files[created.WorkspacePath+"/templates/search-opportunity-mapper/TEMPLATE_SETUP.json"]; !ok {
+		t.Fatal("Builder-created Crew lacks its setup checklist")
+	}
+	var product struct {
+		Templates []struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[created.WorkspacePath+"/product.json"]), &product); err != nil {
+		t.Fatal(err)
+	}
+	if len(product.Templates) != 1 || product.Templates[0].ID != req.TemplateID || product.Templates[0].Version != 1 {
+		t.Fatalf("Crew template receipt = %+v", product.Templates)
+	}
+	var runtime struct {
+		Capabilities struct {
+			SelectedSkills []string `json:"selected_skills"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[created.WorkspacePath+"/workflow.json"]), &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Capabilities.SelectedSkills) != 1 || runtime.Capabilities.SelectedSkills[0] != req.TemplateID {
+		t.Fatalf("selected skills = %+v", runtime.Capabilities.SelectedSkills)
+	}
+	retry, err := svc.CreateCrewProject(ctx, req)
+	if err != nil || !retry.Duplicate || retry.CrewID != created.CrewID {
+		t.Fatalf("retry = %+v, %v", retry, err)
+	}
+}
+
 func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	svc, _, ctx := newCrewCreationTestEnv(t)
 	valid := CreateCrewRequest{
@@ -221,6 +268,7 @@ func TestCreateCrewProjectValidatesInput(t *testing.T) {
 		"empty key":                func(r *CreateCrewRequest) { r.IdempotencyKey = "" },
 		"bad workflow":             func(r *CreateCrewRequest) { r.WorkflowPath = "Chats/other" },
 		"other profile":            func(r *CreateCrewRequest) { r.ProfileID = "crewx" },
+		"unknown template":         func(r *CreateCrewRequest) { r.TemplateID = "unknown-specialist" },
 		"missing step instruction": func(r *CreateCrewRequest) { r.StepInstruction = " " },
 		"missing trigger text": func(r *CreateCrewRequest) {
 			r.Purpose, r.Instructions, r.TriggerMessage = "", "", ""

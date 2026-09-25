@@ -57,7 +57,7 @@ export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
           id={dialogId}
           role="dialog"
           aria-label={`${guide.title} walkthrough`}
-          className={`absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-5rem))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl ${isGmailGuide ? 'w-[min(28rem,calc(100vw-1.5rem))]' : 'w-[min(20rem,calc(100vw-1.5rem))]'}`}
+          className={`absolute right-0 top-full z-50 mt-2 overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-xl ${isGmailGuide ? 'max-h-[min(42rem,calc(100vh-5rem))] w-[min(40rem,calc(100vw-1.5rem))] p-5' : 'max-h-[min(32rem,calc(100vh-5rem))] w-[min(20rem,calc(100vw-1.5rem))] p-4'}`}
         >
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{guide.surface === 'crew' ? 'Crew' : 'AgentWorks'} · {guide.group}</p>
           <div className="flex items-start justify-between gap-3">

@@ -166,6 +166,8 @@ describe('Panel walkthroughs', () => {
 
       await act(async () => button.click())
       const dialog = host.querySelector('[role="dialog"]')!
+      expect(dialog.className).toContain('w-[min(40rem,calc(100vw-1.5rem))]')
+      expect(dialog.className).toContain('max-h-[min(42rem,calc(100vh-5rem))]')
       expect(dialog.querySelector('[aria-label="Gmail how-to answers"]')).not.toBeNull()
       expect(dialog.querySelectorAll('details')).toHaveLength(10)
       expect(dialog.textContent).toContain('Crew conversation')

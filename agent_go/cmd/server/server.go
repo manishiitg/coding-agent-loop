@@ -10070,6 +10070,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 				// Queueing is an accepted non-tmux submission. It is not evidence that
 				// the durable session is broken, so do not bypass mcpagent via tmux.
 				// Send accepted a non-CLI queue entry. Do not inject it again.
+				log.Printf("[QUERY->LIVE] Queued /api/query for injection session=%s provider=%s transport=%s status=%s: %.80s", sessionID, delivery.Provider, delivery.Transport, delivery.Status, message)
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.Status), "provider": string(delivery.Provider)})
 				return true
@@ -10086,6 +10087,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 		fallbackCancel()
 		if handled {
 			if err != nil {
+				log.Printf("[QUERY->LIVE] Retained-terminal fallback uncertain for session %s: %v", sessionID, err)
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
 			}
@@ -10095,6 +10097,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 			response := QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility, MessageID: messageID}
 			api.stampCodingAgentDeliveryTiming(r, &response, requestReceivedAt)
 			_ = json.NewEncoder(w).Encode(response)
+			log.Printf("[QUERY->LIVE] Delivered /api/query through retained-terminal fallback session=%s provider=%s transport=tmux: %.80s", sessionID, retainedProvider, message)
 			return true
 		}
 	}

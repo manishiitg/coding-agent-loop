@@ -19,8 +19,17 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 	if req.AgentProfileID != "" {
 		return api.agentProfileRetainedPolicyCompatible(ctx, session, req)
 	}
-	if !strings.HasPrefix(req.SelectedFolder, "Workflow/") {
-		return true, nil
+	folder := req.SelectedFolder
+	if !strings.HasPrefix(folder, "Workflow/") {
+		// Follow-ups often omit the folder and rely on session resumption.
+		// Resolve it from the session's last known workspace so a manifest
+		// provider change still trips the fingerprint compare below instead
+		// of silently reusing a stale retained runtime.
+		if active, ok := api.getActiveSession(session); ok && active != nil && strings.HasPrefix(active.WorkspacePath, "Workflow/") {
+			folder = active.WorkspacePath
+		} else {
+			return true, nil
+		}
 	}
 	validated, err := api.revalidateExecutionPrincipal(ctx, req)
 	if err != nil {
@@ -33,7 +42,7 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 		}
 		return false, err
 	}
-	manifest, found, err := ReadWorkflowManifest(validated, req.SelectedFolder)
+	manifest, found, err := ReadWorkflowManifest(validated, folder)
 	if err != nil {
 		return false, err
 	}
@@ -52,7 +61,7 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 					return false, nil
 				}
 			} else {
-				runtime, exists, readErr := ReadChatHistoryRuntimeForSession(GetUserIDFromContext(validated), session, req.SelectedFolder)
+				runtime, exists, readErr := ReadChatHistoryRuntimeForSession(GetUserIDFromContext(validated), session, folder)
 				if readErr != nil {
 					return false, readErr
 				}

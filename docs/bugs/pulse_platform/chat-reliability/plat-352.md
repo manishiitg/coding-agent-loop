@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `umbrella: durable-log refactor complete on main (RTS verification pending, CLI-reading follow-ups 2026-09-24/25 on main); turn-delivery hardening diagnosed 2026-09-25, fix deferred` |
+| Status | `umbrella: durable-log refactor complete on main (RTS verification pending, CLI-reading follow-ups 2026-09-24/25 on main); turn-delivery hardening implemented 2026-09-25, push/deploy/verify pending` |
 | Priority | P0 reliability track |
 | Owner | platform (chat reliability) |
 | Reported | 2026-09-22 (umbrella declared 2026-09-25) |
@@ -22,7 +22,7 @@ with their own files stay linked, not duplicated: PLAT-324
 (continuity), PLAT-178 (delivery/transcript recovery), PLAT-340
 (Stop/resume bindings), PLAT-351 (retained-turn settle).
 
-## Turn delivery: no silent drops into dead retained runtimes (2026-09-25, fix deferred)
+## Turn delivery: no silent drops into dead retained runtimes (2026-09-25, implemented, push/deploy/verify pending)
 
 Follow-up chat turns are short-circuited as retained live-input into a
 coding-agent CLI runtime that can no longer execute them. The request gets

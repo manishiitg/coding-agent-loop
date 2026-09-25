@@ -332,7 +332,7 @@ func InboxNote(files []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("INBOX — %d file(s) the parent uploaded are not filed yet: %s. File them with the process-file skill as a quiet background step this turn, then answer what the parent actually asked.\n", len(names), strings.Join(names, ", "))
+	return fmt.Sprintf("INBOX — %d unfiled upload(s): %s. If an upload matters to this request, use the process-file skill; otherwise leave it for later.\n", len(names), strings.Join(names, ", "))
 }
 
 // familyRootFromActivity maps ".../Chats/SparkQuill/activities/<activity>"

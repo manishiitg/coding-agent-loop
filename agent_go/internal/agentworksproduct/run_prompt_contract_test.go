@@ -21,6 +21,8 @@ func TestRunPromptCoversKnowledgeAndRouteSelection(t *testing.T) {
 		"route_selections",
 		"run_full_workflow` `variables`",
 		"ask for exactly that value",
+		"your reply is the answer",
+		"Do not answer with \"see report.md\"",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("run.md no longer says %q", want)

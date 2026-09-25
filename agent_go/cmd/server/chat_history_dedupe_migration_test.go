@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 )
 
@@ -96,5 +97,82 @@ func TestChatHistoryDedupeRemovesCopiesKeepsRealRepeats(t *testing.T) {
 	}
 	if forced, _ := dedupeChatHistories(docs, state, true, false); forced.Rewritten != 0 {
 		t.Fatalf("a deduped file must be stable: %+v", forced)
+	}
+}
+
+func TestTranscriptDatabaseLosesImportedCopiesOnly(t *testing.T) {
+	state := t.TempDir()
+	dbPath := filepath.Join(state, "structured-chat-events-v2.sqlite")
+	journal, err := internalevents.OpenSQLiteEventJournal(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := internalevents.NewEventStore(1)
+	store.SetDurableJournal(journal)
+	text := func(role, s string) string {
+		return `{"Role":"` + role + `","Parts":[{"Text":"` + s + `"}]}`
+	}
+	real := []string{text("human", "check"), text("ai", "one"), text("human", "check"), text("ai", "two")}
+	var rows []string
+	for copyIndex := 0; copyIndex < 5; copyIndex++ {
+		rows = append(rows, real...)
+	}
+	legacy := `{"updated_at":"2026-09-18T00:00:00Z","conversation_history":[` + strings.Join(rows, ",") + `]}`
+	events, err := decodeLegacyChatEvents([]byte(legacy), "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSessionPersistenceClass("chat-1", internalevents.SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+	store.SetSessionOwner("chat-1", "alice")
+	if err := store.ImportDurableChatEvents("chat-1", events); err != nil {
+		t.Fatal(err)
+	}
+	store.Stop()
+	journal.Close()
+
+	// Pad to the 50-event threshold with a second, clean session.
+	removed, err := dedupeImportedChatEvents(dbPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Fatalf("a session below the threshold must be left alone, removed %d", removed)
+	}
+	for copyIndex := 0; copyIndex < 12; copyIndex++ {
+		rows = append(rows, real...)
+	}
+	legacy = `{"updated_at":"2026-09-18T00:00:00Z","conversation_history":[` + strings.Join(rows, ",") + `]}`
+	journal, _ = internalevents.OpenSQLiteEventJournal(dbPath)
+	store = internalevents.NewEventStore(1)
+	store.SetDurableJournal(journal)
+	_ = store.SetSessionPersistenceClass("chat-2", internalevents.SessionPersistenceInteractiveChat)
+	store.SetSessionOwner("chat-2", "alice")
+	events, _ = decodeLegacyChatEvents([]byte(legacy), "chat-2")
+	if err := store.ImportDurableChatEvents("chat-2", events); err != nil {
+		t.Fatal(err)
+	}
+	store.Stop()
+	journal.Close()
+
+	removed, err = dedupeImportedChatEvents(dbPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, _ = internalevents.OpenSQLiteEventJournal(dbPath)
+	defer journal.Close()
+	left, _ := journal.LegacyImportedEvents("chat-2")
+	if len(left) != len(real) || removed != len(rows)-len(real) {
+		t.Fatalf("kept %d imported events (want %d), removed %d", len(left), len(real), removed)
+	}
+	checks := 0
+	for _, event := range left {
+		if strings.Contains(event.Key, `"check"`) {
+			checks++
+		}
+	}
+	if checks != 2 {
+		t.Fatalf("a message really sent twice must stay twice, got %d", checks)
 	}
 }

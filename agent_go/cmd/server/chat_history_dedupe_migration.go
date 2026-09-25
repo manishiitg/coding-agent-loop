@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 	"github.com/spf13/cobra"
@@ -94,6 +95,7 @@ type chatDedupeStats struct {
 	Scanned, Rewritten, Failed int
 	RowsBefore, RowsAfter      int
 	BytesBefore, BytesAfter    int64
+	EventsDeleted              int
 }
 
 func dedupeChatHistories(docsRoot, stateRoot string, force, dryRun bool) (chatDedupeStats, error) {
@@ -150,8 +152,13 @@ func dedupeChatHistories(docsRoot, stateRoot string, force, dryRun bool) (chatDe
 			log.Printf("[CHAT_DEDUPE] %s: %d -> %d rows, %.1f -> %.1f MB", rel, result.rowsBefore, result.rowsAfter, float64(result.bytesBefore)/1e6, float64(result.bytesAfter)/1e6)
 		}
 	}
-	summary := fmt.Sprintf("scanned=%d rewritten=%d failed=%d rows=%d->%d bytes=%.1fMB->%.1fMB dry_run=%v",
-		stats.Scanned, stats.Rewritten, stats.Failed, stats.RowsBefore, stats.RowsAfter, float64(stats.BytesBefore)/1e6, float64(stats.BytesAfter)/1e6, dryRun)
+	eventsDeleted, err := dedupeImportedChatEvents(filepath.Join(stateRoot, "structured-chat-events-v2.sqlite"), dryRun)
+	if err != nil {
+		return stats, fmt.Errorf("chat transcript database: %w", err)
+	}
+	stats.EventsDeleted = eventsDeleted
+	summary := fmt.Sprintf("scanned=%d rewritten=%d failed=%d rows=%d->%d bytes=%.1fMB->%.1fMB transcript_events_removed=%d dry_run=%v",
+		stats.Scanned, stats.Rewritten, stats.Failed, stats.RowsBefore, stats.RowsAfter, float64(stats.BytesBefore)/1e6, float64(stats.BytesAfter)/1e6, stats.EventsDeleted, dryRun)
 	log.Printf("[CHAT_DEDUPE] complete: %s", summary)
 	if dryRun {
 		return stats, nil
@@ -534,4 +541,65 @@ func writeFileAtomically(path string, content []byte) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// dedupeImportedChatEvents removes the same copies from the chat window's
+// transcript database. The one-time import of old JSON histories
+// (chat-events-v2) copied every duplicated row into it as its own event
+// (IDs "legacy-chat-..."); on RTS a builder chat showed 2,474 repeats among
+// 2,618 user messages. Only imported events are considered, with the same
+// rule as the files, so live events and messages really sent twice stay.
+func dedupeImportedChatEvents(databasePath string, dryRun bool) (int, error) {
+	if _, err := os.Stat(databasePath); err != nil {
+		return 0, nil // no transcript database on this installation
+	}
+	journal, err := internalevents.OpenSQLiteEventJournal(databasePath)
+	if err != nil {
+		return 0, err
+	}
+	defer journal.Close()
+	sessions, err := journal.SessionsWithLegacyEvents(50)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, sessionID := range sessions {
+		events, err := journal.LegacyImportedEvents(sessionID)
+		if err != nil {
+			return removed, err
+		}
+		rows := make([]chatDedupeRow, len(events))
+		for i, event := range events {
+			rows[i] = chatDedupeRow{key: event.Key}
+		}
+		kept := map[int]bool{}
+		for _, index := range planChatDedupe(rows) {
+			kept[index] = true
+		}
+		var drop []string
+		for i, event := range events {
+			if !kept[i] {
+				drop = append(drop, event.EventID)
+			}
+		}
+		if len(drop) == 0 {
+			continue
+		}
+		if dryRun {
+			removed += len(drop)
+			continue
+		}
+		deleted, err := journal.DeleteEvents(sessionID, drop)
+		if err != nil {
+			return removed, err
+		}
+		removed += int(deleted)
+		log.Printf("[CHAT_DEDUPE] transcript %s: removed %d of %d imported events", sessionID, deleted, len(events))
+	}
+	if !dryRun && removed > 0 {
+		if err := journal.Checkpoint(); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
 }

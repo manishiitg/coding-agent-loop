@@ -106,12 +106,42 @@ describe('Panel walkthroughs', () => {
       ))
       expect(host.querySelector('[role="dialog"]')?.textContent).toContain('saved instruction')
       expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Crew · Main toolbar')
-    expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
-    expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
-    expect(getWorkspacePanelGuide('Pulse · Platform health').group).toBe('Main toolbar')
-    expect(getWorkspacePanelGuide('Pulse · Issue Fix').purpose).toContain('tried to change')
-    expect(getWorkspacePanelGuide('Pulse · Issue Verification').purpose).toContain('checks')
-    expect(getWorkspacePanelGuide('Pulse · Issue Activity').purpose).toContain('history')
+      expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
+      expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
+      expect(getWorkspacePanelGuide('Pulse · Platform health').group).toBe('Main toolbar')
+      expect(getWorkspacePanelGuide('Pulse · Issue Fix').purpose).toContain('tried to change')
+      expect(getWorkspacePanelGuide('Pulse · Issue Verification').purpose).toContain('checks')
+      expect(getWorkspacePanelGuide('Pulse · Issue Activity').purpose).toContain('history')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('gives complex integration tabs concrete, surface-aware setup steps', async () => {
+    const topics = ['MCPs', 'Skills', 'Slack', 'WhatsApp', 'Connect']
+    for (const surface of ['crew', 'agentworks'] as const) {
+      for (const topic of topics) {
+        const guide = getWorkspacePanelGuide(`Integrations · ${topic}`, surface)
+        expect(guide.group).toBe('Setup')
+        expect(guide.steps?.length).toBeGreaterThanOrEqual(3)
+      }
+    }
+    expect(getWorkspacePanelGuide('Integrations · MCPs', 'crew').howTo).toContain('project')
+    expect(getWorkspacePanelGuide('Integrations · MCPs', 'agentworks').howTo).toContain('workflow')
+    expect(getWorkspacePanelGuide('Integrations · Slack', 'crew').steps?.join(' ')).toContain('channel’s ID')
+    expect(getWorkspacePanelGuide('Integrations · WhatsApp').steps?.join(' ')).toContain('@slug')
+    expect(getWorkspacePanelGuide('Integrations · Connect').howTo).toContain('MCPs tab')
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<WorkspaceViewHeader title="Integrations" helpTopic="Integrations · Skills" />))
+      await act(async () => (host.querySelector('[aria-label="Walkthrough: Integrations · Skills"]') as HTMLButtonElement).click())
+      const steps = host.querySelectorAll('[aria-label="Setup steps"] li')
+      expect(steps).toHaveLength(3)
+      expect(steps[0]?.textContent).toContain('selected skills')
     } finally {
       await act(async () => root.unmount())
       host.remove()

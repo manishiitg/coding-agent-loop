@@ -65,6 +65,11 @@ export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
           <p className="mt-2 text-sm leading-5 text-muted-foreground">{guide.purpose}</p>
           <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-foreground">How to use it</p>
           <p className="mt-1 text-sm leading-5 text-muted-foreground">{guide.howTo}</p>
+          {guide.steps && (
+            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-5 text-muted-foreground" aria-label="Setup steps">
+              {guide.steps.map(step => <li key={step} className="pl-0.5">{step}</li>)}
+            </ol>
+          )}
           <button type="button" onClick={close} className="mt-4 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90">Got it</button>
         </div>
       )}

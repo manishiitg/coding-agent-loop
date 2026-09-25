@@ -7,9 +7,10 @@ export type WorkspacePanelGuide = {
   group: WorkspacePanelGroup
   purpose: string
   howTo: string
+  steps?: string[]
 }
 
-type GuideCopy = Pick<WorkspacePanelGuide, 'purpose' | 'howTo'>
+type GuideCopy = Pick<WorkspacePanelGuide, 'purpose' | 'howTo' | 'steps'>
 
 const AGENTWORKS_GUIDES: Record<string, GuideCopy> = {
   Access: {
@@ -261,28 +262,54 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     howTo: 'Inspect what an upgrade changes before applying it to the workflow.',
   }),
   'Integrations · MCPs': surface => ({
-    purpose: `Choose app connections this ${surface === 'crew' ? 'Crew member' : 'workflow'} can use.`,
-    howTo: 'Review connected services and select the tools needed for this work.',
+    purpose: `MCPs (Model Context Protocol servers) give this ${surface === 'crew' ? 'Crew member' : 'workflow'} tools from external apps and services.`,
+    howTo: `A platform connection makes an app available; selecting it here lets this ${surface === 'crew' ? 'project' : 'workflow'} use it.`,
+    steps: [
+      `Check “This ${surface === 'crew' ? 'project' : 'workflow'}” for apps already selected. “Platform connected” shows apps you can select.`,
+      `Select an app to allow its tools here. Removing the selection does not disconnect the shared platform account.`,
+      'For a new app, search “Connect a new app” and follow its setup. On multi-user installations, an admin manages these shared connections.',
+    ],
   }),
   'Integrations · Skills': surface => ({
-    purpose: `Choose reusable skills that guide this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
-    howTo: 'Review available skills and enable or create one for a repeatable procedure.',
+    purpose: `Skills are reusable instructions that teach this ${surface === 'crew' ? 'Crew member' : 'workflow'} how to perform a task. They do not connect an app account.`,
+    howTo: `Skills live in a shared library, while the selection here controls which ones this ${surface === 'crew' ? 'project' : 'workflow'} can use.`,
+    steps: [
+      `Review the selected skills for this ${surface === 'crew' ? 'project' : 'workflow'} and remove any it no longer needs.`,
+      'Search the library and select a skill to make its instructions available here.',
+      'If it is missing, use Import or Ask AI to add it to the library, then select it for this work.',
+    ],
   }),
   'Integrations · Slack': surface => ({
-    purpose: `Connect Slack conversations to this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
-    howTo: 'Review the bot and its routing, then configure which Slack conversations it should answer.',
+    purpose: `Let people talk to this ${surface === 'crew' ? 'Crew member' : 'workflow'} from Slack.`,
+    howTo: 'Choose whether it answers through its own Slack bot or a shared bot used by several projects and workflows.',
+    steps: [
+      'Own bot: create a Slack app using “How to create a Slack app,” save its Bot and App tokens in this form, then test the connection.',
+      'Invite the own bot to a Slack channel and @mention it. It answers for this work wherever you invite it.',
+      `Shared bot: if it is not connected, ask an admin to set it up. Invite it to a channel, then add that channel’s ID here to route messages to this ${surface === 'crew' ? 'project' : 'workflow'}.`,
+    ],
   }),
   'Integrations · WhatsApp': surface => ({
-    purpose: `Connect WhatsApp messages to this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
-    howTo: 'Review the connected number and routing, then configure where messages should go.',
+    purpose: `Route WhatsApp messages to this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
+    howTo: 'The paired WhatsApp account is shared across AgentWorks. A route decides which project or workflow answers a message.',
+    steps: [
+      'Open the connection and pair a number by scanning the QR from WhatsApp → Linked Devices. Check that its status becomes Connected.',
+      'Send the displayed link code in a WhatsApp direct message to link that chat.',
+      `Add or review this ${surface === 'crew' ? 'project' : 'workflow'}’s @slug route, then start a message with @slug to send it here.`,
+    ],
   }),
   'Integrations · Gmail': surface => ({
     purpose: `Configure Gmail access for this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
     howTo: 'Review the connected account and email settings before changing how messages are handled.',
   }),
   'Integrations · Connect': () => ({
-    purpose: 'Connect a command line tool or another AI assistant to this AgentWorks installation.',
-    howTo: 'Follow the sign-in and bridge instructions, then verify the connection before using it.',
+    purpose: 'Let a terminal, local AI app, or hosted AI app use this AgentWorks installation.',
+    howTo: 'Choose where you will use AgentWorks. This tab lets another client access AgentWorks; the MCPs tab gives AgentWorks tools from external apps.',
+    steps: [
+      'Terminal or scripts: install the AgentWorks CLI and approve its browser sign-in.',
+      'AI app on this computer: install and sign in to the CLI, then add the shown MCP bridge to Codex, Claude Code, or another local client.',
+      'Hosted AI app: use the HTTPS MCP URL from a public AgentWorks server and approve the OAuth permission screen. A localhost URL cannot be reached from the cloud.',
+      'Review connected clients below and revoke access when a client should no longer use AgentWorks.',
+    ],
   }),
   'Access · This workflow': () => ({
     purpose: 'Control who can view, run, edit, and share this workflow.',

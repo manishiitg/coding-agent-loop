@@ -1,43 +1,19 @@
 ---
 name: process-file
-description: Read a newly uploaded file from the inbox, classify it, move it into the right subject/topic folder, and write a metadata JSON.
+description: File a parent upload into the right subject and topic with reusable extracted text.
 ---
 
 # Process an uploaded file
 
-Whenever there are files in `inbox/`, process each one before doing anything else:
+Use this when the parent asks about an upload or the file matters to the
+current task. Leave unrelated inbox files for later.
 
-1. **Read it.** First `file "inbox/<name>"` to see what it really is, then extract its actual content by following **skills/read-file/SKILL.md** — the canonical guide for reading any format (PDF via `pypdf`; scanned/complex/OCR via `liteparse`; Word/PowerPoint via `pandoc`; Excel via `openpyxl`; images via `read_image`; archives, audio/video, etc.). Only record content you actually extracted — never invent what you couldn't read.
-
-2. **Classify it** from the content (or the parent's description):
-   - `subject` — e.g. Mathematics, Science, English.
-   - `topic` — the specific topic, e.g. "quadratic equations".
-   - `type` — one of: notes, worksheet, textbook-page, homework, test, image, other.
-
-   **Be interactive — ask when in doubt.** Check `materials/` for subjects/topics that already exist. If the file's content doesn't clearly match any of them, looks ambiguous, or you cannot confidently classify it, do NOT guess: leave the file in `inbox/`, tell the parent what you see, and ask them which subject/topic it belongs to. Move and record it only once you are confident (or the parent has told you). It is always better to ask than to mis-file.
-
-3. **Move it** into the proper folder, keeping the original filename:
-   ```
-   mkdir -p "materials/<subject>/<topic>"
-   mv "inbox/<filename>" "materials/<subject>/<topic>/<filename>"
-   ```
-
-4. **Write metadata** next to it at `materials/<subject>/<topic>/<filename>.meta.json` — include the FULL text you extracted in step 1 as `extracted_text`, not just a summary. This is what makes step 1's read-image/OCR/liteparse work a one-time cost: any skill that needs this material later (creating an activity, the progress page, or you in a future chat) reads `extracted_text` straight from this file instead of re-running vision/OCR on the original again:
-   ```json
-   {
-     "original_name": "<original filename>",
-     "stored_path": "materials/<subject>/<topic>/<filename>",
-     "subject": "<subject>",
-     "topic": "<topic>",
-     "type": "<type>",
-     "summary": "<1-2 sentence summary of what the file contains>",
-     "key_concepts": ["<concept>", "<concept>"],
-     "extracted_text": "<the full text/transcription you extracted in step 1 — verbatim, not a paraphrase>",
-     "source": "parent-upload",
-     "processed_at": "<run: date -u +%Y-%m-%dT%H:%M:%SZ>"
-   }
-   ```
-
-5. **Tell the parent**, in plain words, what you filed and where, and confirm the subject/topic you chose so they can correct you if it is wrong.
-
-6. **Then end the turn with `suggest_actions`** — "Tell the parent" above is not the last step.
+1. Identify and read the file with `read-file`. Record only content you actually
+   extracted. Use the parent's description and existing `materials/` folders
+   to choose a subject and topic; ask if classification is genuinely unclear.
+2. Move the original into `materials/<subject>/<topic>/`, preserving its name.
+   Write `<filename>.meta.json` beside it with `original_name`, `stored_path`,
+   `subject`, `topic`, `type`, `summary`, `key_concepts`, `extracted_text`,
+   `source` (`parent-upload`) and `processed_at` (UTC). Keep the full extracted
+   text so later activities need not repeat OCR or transcription.
+3. Tell the parent what was filed and where, so they can correct the category.

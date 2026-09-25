@@ -313,7 +313,7 @@ func TestInboxNoteNamesTheUnfiledUploads(t *testing.T) {
 		t.Fatalf("empty inbox produced a note: %q", got)
 	}
 	got := InboxNote([]string{"_users/u1/Chats/SparkQuill/inbox/worksheet.pdf", "_users/u1/Chats/SparkQuill/inbox/photo.jpg"})
-	for _, want := range []string{"2 file(s)", "worksheet.pdf", "photo.jpg", "process-file"} {
+	for _, want := range []string{"2 unfiled upload(s)", "worksheet.pdf", "photo.jpg", "process-file", "otherwise leave it for later"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("inbox note %q lacks %q", got, want)
 		}

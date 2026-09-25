@@ -2165,26 +2165,22 @@ func (s *SlackService) GetThreadHistory(ctx context.Context, threadID ThreadID) 
 
 	var history []ThreadMessage
 	for _, msg := range msgs {
-		isBot := msg.BotID != "" || (s.botUserID != "" && msg.User == s.botUserID)
+		isSelf := (s.botUserID != "" && msg.User == s.botUserID) || (s.botID != "" && msg.BotID == s.botID)
+		isBot := msg.BotID != "" || isSelf
 
-		// Parse timestamp
-		ts := time.Now()
-		if msg.Timestamp != "" {
-			// Slack timestamps are Unix epoch with fractional seconds
-			parts := strings.SplitN(msg.Timestamp, ".", 2)
-			if len(parts) >= 1 {
-				var sec int64
-				fmt.Sscanf(parts[0], "%d", &sec)
-				ts = time.Unix(sec, 0)
-			}
+		ts, ok := parseSlackTS(msg.Timestamp)
+		if !ok {
+			ts = time.Now()
 		}
 
 		history = append(history, ThreadMessage{
 			UserID:    msg.User,
-			UserName:  msg.User, // Slack API returns user ID; resolving display names would need users.info
-			Text:      msg.Text,
+			UserName:  slackMessageAuthorName(msg), // humans: user ID (resolving display names needs users.info); apps: app name
+			Text:      slackMessageText(msg),
 			Timestamp: ts,
 			IsBot:     isBot,
+			IsSelf:    isSelf,
+			TS:        msg.Timestamp,
 		})
 	}
 

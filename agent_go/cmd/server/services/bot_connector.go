@@ -324,6 +324,12 @@ type ThreadMessage struct {
 	Text      string    `json:"text"`
 	Timestamp time.Time `json:"timestamp"`
 	IsBot     bool      `json:"is_bot"`
+	// IsSelf marks messages posted by this bot connection itself (its own
+	// replies and status lines). IsBot is also true for other apps' posts
+	// (Sentry, GitHub, other bots), which are real thread content.
+	IsSelf bool `json:"is_self,omitempty"`
+	// TS is the platform's own message id (Slack ts), when it has one.
+	TS string `json:"ts,omitempty"`
 }
 
 // MessageBlock represents a rich message block (buttons, sections, etc.)
@@ -532,6 +538,9 @@ type BotConversationManager struct {
 	mu         sync.RWMutex
 	connectors map[string]BotConnector      // platform name -> connector
 	sessions   map[string]*activeBotSession // threadKey -> active session tracking
+	// threadSeen is the per-thread watermark of thread messages already given
+	// to the agent, so follow-ups add only what was posted since.
+	threadSeen threadSeenTracker
 
 	chatStore       chathistory.Store
 	eventSubscriber BotEventSubscriber
@@ -1500,7 +1509,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		uid := active.UserID
 		active.mu.Unlock()
 		if m.followUpSession != nil && sid != "" {
-			m.startFollowUpTurn(active, msg, sid, uid, "threaded")
+			m.startFollowUpTurn(active, msg, sid, uid, "threaded", m.threadCatchupContext(msg, active.ThreadID))
 		} else {
 			log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sid)
 		}
@@ -1527,6 +1536,11 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// Each query still has its own execution ID and run logs.
 		if oldSessionID != "" {
 			msg.Text = m.withBotRuntimeState(active, msg.Text)
+			if supportsThreads {
+				// The conversation continues, so the first-turn history
+				// prepend does not run: add what was posted since.
+				msg.Text = withThreadCatchup(m.threadCatchupContext(msg, threadID), msg.Text)
+			}
 			go m.startNewSessionDirect(msg, threadID, oldSessionID)
 			return
 		}
@@ -1736,7 +1750,13 @@ func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession
 	}
 }
 
-func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string) bool {
+// threadContext, when set, is a catch-up block of thread messages posted
+// since the agent's last turn; it is prepended to the turn text.
+func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string, threadContext ...string) bool {
+	catchup := ""
+	if len(threadContext) > 0 {
+		catchup = threadContext[0]
+	}
 	if m.followUpSession == nil || sessionID == "" {
 		log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sessionID)
 		return false
@@ -1777,7 +1797,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
+		err := m.followUpSession(followCtx, m.turnRequestForActive(active, withThreadCatchup(catchup, m.withBotRuntimeState(active, msg.Text)), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 			if connector := m.GetConnector(platform); connector != nil {
@@ -3078,6 +3098,9 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 		log.Printf("[BOT_MANAGER] Failed to load thread history: %v", err)
 		return query
 	}
+	// Everything loaded here reaches the agent in this turn; later
+	// follow-ups add only messages posted after it.
+	m.markThreadHistorySeen(threadID, history)
 
 	// Filter out bot status messages (Starting session..., Session completed., etc.)
 	// and keep only meaningful conversation turns
@@ -3112,7 +3135,10 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	parts = append(parts, "## Previous Conversation in This Thread\n")
 	for _, msg := range meaningful[:len(meaningful)-1] {
 		role := "User"
-		if msg.IsBot {
+		if msg.IsBot && !msg.IsSelf && msg.UserName != "" {
+			// Another app's post (e.g. a Sentry alert), not this agent's reply.
+			role = msg.UserName + " (app)"
+		} else if msg.IsBot {
 			role = "Agent"
 		} else if msg.UserName != "" {
 			role = msg.UserName

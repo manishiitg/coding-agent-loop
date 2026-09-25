@@ -613,6 +613,7 @@ export function FileContentViewerBody({ headerAction }: { headerAction?: React.R
       >
         <WorkspaceViewHeader
           icon={FileText}
+          helpTopic="File"
           title={selectedFile?.path ? (
             <span className="inline-flex max-w-full items-center gap-1.5">
               <button

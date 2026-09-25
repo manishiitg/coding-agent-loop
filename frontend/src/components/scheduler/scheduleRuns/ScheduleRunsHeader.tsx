@@ -39,6 +39,7 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
     <WorkspaceViewHeader
       icon={compact ? undefined : Calendar}
       title={compact ? '' : panelTitle}
+      helpTopic={compact ? 'Schedules' : panelTitle}
       context={compact ? <>
         {navigation}
         <span className="text-xs text-muted-foreground">{summary.total} schedules{isSchedulerPaused ? ' · Scheduling paused' : ''}</span>

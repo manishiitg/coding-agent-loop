@@ -1,5 +1,9 @@
-import { isValidElement, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { Children, Fragment, cloneElement, isValidElement, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { WorkspaceViewTabs, type WorkspaceViewTabOption } from './WorkspaceViewTabs'
+import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
+import { getWorkspacePanelGuide } from './workspacePanelGuides'
+import { WorkspaceViewActions } from './WorkspaceViewActions'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 export interface WorkspaceViewHeaderTabs {
   value: string
@@ -19,11 +23,13 @@ type WorkspaceViewHeaderProps = {
   icon?: ComponentType<{ className?: string }> | ReactElement
   /** View title. */
   title: ReactNode
+  /** Guide topic when the visible title is dynamic or omitted. */
+  helpTopic?: string
   /** Inline context next to the title: counts, timestamps, badges. */
   context?: ReactNode
   /** Muted line under the title row. */
   subtitle?: ReactNode
-  /** Right side. Order rule: Ask AI left, refresh right; tertiary controls left of the pair. */
+  /** Right side. The walkthrough is placed between Ask AI and Refresh. */
   actions?: ReactNode
   /** Full-width row under the title (stats strip, pills). For tabs use the tabs prop. */
   below?: ReactNode
@@ -57,12 +63,35 @@ type WorkspaceViewHeaderProps = {
  *   render as-is at the same h-9 footprint
  * - title: text-sm font-semibold, rendered here — never override the size
  * - subtitle: text-xs text-muted-foreground, rendered here
- * - actions: AskAIButton + WorkspaceViewIconButton only (or the
- *   WorkspaceViewActions pair), Ask AI left and refresh right
+ * - actions: Ask AI, walkthrough, Refresh, with content chosen from the current view title
  */
+function isRefreshAction(node: ReactNode): boolean {
+  if (!isValidElement<{ label?: string; icon?: unknown; 'aria-label'?: string; children?: ReactNode }>(node)) return false
+  if (node.type === WorkspaceViewIconButton) return node.props.icon == null && /^refresh/i.test(node.props.label ?? '')
+  const label = node.props['aria-label']
+  if (typeof label === 'string' && /^refresh/i.test(label)) return true
+  return Children.toArray(node.props.children).some(isRefreshAction)
+}
+
+function insertWalkthrough(actions: ReactNode, walkthrough: ReactNode): ReactNode {
+  if (!walkthrough) return actions
+  if (isValidElement<{ walkthrough?: ReactNode }>(actions) && actions.type === WorkspaceViewActions) {
+    return cloneElement(actions, { walkthrough })
+  }
+  if (isValidElement<{ children?: ReactNode }>(actions) && actions.type === Fragment) {
+    const children = Children.toArray(actions.props.children)
+    const refreshIndex = children.findIndex(isRefreshAction)
+    if (refreshIndex >= 0) children.splice(refreshIndex, 0, walkthrough)
+    else children.push(walkthrough)
+    return <>{children}</>
+  }
+  return <>{actions}{walkthrough}</>
+}
+
 export function WorkspaceViewHeader({
   icon,
   title,
+  helpTopic,
   context,
   subtitle,
   actions,
@@ -74,6 +103,9 @@ export function WorkspaceViewHeader({
   tabActions,
 }: WorkspaceViewHeaderProps) {
   const tabExtra = tabs ? tabActions?.[tabs.value] : undefined
+  const guideTopic = helpTopic ?? (typeof title === 'string' ? title : '')
+  const guide = guideTopic ? getWorkspacePanelGuide(guideTopic) : null
+  const walkthrough = guide ? <WorkspacePanelGuideButton key="walkthrough" guide={guide} /> : null
   const renderIcon = () => {
     if (!icon) return null
     if (isValidElement(icon)) return icon
@@ -97,7 +129,7 @@ export function WorkspaceViewHeader({
             {subtitle && <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>}
           </div>
         </div>
-        {(actions || tabExtra) && <div className="flex shrink-0 items-center gap-2">{tabExtra}{actions}</div>}
+        {(actions || tabExtra || walkthrough) && <div className="flex shrink-0 items-center gap-2">{tabExtra}{insertWalkthrough(actions, walkthrough)}</div>}
       </div>
       {below}
       {tabs && (

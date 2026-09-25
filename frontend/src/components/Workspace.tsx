@@ -1920,6 +1920,7 @@ export default function Workspace({
         <WorkspaceViewHeader
           icon={Files}
           title={title}
+          helpTopic="Files"
           context={isSelectionMode && (
             <Tooltip>
               <TooltipTrigger asChild>

@@ -1,5 +1,6 @@
 import { AskAIButton } from './AskAIButton'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
+import type { ReactNode } from 'react'
 
 interface WorkspaceViewActionsProps {
   workspacePath: string | null
@@ -9,6 +10,7 @@ interface WorkspaceViewActionsProps {
   refreshLabel?: string
   /** Ask AI routing override (Crew panes route to the project chat). */
   onAsk?: (message: string) => void | Promise<void>
+  walkthrough?: ReactNode
 }
 
 /**
@@ -24,10 +26,12 @@ export function WorkspaceViewActions({
   refreshing = false,
   refreshLabel = 'Refresh view',
   onAsk,
+  walkthrough,
 }: WorkspaceViewActionsProps) {
   return (
     <div className="flex shrink-0 items-center gap-2">
       <AskAIButton workspacePath={workspacePath} message={message} iconOnly onAsk={onAsk} />
+      {walkthrough}
       <WorkspaceViewIconButton label={refreshLabel} onClick={onRefresh} disabled={refreshing} spinning={refreshing} />
     </div>
   )

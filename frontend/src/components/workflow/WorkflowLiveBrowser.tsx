@@ -6,6 +6,8 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
+import { getWorkspacePanelGuide } from './workspacePanelGuides'
 
 // Keep the persisted value for compatibility with existing browser selections,
 // but treat it as automatic activity following. Older clients described this
@@ -518,6 +520,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
               {PAGE_SIZES.map(size => <option key={size.value} value={size.value}>{size.label.replace(' page', '')}</option>)}
             </select>}
             {toolbar}
+            <WorkspacePanelGuideButton guide={getWorkspacePanelGuide('Browser')} />
           </div>
         </div>
       ) : slim ? (
@@ -538,6 +541,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           {expandToggle}
           {overflowMenu}
           {toolbar}
+          <WorkspacePanelGuideButton guide={getWorkspacePanelGuide('Browser')} />
         </div>
       ) : (
         <WorkspaceViewHeader

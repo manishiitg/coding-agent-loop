@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { Activity } from 'lucide-react'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewActions } from './WorkspaceViewActions'
+import { TooltipProvider } from '../ui/tooltip'
 
 describe('WorkspaceViewHeader', () => {
   it('lays out icon, title, context, subtitle, actions, and below in order', () => {
@@ -12,11 +14,11 @@ describe('WorkspaceViewHeader', () => {
         title="Costs"
         context={<span data-testid="context" />}
         subtitle="Where the money goes"
-        actions={<><button type="button" data-testid="ask-ai">Ask AI</button><button type="button" data-testid="refresh">Refresh</button></>}
+        actions={<><button type="button" data-testid="ask-ai">Ask AI</button><button type="button" data-testid="refresh" aria-label="Refresh costs">Refresh</button></>}
         below={<div data-testid="below" />}
       />,
     )
-    const order = ['data-testid="icon"', '>Costs<', 'data-testid="context"', 'Where the money goes', 'data-testid="ask-ai"', 'data-testid="refresh"', 'data-testid="below"']
+    const order = ['data-testid="icon"', '>Costs<', 'data-testid="context"', 'Where the money goes', 'data-testid="ask-ai"', 'Walkthrough: Costs', 'data-testid="refresh"', 'data-testid="below"']
       .map(token => html.indexOf(token))
     for (const index of order) expect(index).toBeGreaterThanOrEqual(0)
     expect([...order].sort((a, b) => a - b)).toEqual(order)
@@ -39,6 +41,20 @@ describe('WorkspaceViewHeader', () => {
     expect(tabActionIndex).toBeGreaterThanOrEqual(0)
     expect(tabActionIndex).toBeLessThan(askIndex)
     expect(render('skills')).not.toContain('data-testid="tab-action"')
+  })
+
+  it('keeps Refresh rightmost for the shared Ask AI action pair', () => {
+    const html = renderToStaticMarkup(
+      <TooltipProvider>
+        <WorkspaceViewHeader title="Memory" actions={<WorkspaceViewActions workspacePath="Crew/example" message="Explain memory" onRefresh={() => {}} />} />
+      </TooltipProvider>,
+    )
+    const ask = html.indexOf('aria-label="Ask AI"')
+    const walkthrough = html.indexOf('aria-label="Walkthrough: Memory"')
+    const refresh = html.indexOf('aria-label="Refresh view"')
+    expect(ask).toBeGreaterThanOrEqual(0)
+    expect(ask).toBeLessThan(walkthrough)
+    expect(walkthrough).toBeLessThan(refresh)
   })
 
   it('renders an icon reference in the standard h-9 tile', () => {

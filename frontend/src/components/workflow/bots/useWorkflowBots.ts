@@ -1198,7 +1198,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     canManageSlackDefault, canManageWorkflowSlack, hasProfileTarget: !!target,
     // slack: this workflow's own app
-    slackSelection,
+    slackSelection, slackAppDefaultName: targetLabel || workflow?.manifest.label || '',
     slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
     slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
     slackConnConfirmDelete, slackConnShowBot, setSlackConnShowBot, slackConnShowApp, setSlackConnShowApp,

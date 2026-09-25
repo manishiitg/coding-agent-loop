@@ -71,7 +71,7 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
       },
       {
         title: 'How do I create this work’s own bot?',
-        answer: <>Select <b>Its own bot</b>. Open <b>Where to get Slack tokens and set up the app</b>, follow the <b>Permissions and events</b> checklist, enter a bot name and both tokens, then click <b>Save &amp; test</b>.</>,
+        answer: <>Select <b>Its own bot</b>. Copy the manifest under <b>Create from manifest</b> into Slack (Create New App → From a manifest), or open <b>Where to get Slack tokens and set up the app by hand</b> and follow the <b>Permissions and events</b> checklist; then enter a bot name and both tokens, then click <b>Save &amp; test</b>.</>,
       },
       {
         title: 'Where do I get the two Slack tokens?',

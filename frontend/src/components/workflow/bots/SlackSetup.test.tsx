@@ -135,3 +135,21 @@ it("keeps shared bot settings for admins only", async () => {
   const admin = await render(makeBots({ routes, canManageSlackDefault: true }));
   expect(admin.querySelector('[data-testid="shared-bot-settings"]')).not.toBeNull();
 });
+
+it("offers a ready-made Slack app manifest named after the workflow", async () => {
+  const bots = { ...makeBots(), slackAppDefaultName: "Support Desk" } as React.ComponentProps<typeof SlackSetup>["bots"];
+  const host = await render(bots);
+  const section = host.querySelector('[aria-label="Create from manifest"]')!;
+  const manifest = JSON.parse(section.querySelector('pre')!.textContent || "");
+  expect(manifest.display_information.name).toBe("Support Desk");
+  expect(manifest.settings.socket_mode_enabled).toBe(true);
+  expect(section.textContent).toContain("From a manifest");
+  expect(section.textContent).toContain("Copy");
+  const nameInput = section.querySelector<HTMLInputElement>("#slack-manifest-name")!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(nameInput, "Ops Bot");
+    nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(JSON.parse(section.querySelector('pre')!.textContent || "").display_information.name).toBe("Ops Bot");
+});

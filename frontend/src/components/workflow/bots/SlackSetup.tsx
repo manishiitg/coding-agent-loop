@@ -12,7 +12,7 @@ import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { SharedSlackBotSettings } from '../../admin/SlackAdminPanel'
 import { RouteChip } from './RouteChips'
-import { SlackAppSetupSteps, SlackChecksView, SlackPermissionsChecklist, SlackTokenHint } from './SlackAppSetupSteps'
+import { SlackAppSetupSteps, SlackChecksView, SlackManifestSetup, SlackPermissionsChecklist, SlackTokenHint } from './SlackAppSetupSteps'
 import { routeId } from './types'
 
 // The Slack tab for one workflow or crew project answers a single question:
@@ -63,7 +63,7 @@ function ModeOption({ checked, disabled, title, onSelect, icon, label, hint }: {
 }
 
 type SlackSetupBots = Pick<WorkflowBots,
-  | 'readOnly' | 'workflowId'
+  | 'readOnly' | 'workflowId' | 'slackAppDefaultName'
   | 'slackOriginal' | 'loadSlack' | 'canManageSlackDefault' | 'slackLoading' | 'slackError' | 'slackSuccess'
   | 'canManageWorkflowSlack' | 'hasProfileTarget' | 'slackSelection'
   | 'slackConnName' | 'setSlackConnName' | 'slackConnBot' | 'setSlackConnBot' | 'slackConnApp' | 'setSlackConnApp'
@@ -155,7 +155,7 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
     canManageWorkflowSlack, slackSelection, slackConnConfirmDelete, removeWorkflowSlackConnection,
     slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
     slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
-    slackConnHasChanges, saveWorkflowSlackConnection, testWorkflowSlackConnection,
+    slackConnHasChanges, saveWorkflowSlackConnection, testWorkflowSlackConnection, slackAppDefaultName,
   } = bots
   const own = slackSelection.own
   const inviteHint = <>Invite it to a channel with <code className="rounded bg-muted px-1 font-mono">/invite @{own?.display_name || 'YourBot'}</code>, then @mention it. No channel setup needed here.</>
@@ -183,6 +183,7 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
 
   return (
     <FormSection title={own ? `Edit ${own.display_name}` : `Set up this ${noun}'s bot`} description={<>Create a Slack app for this {noun} and paste its two tokens. {inviteHint}</>}>
+      <SlackManifestSetup defaultName={slackConnName || slackAppDefaultName} finalStep={<>Save, then in Slack run <b>/invite @YourBot</b> in any channel and @mention it.</>} />
       <SlackAppSetupSteps finalStep={<>Save below, then in Slack run <b>/invite @YourBot</b> in any channel and @mention it.</>} />
       <SlackPermissionsChecklist />
       <div>

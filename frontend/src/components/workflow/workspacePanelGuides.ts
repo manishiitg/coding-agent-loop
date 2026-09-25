@@ -284,7 +284,8 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     howTo: 'Choose whether it answers through its own Slack bot or a shared bot used by several projects and workflows.',
     steps: [
       'Check “Permissions and events” for the required Bot Token scopes, Socket Mode app scope, and message events before installing the Slack app.',
-      'Own bot: open “Where to get Slack tokens and set up the app,” copy the Bot and App tokens from Slack into this form, then test the connection.',
+      'Fastest: copy the ready-made manifest under “Create from manifest” into Slack’s Create New App → From a manifest, then generate the App-Level Token and install the app.',
+      'Own bot: open “Where to get Slack tokens and set up the app by hand,” copy the Bot and App tokens from Slack into this form, then test the connection.',
       'Invite the own bot to a Slack channel and @mention it. It answers for this work wherever you invite it.',
       `Shared bot: if it is not connected, ask an admin to set it up. Invite it to a channel, then add that channel’s ID here to route messages to this ${surface === 'crew' ? 'project' : 'workflow'}.`,
     ],

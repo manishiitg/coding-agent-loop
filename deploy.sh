@@ -314,18 +314,29 @@ case "$SERVER" in
       fi
       ACTIVATE_FLAG="--activate"
     fi
-    # deploy-dominion.sh runs natively ON the box (native go build, pulls the
-    # three public source repos itself) — it is not something to exec
-    # locally. Its own on-disk copy at the fixed path below self-updates from
-    # the repo it just synced on every run (see the script's own comments),
-    # so this only ever needs to invoke that fixed path, never push a copy.
+    # deploy-dominion.sh runs natively ON the box. Upload the selected
+    # checkout's guarded script first: an older remote copy might not know
+    # how to fetch the requested branch and could otherwise stage main.
     DOMINION_HOST="${DOMINION_HOST:-116.202.210.102}"
     DOMINION_PORT="${DOMINION_PORT:-2299}"
     DOMINION_USER="${DOMINION_USER:-dominion}"
     DOMINION_REMOTE_SCRIPT="${DOMINION_REMOTE_SCRIPT:-/srv/dominion/deploy-dominion.sh}"
     SSH_ARGS=(-p "$DOMINION_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-    [[ -z "${DOMINION_SSH_KEY:-}" ]] || SSH_ARGS+=(-i "$DOMINION_SSH_KEY")
+    SCP_ARGS=(-P "$DOMINION_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+    if [[ -n "${DOMINION_SSH_KEY:-}" ]]; then
+      SSH_ARGS+=(-i "$DOMINION_SSH_KEY")
+      SCP_ARGS+=(-i "$DOMINION_SSH_KEY")
+    fi
+    printf -v REMOTE_SCRIPT_Q '%q' "$DOMINION_REMOTE_SCRIPT"
+    LOCAL_DOMINION_SCRIPT="$REPO_ROOT/deploy/dedicated-vm/deploy-dominion.sh"
+    scp "${SCP_ARGS[@]}" "$LOCAL_DOMINION_SCRIPT" "$DOMINION_USER@$DOMINION_HOST:$DOMINION_REMOTE_SCRIPT.next"
+    ssh "${SSH_ARGS[@]}" "$DOMINION_USER@$DOMINION_HOST" "chmod +x ${REMOTE_SCRIPT_Q}.next && mv ${REMOTE_SCRIPT_Q}.next $REMOTE_SCRIPT_Q"
     REMOTE_CMD=(bash "$DOMINION_REMOTE_SCRIPT")
+    if [[ -n "${DOMINION_BUILDER_REF:-}" ]]; then
+      git check-ref-format --branch "$DOMINION_BUILDER_REF" >/dev/null || { echo "Invalid DOMINION_BUILDER_REF: $DOMINION_BUILDER_REF" >&2; exit 2; }
+      printf -v BUILDER_REF_Q '%q' "$DOMINION_BUILDER_REF"
+      REMOTE_CMD=(env "DOMINION_BUILDER_REF=$BUILDER_REF_Q" bash "$DOMINION_REMOTE_SCRIPT")
+    fi
     [[ -z "$ACTIVATE_FLAG" ]] || REMOTE_CMD+=("$ACTIVATE_FLAG")
     exec ssh "${SSH_ARGS[@]}" "$DOMINION_USER@$DOMINION_HOST" "${REMOTE_CMD[@]}"
     ;;

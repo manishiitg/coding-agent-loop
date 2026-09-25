@@ -45,71 +45,157 @@ functions with some inputs**. Today each path looks different:
 
 ## Part 1: MCP
 
-### One set of tools
+### Surface: four core tools plus the gateway
 
-The server knows a target's kind from its ID (workflow IDs start with
-`wf_`; Crew IDs are UUIDs) or from its name.
+The MCP connection today exposes exactly two tools, `get_api_spec` and
+`call_tool`, and every operation goes through them. Most sessions need only
+four operations, so those become real MCP tools the client lists and can
+approve one by one. Everything else stays behind the gateway.
 
-| Tool | Does | Replaces |
-|---|---|---|
-| `list_agents` | Crews and workflows together. Per item: `id`, `kind`, `name`, a one-line purpose, and its functions (name plus required inputs). | `list_crews`, `list_workflows` |
-| `get_agent` | One Crew or workflow: identity, model or plan summary, full function schemas, recent activity. | `get_crew`, `get_workflow` |
-| `ask` | A free-text question. One continuing conversation per caller per target. Returns the answer, or a `call_id` if it takes longer. | `ask_crew`, `call_workflow_function(function: "ask")`, most uses of `chat` |
-| `call_function` | Runs a typed function. Inputs are checked first. Returns the result, or a `call_id`. | `call_crew_function`, `call_workflow_function` |
-| `get_call` | Status, latest progress, and the result of an `ask` or `call_function`. | `get_crew_function_call`, `get_workflow_function_call` |
+| Tool | Role |
+|---|---|
+| `list_agents` | Who is there, what each can do, who is busy |
+| `ask` | Free-text question; one conversation per caller per target; `about: call_id` reaches running work |
+| `call_function` | Typed run, inputs checked first; a refusal teaches the inputs |
+| `get_call` | Progress and result of either, including late and interrupted calls |
+| `get_api_spec` / `call_tool` | Everything else: runs, files, plans, knowledge, `chat`, per-function tools |
 
-These stay, for work that is really about workflows: `list_runs`, `get_run`,
-`run_status`, `run_reply_input`, `get_plan`, file and knowledge reads, and
-`chat` (see below).
+A token without run permission doesn't see `ask` or `call_function`.
+There is no `get_agent`: `list_agents` carries everything needed to call, and
+`call_function`'s refusal carries the full input details.
 
-**`target` accepts an ID or a name.** `ask("RTS Flow Tester", …)` and
-`call_function("rts-pr-reviweer", "review_pr", …)` resolve by name,
-ignoring case and punctuation. If a name matches several targets, the call
-is refused with the list of matches and their IDs. The resolved ID is
-included in every response, so later calls can use it.
+**Agents.** Crews and workflows are both *agents*. The kind is known from the
+ID (workflow IDs start with `wf_`; Crew IDs are UUIDs) or from the name.
+Every `target` argument accepts a name or an ID. Names match ignoring case
+and punctuation. A name matching several agents is refused, with the matches
+and their IDs listed.
 
-**`ask` details:**
-- `new_conversation: true` starts a fresh thread instead of continuing the
-  caller's existing one.
-- A workflow's `ask` goes to its Run-mode assistant, as today. The assistant
-  can answer questions, start runs with the right variables and report the
-  outcome, and file suggestions for the owner.
-- `chat` stays for the advanced case: several separate sessions on one
-  workflow, or following a specific run with `run_status`. The instructions
-  mention it only after `ask`.
+### `list_agents(query?, kind?, limit?, offset?)`
 
-**Waiting and polling.** An MCP call can't block for long, so `ask` and
-`call_function` wait up to `wait_seconds` (max 25) and then return
-`{status: "running", call_id, progress}`. Every response includes the
-target's latest progress line (for example "turn 3 of 5, leak scan clean so
-far"), so the agent can relay it instead of going quiet. The instructions say
-plainly: *if you get a `call_id`, call `get_call` until status is completed
-or failed*. A late answer after a timeout is delivered the same way as
-today.
+Kept minimal, around 40–60 tokens per agent:
 
-**Helpful refusals.** A refused `call_function` returns:
-- the exact problem ("missing required input `PR_NUMBER`");
-- the function's input schema, with defaults filled in (Part 2);
-- a ready-to-copy corrected call.
+```json
+{
+  "agents": [
+    {
+      "name": "rts-pr-reviweer",
+      "id": "wf_fc1adcb0",
+      "kind": "workflow",
+      "about": "Reviews pull requests on runloop-works/app and posts findings.",
+      "functions": ["review_pr(PR_NUMBER: int, GROUP?: staging|prod)"],
+      "busy": "review_pr for PR 151"
+    },
+    {
+      "name": "RTS Flow Tester",
+      "id": "14374cfd-a624-5dd3-91b3-eff300ec5d5c",
+      "kind": "crew",
+      "about": "Runs live Playwright checks of RTS flows and reports with video evidence."
+    }
+  ],
+  "next": "ask(name, message) for anything; call_function(name, function, args) to run one."
+}
+```
 
-An unknown function name returns the target's function list.
+- **Signatures** list only what a caller must or may pass. Inputs with a
+  default are left out. `?` marks optional inputs; `a|b` lists the choices.
+- **Fields shown only when they apply:**
+  - `functions`, when the agent has any;
+  - `busy`, while it is running or mid-turn;
+  - `can: "read only"`, when this connection can't ask or call it.
+- **Never included:** paths, plans, steps, variables, files, prompts.
+
+### `ask(target, message, new_conversation?, about?, wait_seconds?)`
+
+- **Continuing conversation.** One conversation per caller per target,
+  continued across asks. `new_conversation: true` starts fresh. The
+  conversation shows in the target's Chats as "Asked by <caller>", never in
+  its main chat.
+- **Workflow targets** are answered by the workflow's Run-mode assistant. It
+  answers, can start the right function and report back, and files
+  suggestions for the owner. **Crew targets:** the answer is the Crew's final
+  reply in that conversation.
+- **`about: call_id`** delivers the message into that running call's turn
+  (what `ask_function_update` does today). The answer arrives through
+  `get_call`. Without `about`, a second ask queues behind the running one, in
+  order.
+- **Waiting.** `wait_seconds` defaults to 20, max 25.
+
+Responses:
+- `{status: "answered", answer, call_id}`
+- `{status: "working", call_id, progress, queued_behind, next}`
+- `{status: "refused", reason}`: unknown or ambiguous target, no permission,
+  empty message. Nothing started.
+
+### `call_function(target, function, args, wait_seconds?)`
+
+Responses use the same statuses:
+- `completed`, with `result`, plus `run` for a workflow;
+- `working`;
+- `refused`, which carries the details the list leaves out:
+
+```json
+{
+  "status": "refused",
+  "problems": ["missing required input PR_NUMBER", "GROUP must be one of: staging, prod (got \"dev\")"],
+  "function": {
+    "signature": "review_pr(PR_NUMBER: int, GROUP?: staging|prod)",
+    "inputs": [
+      {"name": "PR_NUMBER", "type": "integer", "required": true, "description": "Pull request number"},
+      {"name": "GITHUB_OWNER", "type": "string", "default": "runloop-works"},
+      {"name": "GROUP", "type": "string", "enum": ["staging", "prod"]}
+    ]
+  },
+  "try": {"function": "review_pr", "args": {"PR_NUMBER": 149, "GROUP": "staging"}}
+}
+```
+
+Rules:
+- **Defaults** apply before validation.
+- **Type conversion** only where it's lossless: `"149"` becomes an integer,
+  `"true"` a boolean.
+- **Unknown inputs are refused**, never silently dropped: a typo must not
+  fall back to a saved value.
+- **All problems are reported at once.** An unknown function returns the
+  target's signatures.
+- **Callers** need run access, plus the function's own `allowed_callers` if
+  it has one.
+- **Crew calls** run in the caller's continuing conversation with the Crew,
+  the same one `ask` uses. **Workflow functions** start a run.
+- **No fallback to `ask`**: a typed call runs exactly as given or is
+  refused.
+
+### `get_call(call_id, wait_seconds?)`
+
+- **Long-polls:** waits up to `wait_seconds` for completion or new progress.
+- **Statuses:** `working`, `answered` / `completed`, `failed` (with `partial`
+  when the target produced something), `late` (the answer arrived after the
+  caller's wait timed out), `interrupted` (the server restarted; includes
+  `last_progress`).
+- **Also returns:**
+  - the last 5 progress lines, with times;
+  - `activity`: what the target is doing right now, from its session;
+  - `since`;
+  - a `next` line that states the last sign of life.
+- **Visibility:** only the caller and the target can read a call. Anyone
+  else gets not found.
+- **No cancel.** To stop a call, the caller can use
+  `ask(target, "stop", about: call_id)`.
 
 ### Compatibility
 
-The old tool names keep working as aliases: same handlers, same responses.
-They are dropped from the advertised list and the instructions, so new agents
-learn only the new names. Old names are removed after one release with no
-recorded use; the API already logs calls per tool.
+The old tools keep working as aliases through `call_tool`, with the same
+handlers and responses: `list_crews`, `list_workflows`, `get_crew`,
+`get_workflow`, `ask_crew`, `call_crew_function`, `call_workflow_function`,
+`ask_function_update`, `get_crew_function_call` and
+`get_workflow_function_call`. They are left out of the instructions. Old names
+are removed after one release with no recorded use.
 
-### Connection instructions (replaces the Crew and workflow paragraphs)
+### Connection instructions
 
-> AgentWorks has Crews (persistent agents) and workflows (automations).
-> Treat both the same way. `list_agents` shows them with their functions.
-> To ask anything, use `ask(target, message)`; each target keeps one
-> continuing conversation with you. To run something specific, use
-> `call_function(target, function, args)`; inputs are checked before
-> anything runs. Targets can be names or IDs. If a response has a `call_id`,
-> call `get_call` until it finishes and pass on its progress to the user.
+> Crews and workflows are both *agents*. `list_agents` shows them. Ask
+> anything with `ask`; run a specific function with `call_function`. If you
+> get a `call_id`, check it with `get_call` and tell the user the progress.
+> Use `get_api_spec` for anything else.
 
 ### Legacy CLI
 
@@ -162,7 +248,7 @@ optional `default`:
 
 - A required input with a default can be left out by any caller. The
   default is applied before validation, so every existing check still holds.
-- The Run now form, the refusal message and `get_agent` all show defaults.
+- The Run now form and the refusal message show defaults; `list_agents` signatures leave defaulted inputs out.
 - **Per-caller last values:** the UI pre-fills the viewer's last inputs for
   that function, kept in browser storage only. The server does not remember
   per-caller values, so a call never depends on hidden state.
@@ -212,7 +298,7 @@ A Crew's `ask` already sees its functions in its own chat; no change.
 |---|---|---|---|
 | 1 | `default` on inputs, applied before validation | S | Server only. Unblocks the short calls. |
 | 2 | Helpful refusals: schema, defaults, corrected call | S | Server only; all callers benefit. |
-| 3 | MCP: `list_agents`, `get_agent`, `ask`, `call_function`, `get_call`, name resolution, aliases, new instructions | M | Mostly wrappers over existing handlers. |
+| 3 | MCP: `list_agents`, `ask`, `call_function`, `get_call` as real MCP tools; name resolution; aliases; new instructions | M | Mostly wrappers over existing handlers. |
 | 4 | Function card: Run now form, defaults, copy call | M | Frontend plus one "run as viewer" endpoint that reuses `startCrewFunctionCall`. |
 | 5 | Workflow `ask` prompt lists functions and asks for missing inputs | S | Prompt text plus a test. |
 | 6 | Generated per-function names in `get_api_spec` | S | |

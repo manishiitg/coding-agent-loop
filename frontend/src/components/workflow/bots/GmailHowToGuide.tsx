@@ -1,11 +1,10 @@
 import { ChevronRight } from 'lucide-react'
 
 type GmailHowToGuideProps = {
-  hasAccount: boolean
   scopeNoun: 'workflow' | 'project'
 }
 
-export function GmailHowToGuide({ hasAccount, scopeNoun }: GmailHowToGuideProps) {
+export function GmailHowToGuide({ scopeNoun }: GmailHowToGuideProps) {
   const questions = [
     {
       title: 'How do I connect my first account?',
@@ -50,12 +49,12 @@ export function GmailHowToGuide({ hasAccount, scopeNoun }: GmailHowToGuideProps)
   ]
 
   return (
-    <section aria-label="Gmail how-to answers" className="rounded-lg border border-border bg-muted/20 p-3">
+    <section aria-label="Gmail how-to answers" className="mt-3 rounded-lg border border-border bg-muted/20 p-3">
       <h3 className="text-sm font-semibold text-foreground">Gmail: how do I…?</h3>
-      <p className="mt-1 text-xs text-muted-foreground">Open a question for the steps you need. The detailed Google Cloud setup guide is below.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Open a question for the steps you need. For full Google Cloud setup, expand First-time setup guide in the Gmail panel.</p>
       <div className="mt-3 divide-y divide-border rounded-md border border-border bg-background">
-        {questions.map((question, index) => (
-          <details key={question.title} open={index === 0 && !hasAccount} className="group px-3 py-2">
+        {questions.map(question => (
+          <details key={question.title} className="group px-3 py-2">
             <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-foreground [&::-webkit-details-marker]:hidden">
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
               {question.title}

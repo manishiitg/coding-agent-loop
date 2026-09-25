@@ -2,11 +2,13 @@ import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { CircleHelp, X } from 'lucide-react'
 import { getWorkspacePanelGuide } from './workspacePanelGuides'
 import { WorkspacePanelGuideContext } from './WorkspacePanelGuideContext'
+import { GmailHowToGuide } from './bots/GmailHowToGuide'
 
 /** A small, on-demand explanation attached to a workspace panel header. */
 export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
   const surface = useContext(WorkspacePanelGuideContext)
   const guide = getWorkspacePanelGuide(topic, surface)
+  const isGmailGuide = topic === 'Integrations · Gmail'
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -55,7 +57,7 @@ export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
           id={dialogId}
           role="dialog"
           aria-label={`${guide.title} walkthrough`}
-          className="absolute right-0 top-full z-50 mt-2 max-h-[min(28rem,calc(100vh-5rem))] w-[min(20rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+          className={`absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-5rem))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl ${isGmailGuide ? 'w-[min(28rem,calc(100vw-1.5rem))]' : 'w-[min(20rem,calc(100vw-1.5rem))]'}`}
         >
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{guide.surface === 'crew' ? 'Crew' : 'AgentWorks'} · {guide.group}</p>
           <div className="flex items-start justify-between gap-3">
@@ -65,6 +67,7 @@ export function WorkspacePanelGuideButton({ topic }: { topic: string }) {
           <p className="mt-2 text-sm leading-5 text-muted-foreground">{guide.purpose}</p>
           <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-foreground">How to use it</p>
           <p className="mt-1 text-sm leading-5 text-muted-foreground">{guide.howTo}</p>
+          {isGmailGuide && <GmailHowToGuide scopeNoun={surface === 'crew' ? 'project' : 'workflow'} />}
           {guide.steps && (
             <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-5 text-muted-foreground" aria-label="Setup steps">
               {guide.steps.map(step => <li key={step} className="pl-0.5">{step}</li>)}

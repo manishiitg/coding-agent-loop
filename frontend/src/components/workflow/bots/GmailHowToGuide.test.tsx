@@ -11,13 +11,13 @@ vi.mock('../../../services/api', () => ({ getApiBaseUrl: () => 'http://localhost
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 describe('Gmail help', () => {
-  it('opens first-account help when Gmail is empty and answers the common tasks', () => {
+  it('answers common Gmail tasks inside the walkthrough', () => {
     const host = document.createElement('div')
-    host.innerHTML = renderToStaticMarkup(<GmailHowToGuide hasAccount={false} scopeNoun="project" />)
+    host.innerHTML = renderToStaticMarkup(<GmailHowToGuide scopeNoun="project" />)
 
     const answers = host.querySelectorAll('details')
     expect(answers).toHaveLength(10)
-    expect(answers[0]?.hasAttribute('open')).toBe(true)
+    expect(host.querySelector('details[open]')).toBeNull()
     expect(host.textContent).toContain('Add & sign in')
     expect(host.textContent).toContain('Reconnect with selected access')
     expect(host.textContent).toContain('Currently authorized')
@@ -27,10 +27,9 @@ describe('Gmail help', () => {
     expect(host.textContent).toContain('Crew conversation')
   })
 
-  it('keeps answers collapsed for existing accounts and names the workflow context', () => {
+  it('names the workflow context', () => {
     const host = document.createElement('div')
-    host.innerHTML = renderToStaticMarkup(<GmailHowToGuide hasAccount scopeNoun="workflow" />)
-    expect(host.querySelector('details[open]')).toBeNull()
+    host.innerHTML = renderToStaticMarkup(<GmailHowToGuide scopeNoun="workflow" />)
     expect(host.textContent).toContain('workflow run')
   })
 

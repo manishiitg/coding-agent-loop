@@ -131,7 +131,7 @@ describe('Panel walkthroughs', () => {
     expect(getWorkspacePanelGuide('Integrations · MCPs', 'agentworks').howTo).toContain('workflow')
     expect(getWorkspacePanelGuide('Integrations · Slack', 'crew').steps?.join(' ')).toContain('channel’s ID')
     expect(getWorkspacePanelGuide('Integrations · WhatsApp').steps?.join(' ')).toContain('@slug')
-    expect(getWorkspacePanelGuide('Integrations · Gmail').howTo).toContain('Gmail: how do I…?')
+    expect(getWorkspacePanelGuide('Integrations · Gmail').howTo).toContain('Open a question below')
     expect(getWorkspacePanelGuide('Integrations · Gmail').steps?.join(' ')).toContain('Reconnect')
     expect(getWorkspacePanelGuide('Integrations · Connect').howTo).toContain('MCPs tab')
 
@@ -144,6 +144,34 @@ describe('Panel walkthroughs', () => {
       const steps = host.querySelectorAll('[aria-label="Setup steps"] li')
       expect(steps).toHaveLength(3)
       expect(steps[0]?.textContent).toContain('selected skills')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('shows Gmail how-to answers only when its question-mark walkthrough opens', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(
+        <WorkspacePanelGuideContext.Provider value="crew">
+          <WorkspaceViewHeader title="Integrations" helpTopic="Integrations · Gmail" />
+        </WorkspacePanelGuideContext.Provider>,
+      ))
+      const button = host.querySelector('[aria-label="Walkthrough: Integrations · Gmail"]') as HTMLButtonElement
+      expect(button).not.toBeNull()
+      expect(host.querySelector('[aria-label="Gmail how-to answers"]')).toBeNull()
+
+      await act(async () => button.click())
+      const dialog = host.querySelector('[role="dialog"]')!
+      expect(dialog.querySelector('[aria-label="Gmail how-to answers"]')).not.toBeNull()
+      expect(dialog.querySelectorAll('details')).toHaveLength(10)
+      expect(dialog.textContent).toContain('Crew conversation')
+
+      await act(async () => button.click())
+      expect(host.querySelector('[aria-label="Gmail how-to answers"]')).toBeNull()
     } finally {
       await act(async () => root.unmount())
       host.remove()

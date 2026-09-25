@@ -300,7 +300,7 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
   }),
   'Integrations · Gmail': surface => ({
     purpose: `Connect a Google account to send notifications and choose which Gmail or Workspace access this ${surface === 'crew' ? 'Crew member' : 'workflow'} may use.`,
-    howTo: 'Open “Gmail: how do I…?” for answers about setup, permissions, sender selection, delivery, and sign-in problems.',
+    howTo: 'Open a question below for help with setup, permissions, sender selection, delivery, or sign-in problems.',
     steps: [
       'First account: follow the First-time setup guide, upload a Google Cloud OAuth client JSON under Sending accounts, and finish Google sign-in.',
       'Choose only the access needed: notifications can send without mailbox read or agent-authored reply permission.',

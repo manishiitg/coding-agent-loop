@@ -15,7 +15,6 @@ import { AskAIButton } from '../AskAIButton'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { GmailSetupGuide } from './GmailSetupGuide'
-import { GmailHowToGuide } from './GmailHowToGuide'
 
 // ── Email notifications (account-wide, shared by every workflow) ──────────
 
@@ -338,7 +337,6 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
         <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
       ) : (
         <>
-          <GmailHowToGuide hasAccount={gmailConnections.length > 0} scopeNoun={scopeNoun} />
           <FormSection
             title={
               <span className="flex items-center gap-2">

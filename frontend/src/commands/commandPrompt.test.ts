@@ -13,6 +13,11 @@ describe('renderCommandPrompt', () => {
     expect(renderCommandPrompt(daily, ' shipped WEB-12 ')).toMatch(/Additional context from me: shipped WEB-12$/)
   })
 
+  it('appends typed text to a command without the placeholder', () => {
+    expect(renderCommandPrompt('Sync the sprint.', 'only WEB-12')).toBe('Sync the sprint.\n\nonly WEB-12')
+    expect(renderCommandPrompt('Sync the sprint.', '')).toBe('Sync the sprint.')
+  })
+
   it('keeps inline placeholders as empty values', () => {
     expect(renderCommandPrompt('Call guidance(kind="design-plan", focus="{{context}}") now.', ''))
       .toBe('Call guidance(kind="design-plan", focus="") now.')

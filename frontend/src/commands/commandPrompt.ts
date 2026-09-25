@@ -12,7 +12,11 @@ const LABEL_LINE = /:[ \t]*$/
 // rather than running the command.
 export function renderCommandPrompt(template: string, context: string): string {
   const value = context.trim()
-  if (value) return template.replace(CONTEXT_PLACEHOLDER, value).trim()
+  if (value) {
+    // Commands saved before {{context}} was enforced still get the typed text.
+    if (!template.includes('{{context}}')) return `${template.trim()}\n\n${value}`
+    return template.replace(CONTEXT_PLACEHOLDER, value).trim()
+  }
 
   const lines = template.split('\n')
   const kept: string[] = []

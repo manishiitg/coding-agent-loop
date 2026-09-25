@@ -88,6 +88,7 @@ func CreateCommandAt(workspaceAPIURL, commandsPath, folderName, content string) 
 	if err := validateFolderName(folderName); err != nil {
 		return nil, err
 	}
+	content = EnsureContextPlaceholder(content)
 	// Validate content first
 	frontmatter, body, err := ValidateCommandContent(content)
 	if err != nil {
@@ -128,6 +129,7 @@ func UpdateCommandAt(workspaceAPIURL, commandsPath, folderName, content string) 
 	if err := validateFolderName(folderName); err != nil {
 		return nil, err
 	}
+	content = EnsureContextPlaceholder(content)
 	frontmatter, body, err := ValidateCommandContent(content)
 	if err != nil {
 		return nil, fmt.Errorf("invalid command content: %w", err)
@@ -165,6 +167,21 @@ func DeleteCommandAt(workspaceAPIURL, commandsPath, folderName string) error {
 	}
 
 	return nil
+}
+
+// ContextPlaceholder is replaced with the text the user typed alongside the
+// slash command.
+const ContextPlaceholder = "{{context}}"
+
+// EnsureContextPlaceholder appends {{context}} on its own line to a command
+// that does not use it, so text typed with the command reaches the agent
+// instead of being dropped. On its own line it renders to nothing when the
+// user types nothing.
+func EnsureContextPlaceholder(content string) string {
+	if strings.Contains(content, ContextPlaceholder) {
+		return content
+	}
+	return strings.TrimRight(content, " \t\r\n") + "\n\n" + ContextPlaceholder + "\n"
 }
 
 func validateFolderName(folderName string) error {

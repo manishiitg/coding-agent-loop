@@ -45,7 +45,7 @@ func (api *StreamingAPI) registerCustomCommandTools(reg definitionToolRegistrar,
 			"action":      map[string]interface{}{"type": "string", "enum": []string{"list", "create", "update", "delete"}},
 			"name":        map[string]interface{}{"type": "string", "description": "Slash command name without the slash."},
 			"description": map[string]interface{}{"type": "string", "description": "Short label shown in the slash menu."},
-			"prompt":      map[string]interface{}{"type": "string", "description": "Prompt submitted by the command. {{context}} inserts text typed before the slash."},
+			"prompt":      map[string]interface{}{"type": "string", "description": "Prompt submitted by the command. {{context}} inserts the text the user types with the command; put it on its own line (optionally after a \"Label:\" line) so it disappears when nothing is typed. It is appended automatically when missing."},
 			"icon":        map[string]interface{}{"type": "string", "enum": []string{"terminal", "zap", "eye", "code", "file-text", "message-circle", "search", "bookmark", "star"}},
 		}, "required": []string{"action"},
 	}, func(_ context.Context, args map[string]interface{}) (string, error) {

@@ -109,6 +109,9 @@ describe('Panel walkthroughs', () => {
     expect(getWorkspacePanelGuide('Knowledge · Database').group).toBe('Ops')
     expect(getWorkspacePanelGuide('Identity · Secrets', 'crew').group).toBe('Setup')
     expect(getWorkspacePanelGuide('Pulse · Platform health').group).toBe('Main toolbar')
+    expect(getWorkspacePanelGuide('Pulse · Issue Fix').purpose).toContain('tried to change')
+    expect(getWorkspacePanelGuide('Pulse · Issue Verification').purpose).toContain('checks')
+    expect(getWorkspacePanelGuide('Pulse · Issue Activity').purpose).toContain('history')
     } finally {
       await act(async () => root.unmount())
       host.remove()

@@ -196,6 +196,18 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     purpose: 'Inspect the checks that keep this automation and its runtime healthy.',
     howTo: 'Review Plan Drift, Technical, and Architecture checks. Open a maintenance issue to see its fix, verification, and activity.',
   }),
+  'Pulse · Issue Fix': () => ({
+    purpose: 'See what Pulse tried to change for this issue.',
+    howTo: 'Review each repair attempt, its outcome, and any changed files. An empty tab means no repair attempt has been recorded.',
+  }),
+  'Pulse · Issue Verification': () => ({
+    purpose: 'See whether checks confirmed that this issue was resolved.',
+    howTo: 'Compare expected and observed results. Open evidence on a check to inspect what supports its verdict.',
+  }),
+  'Pulse · Issue Activity': () => ({
+    purpose: 'Follow the recorded history of this issue.',
+    howTo: 'Read events in time order to see when the issue was reported, investigated, repaired, or closed.',
+  }),
   'Automation · Chats': surface => ({
     purpose: `Review earlier conversations with this ${surface === 'crew' ? 'Crew member' : 'automation'}.`,
     howTo: 'Open a conversation to see what was asked and what happened. Refresh after new chats finish.',

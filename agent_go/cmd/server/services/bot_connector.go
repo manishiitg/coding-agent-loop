@@ -1806,10 +1806,10 @@ func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, u
 	}
 
 	if pending > 0 {
-		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state.\n\n---\n\n## Current Message\n%s", pending, userText)
+		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state. Treat the message as a runtime request and follow the deployed-channel guidance.\n\n---\n\n## Current Message\n%s", pending, userText)
 	}
 	if builderDone || status == chathistory.BotSessionStatusCompleted || status == chathistory.BotSessionStatusFailed {
-		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping.\n\n---\n\n## Current Message\n%s", status, userText)
+		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping. Treat the message as a runtime request and follow the deployed-channel guidance.\n\n---\n\n## Current Message\n%s", status, userText)
 	}
 	return userText
 }

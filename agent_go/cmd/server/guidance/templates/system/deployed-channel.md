@@ -29,7 +29,13 @@ workflows, the user's message is the workflow input.
   `learnings/_global/SKILL.md` for how this workflow usually operates,
   step-specific saved scripts for learned deterministic behavior,
   `knowledgebase/context/` and `knowledgebase/notes/` for business
-  facts/rules, and `db/` for accumulated state.
+  facts/rules, attached shared knowledge bases (`$WORKFLOW_KB_<ALIAS>`),
+  and `db/` for accumulated state.
+
+- **To run the workflow for a request**, pick the route that matches it (see
+  the Run-mode instructions), say which route you chose, and pass the values
+  the user gave. If a required value is missing, ask for exactly that value
+  in one message; do not start the run and do not fall back to a saved value.
 
 - **If the user asks a question or a small operational task** that can
   be completed directly from available tools, KB/learnings, db, or

@@ -56,7 +56,7 @@ func workflowAskMessage(caller triggerLinkCaller, message string) string {
 	case triggerCallerUser:
 		kind = "external connection"
 	}
-	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. If it asks you to run something, start the right route with the variables it needs (never rely on a saved value for per-run data such as a PR number), wait for the outcome and report it, including any step that skipped and why. If a required value is missing, say which instead of running. You cannot change the workflow here: if the caller reports a problem or asks for a change, record it for the owner with submit_workflow_suggestion and say you did.]\n\n%s", kind, caller.Label, strings.TrimSpace(message))
+	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. If it asks you to run something, start the right route with the values it needs (run_full_workflow variables for declared variables, human_inputs otherwise) (never rely on a saved value for per-run data such as a PR number), wait for the outcome and report it, including any step that skipped and why. If a required value is missing, say which instead of running. You cannot change the workflow here: if the caller reports a problem or asks for a change, record it for the owner with submit_workflow_suggestion and say you did.]\n\n%s", kind, caller.Label, strings.TrimSpace(message))
 }
 
 // runWorkflowAsk sends the question to the workflow assistant and settles the

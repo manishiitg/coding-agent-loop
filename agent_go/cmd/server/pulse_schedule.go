@@ -266,6 +266,10 @@ func (s *SchedulerService) launchDuePulses(ctx context.Context) {
 		if !decision.Due {
 			continue
 		}
+		if s.runningPulseRuns() >= maxConcurrentPulseRuns {
+			// Durable: the chosen time and any fast request stay due.
+			return
+		}
 		runID, err := s.TriggerScheduledPulse(workspacePath)
 		if err != nil {
 			// A running workflow or Pulse retries on a later tick; the chosen

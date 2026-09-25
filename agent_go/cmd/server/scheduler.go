@@ -1483,7 +1483,11 @@ func (s *SchedulerService) triggerPulseRun(workspacePath, triggerSource, fixReas
 	for i := range manifest.Schedules {
 		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
 	}
-	workflowRuntimeKeys = append(workflowRuntimeKeys, runtimeKey)
+	// A full Pulse and a fix run have different keys; each must see the other,
+	// or both start on the same workflow and work the same issues at once.
+	workflowRuntimeKeys = append(workflowRuntimeKeys,
+		workflowScheduleRuntimeKey(workspacePath, manualWorkflowPulseScheduleID),
+		workflowScheduleRuntimeKey(workspacePath, pulseFixRunScheduleID))
 	runID := uuid.NewString()
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(runtimeKey)

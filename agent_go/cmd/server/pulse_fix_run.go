@@ -28,6 +28,29 @@ const (
 	pulseFixRunMaxPerDay  = 6
 )
 
+// maxConcurrentPulseRuns bounds Pulse work server-wide: full Pulses and fix
+// runs together. Every workflow can be due at once (after a restart, or when a
+// pacing change makes waiting requests due), and each run is a long agent
+// session; the rest wait for later scheduler ticks. Full Pulses launch first.
+const maxConcurrentPulseRuns = 2
+
+// runningPulseRuns counts full Pulses and fix runs in progress on any workflow.
+func (s *SchedulerService) runningPulseRuns() int {
+	s.runtimeStatesMu.RLock()
+	defer s.runtimeStatesMu.RUnlock()
+	running := 0
+	for key, state := range s.runtimeStates {
+		if state == nil || state.LastStatus != "running" {
+			continue
+		}
+		if strings.HasSuffix(key, scheduleScopeSeparator+manualWorkflowPulseScheduleID) ||
+			strings.HasSuffix(key, scheduleScopeSeparator+pulseFixRunScheduleID) {
+			running++
+		}
+	}
+	return running
+}
+
 const pulseFixRunsSchema = `CREATE TABLE IF NOT EXISTS pulse_fix_runs (
 	run_id TEXT PRIMARY KEY,
 	started_at TEXT NOT NULL,
@@ -195,6 +218,9 @@ func (s *SchedulerService) launchDueFixRuns(ctx context.Context) {
 		due, reason := decidePulseFixRun(signals, lastFix, fixesLastDay, now)
 		if !due {
 			continue
+		}
+		if s.runningPulseRuns() >= maxConcurrentPulseRuns {
+			return
 		}
 		runID, err := s.TriggerPulseFixRun(workspacePath, reason)
 		if err != nil {

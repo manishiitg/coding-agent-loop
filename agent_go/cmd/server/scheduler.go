@@ -504,6 +504,12 @@ func (s *SchedulerService) tickLoop(ctx context.Context) {
 			// Then fix runs: a short Technical Review+Fix pass for a workflow
 			// with something to fix, instead of waiting for the full Pulse.
 			go func() {
+				// One launcher pass at a time: overlapping ticks could each
+				// see room under maxConcurrentPulseRuns and both start a run.
+				if !pulseLauncherMu.TryLock() {
+					return
+				}
+				defer pulseLauncherMu.Unlock()
 				s.launchDuePulses(context.Background())
 				s.launchDueFixRuns(context.Background())
 			}()

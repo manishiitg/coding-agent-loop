@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -33,6 +34,10 @@ const (
 // pacing change makes waiting requests due), and each run is a long agent
 // session; the rest wait for later scheduler ticks. Full Pulses launch first.
 const maxConcurrentPulseRuns = 2
+
+// pulseLauncherMu serializes the per-tick Pulse launcher passes, so the cap
+// check and the start it guards are never interleaved across ticks.
+var pulseLauncherMu sync.Mutex
 
 // runningPulseRuns counts full Pulses and fix runs in progress on any workflow.
 func (s *SchedulerService) runningPulseRuns() int {

@@ -550,7 +550,7 @@ func openFileFactory(workspaceAPIURL string, conversationOnly bool) agentprofile
 		params := map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "workspace-relative path to the file to display"}}
 		if conversationOnly {
 			description = "Show a lesson, worksheet, one of her own saved pages, or any other file directly (an image, a PDF, whatever it is) on the right side of her screen. Pass the path relative to the activity folder. PASS focus WHENEVER you are talking about one specific question or section on a page — that is what actually scrolls the page to it; omit it to keep her current position (for example right after recording an answer), and omit it entirely for a non-page file."
-			params["focus"] = map[string]interface{}{"type": "string", "description": "id of the element to scroll to — a question (\"q4\"), a section (\"s2\"), a worked example (\"s2-1\"), or a figure (\"fig1\"); see skills/guides/html-design.md. Ignored if no such id exists."}
+			params["focus"] = map[string]interface{}{"type": "string", "description": "id of the element to scroll to — a question (\"q4\"), a section (\"s2\"), a worked example (\"s2-1\"), or a figure (\"fig1\"). Ignored if no such id exists."}
 		}
 		return agentprofiles.ToolSpec{
 			Name: "open_file", Category: toolCategory, Description: description,

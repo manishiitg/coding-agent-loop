@@ -31,12 +31,10 @@ profile:
   # global scope gets neither.
   scope: project
   skills:
-    - guides
     - image-prompting
     - read-file
     - process-file
     - recall-conversations
-    - teach-coding
     - create-progress-report
     - publish
     - notify
@@ -191,7 +189,6 @@ profiles:
       file: prompts/child.md
       variables: {}
     skills:
-      - guides
       - image-prompting
     tools:
       - id: sparkquill.open-activity-file

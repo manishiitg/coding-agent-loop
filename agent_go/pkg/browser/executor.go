@@ -1000,6 +1000,13 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		logPreKillDiagnostics(session)
 	}
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
+	if err != nil && isHeadless && strings.Contains(err.Error(), "timed out after") {
+		// The daemon is stuck behind the page: capture evidence straight from
+		// Chrome so the caller learns whether the page is busy or blocked.
+		if summary := captureHangDiagnostics(session, command); summary != "" {
+			err = fmt.Errorf("%w. Diagnosis: %s", err, summary)
+		}
+	}
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
 	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).

@@ -299,8 +299,13 @@ const TAB_GUIDES: Record<string, (surface: WorkspacePanelSurface) => GuideCopy> 
     ],
   }),
   'Integrations · Gmail': surface => ({
-    purpose: `Configure Gmail access for this ${surface === 'crew' ? 'Crew member' : 'workflow'}.`,
-    howTo: 'Review the connected account and email settings before changing how messages are handled.',
+    purpose: `Connect a Google account to send notifications and choose which Gmail or Workspace access this ${surface === 'crew' ? 'Crew member' : 'workflow'} may use.`,
+    howTo: 'Open “Gmail: how do I…?” for answers about setup, permissions, sender selection, delivery, and sign-in problems.',
+    steps: [
+      'First account: follow the First-time setup guide, upload a Google Cloud OAuth client JSON under Sending accounts, and finish Google sign-in.',
+      'Choose only the access needed: notifications can send without mailbox read or agent-authored reply permission.',
+      'Set the default sender and recipients, save Delivery settings, and send a test email. Changing access later requires Reconnect.',
+    ],
   }),
   'Integrations · Connect': () => ({
     purpose: 'Let a terminal, local AI app, or hosted AI app use this AgentWorks installation.',

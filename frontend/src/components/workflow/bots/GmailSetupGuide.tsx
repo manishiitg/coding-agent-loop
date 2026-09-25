@@ -13,10 +13,8 @@ import { resolveGmailOAuthCallbackUrl } from './gmailOAuthCallback'
 // gotcha listed here is one that produces a confusing failure rather than a
 // clear error message.
 //
-// Sending itself goes through `gog` (github.com/openclaw/gogcli), not the
-// `gws` this guide referenced previously — but creating the Google Cloud
-// project/client is identical either way, since it's a Google Console
-// process neither CLI touches.
+// The active installation reports whether it sends through gog or gws. The
+// Google Cloud project and OAuth client steps are the same for both.
 
 const linkClass =
   'inline-flex items-center gap-1 text-primary underline underline-offset-2 hover:no-underline'
@@ -53,8 +51,9 @@ function Gotcha({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function GmailSetupGuide() {
+export function GmailSetupGuide({ backend }: { backend?: string }) {
   const [open, setOpen] = useState(false)
+  const usesGog = backend === 'gog'
   const callbackUrl = resolveGmailOAuthCallbackUrl(
     getApiBaseUrl(),
     typeof window === 'undefined' ? '' : window.location.origin,
@@ -84,16 +83,18 @@ export function GmailSetupGuide() {
           </p>
 
           <ol className="space-y-3">
-            <Step n={1} title="Install gog on the server">
-              <p>Mail is sent through <code>gog</code>, which must be on the server&rsquo;s PATH.</p>
-              <Cmd>brew install openclaw/tap/gogcli</Cmd>
-              <p>
-                No Homebrew on the box? Download a prebuilt binary from the{' '}
-                <a className={linkClass} href="https://github.com/openclaw/gogcli/releases" target="_blank" rel="noreferrer">
-                  releases page <ExternalLink className="h-3 w-3" />
-                </a>{' '}
-                and put it on PATH.
-              </p>
+            <Step n={1} title="Check the Gmail CLI on the server">
+              <p>Mail is sent through <code>{usesGog ? 'gog' : 'gws'}</code>, which must be installed on the AgentWorks server&rsquo;s PATH.</p>
+              {usesGog ? <>
+                <Cmd>brew install openclaw/tap/gogcli</Cmd>
+                <p>
+                  No Homebrew on the box? Download a prebuilt binary from the{' '}
+                  <a className={linkClass} href="https://github.com/openclaw/gogcli/releases" target="_blank" rel="noreferrer">
+                    releases page <ExternalLink className="h-3 w-3" />
+                  </a>{' '}
+                  and put it on PATH.
+                </p>
+              </> : <p>Ask the server operator to install <code>@googleworkspace/cli</code> if the account status reports that it is missing.</p>}
             </Step>
 
             <Step n={2} title="Pick or create a Google Cloud project">
@@ -129,10 +130,11 @@ export function GmailSetupGuide() {
                 Requesting a scope in code is not enough — Google only shows a scope on the consent screen (and
                 only grants it) if it is also added under <strong>Data access</strong> (older Console: still the{' '}
                 <strong>Scopes</strong> step) on this same OAuth consent screen. A project reused from something
-                else, or one where this step was skipped, silently drops <code>gmail.send</code>/
-                <code>gmail.readonly</code> — sign-in appears to succeed, showing only &ldquo;Email address&rdquo;
-                on the consent screen, and every send afterward fails with an insufficient-scope error. Add both
-                scopes there explicitly before connecting a mailbox.
+                else, or one where this step was skipped, can silently drop a requested scope. Add{' '}
+                <code>gmail.send</code> for notifications; add <code>gmail.readonly</code> only if you select mailbox
+                reading, <code>gmail.compose</code> only if you allow agent drafts and replies, and the matching
+                scopes for any Google Workspace services you select below. Otherwise sign-in can seem to succeed
+                while the requested capability remains unavailable.
               </Gotcha>
             </Step>
 
@@ -169,10 +171,10 @@ export function GmailSetupGuide() {
               </p>
             </Step>
 
-            <Step n={6} title="Register the client">
+            <Step n={6} title="Check the downloaded client file">
               <p>
-                Under <strong>OAuth clients</strong> below, enter the mailbox you're connecting and upload the
-                downloaded JSON file directly — no server filesystem access needed.
+                Keep the downloaded JSON file ready to upload under <strong>Sending accounts</strong> below.
+                You do not need to place it on the server filesystem.
               </p>
               <p>
                 Verify it is the type you meant to create — the top-level key reads <code>web</code> for a Web
@@ -196,10 +198,10 @@ export function GmailSetupGuide() {
 
             <Step n={8} title="Add your mailboxes">
               <p>
-                Setup is done. Under <strong>Sending accounts</strong> below, choose the client you just registered,
-                give the account a name, click <strong>Add account</strong>, then <strong>Sign in with Google</strong>{' '}
-                on its row. Repeat steps 2&ndash;7 only if you want a mailbox on a <em>separate</em> Google Cloud
-                project — otherwise every further mailbox reuses the same registered client.
+                Under <strong>Sending accounts</strong> below, enter the mailbox address, upload the OAuth client JSON,
+                choose the access it needs, and click <strong>Add &amp; sign in</strong>. Complete Google consent in
+                the browser. Use <strong>+ Add account</strong> for another mailbox; you can reuse the same Google
+                Cloud project when appropriate.
               </p>
               <Gotcha>
                 The tab opens in whichever Chrome profile is frontmost. If the mailbox belongs to a different

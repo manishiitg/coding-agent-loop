@@ -119,7 +119,7 @@ describe('Panel walkthroughs', () => {
   })
 
   it('gives complex integration tabs concrete, surface-aware setup steps', async () => {
-    const topics = ['MCPs', 'Skills', 'Slack', 'WhatsApp', 'Connect']
+    const topics = ['MCPs', 'Skills', 'Slack', 'WhatsApp', 'Gmail', 'Connect']
     for (const surface of ['crew', 'agentworks'] as const) {
       for (const topic of topics) {
         const guide = getWorkspacePanelGuide(`Integrations · ${topic}`, surface)
@@ -131,6 +131,8 @@ describe('Panel walkthroughs', () => {
     expect(getWorkspacePanelGuide('Integrations · MCPs', 'agentworks').howTo).toContain('workflow')
     expect(getWorkspacePanelGuide('Integrations · Slack', 'crew').steps?.join(' ')).toContain('channel’s ID')
     expect(getWorkspacePanelGuide('Integrations · WhatsApp').steps?.join(' ')).toContain('@slug')
+    expect(getWorkspacePanelGuide('Integrations · Gmail').howTo).toContain('Gmail: how do I…?')
+    expect(getWorkspacePanelGuide('Integrations · Gmail').steps?.join(' ')).toContain('Reconnect')
     expect(getWorkspacePanelGuide('Integrations · Connect').howTo).toContain('MCPs tab')
 
     const host = document.createElement('div')

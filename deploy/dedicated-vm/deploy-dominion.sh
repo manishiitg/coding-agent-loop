@@ -10,6 +10,7 @@
 # Usage:
 #   deploy-dominion.sh              # clone/pull, build, stage a new release. Does NOT touch `current` or restart anything.
 #   deploy-dominion.sh --activate   # also flip `current` to the just-built release and restart the services, with a health-check and automatic rollback.
+#   DOMINION_BUILDER_REF=<branch> deploy-dominion.sh --activate # test a builder branch while sibling repositories use main.
 #
 # Lessons baked in from a bad manual deploy this session:
 #   1. agent_go's actual `go build` target is the module root (agent_go/,
@@ -53,6 +54,8 @@ MLP="$SRC_ROOT/multi-llm-provider-go"
 MCPAGENT="$SRC_ROOT/mcpagent"
 
 ACTIVATE=0
+BUILDER_REF="${DOMINION_BUILDER_REF:-main}"
+git check-ref-format --branch "$BUILDER_REF" >/dev/null || { echo "Invalid DOMINION_BUILDER_REF: $BUILDER_REF" >&2; exit 1; }
 command -v python3 >/dev/null || { echo 'Missing python3 (required for release cleanup)' >&2; exit 1; }
 if [[ "${1:-}" == "--activate" ]]; then
   ACTIVATE=1
@@ -85,16 +88,18 @@ mkdir -p "$SRC_ROOT"
 
 echo "==> Syncing source repos (all public, no credentials needed)"
 sync_repo() {
-  local name="$1" dir="$2"
+  local name="$1" dir="$2" ref="${3:-main}"
   if [[ -d "$dir/.git" ]]; then
-    git -C "$dir" fetch origin main
-    git -C "$dir" reset --hard origin/main
+    git -C "$dir" fetch origin "$ref"
+    git -C "$dir" reset --hard FETCH_HEAD
   else
     git clone --depth 50 "https://github.com/manishiitg/${name}.git" "$dir"
+    git -C "$dir" fetch origin "$ref"
+    git -C "$dir" reset --hard FETCH_HEAD
   fi
   echo "    $name -> $(git -C "$dir" rev-parse --short HEAD)"
 }
-sync_repo "coding-agent-loop" "$REPO"
+sync_repo "coding-agent-loop" "$REPO" "$BUILDER_REF"
 sync_repo "multi-llm-provider-go" "$MLP"
 
 # This script's own on-disk copy at /srv/dominion/deploy-dominion.sh is what
@@ -231,6 +236,22 @@ grep -Fq 'cdpEnabled: false' "$RELEASE_DIR/frontend/runtime-config.js" || {
   echo "FATAL: Dominion runtime config does not display CDP as disabled" >&2
   exit 1
 }
+python3 - "$RELEASE_DIR/frontend/runtime-config.js" <<'PY'
+import json, pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+pattern = r'enabledProductSurfaces:\s*(\[[^\]]*\])'
+match = re.search(pattern, source)
+if not match:
+    raise SystemExit('FATAL: Dominion runtime config has no product surface list')
+surfaces = json.loads(match.group(1))
+if 'dominion' not in surfaces:
+    raise SystemExit('FATAL: Dominion runtime config does not include Dominion')
+if 'work' not in surfaces:
+    surfaces.append('work')
+path.write_text(source[:match.start(1)] + json.dumps(surfaces) + source[match.end(1):])
+PY
+grep -Fq '"work"' "$RELEASE_DIR/frontend/runtime-config.js" || { echo 'FATAL: Crew is absent from Dominion runtime config' >&2; exit 1; }
 
 echo "==> Copying configs/ unchanged from the current release"
 if [[ -d "$CURRENT_LINK/configs" ]]; then
@@ -258,6 +279,18 @@ fi
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
 echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent, dominion-gateway"
+python3 - /srv/dominion/.env <<'PY'
+import os, pathlib, sys, tempfile
+path = pathlib.Path(sys.argv[1])
+managed = {'AGENT_PRODUCTS': 'dominion,work', 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES': 'work'}
+lines = [line for line in path.read_text().splitlines() if line.partition('=')[0] not in managed]
+lines += [f'{key}={value}' for key, value in managed.items()]
+with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix='.env.next.', delete=False) as output:
+    output.write('\n'.join(lines) + '\n')
+    staged = output.name
+os.chmod(staged, 0o600)
+os.replace(staged, path)
+PY
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/dominion/state/mcp' > "$HOME/.config/systemd/user/dominion-agent.service.d/30-durable-mcp.conf"

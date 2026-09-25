@@ -30,7 +30,7 @@ functions with some inputs**. Today each path looks different:
 
 1. **A function is the unit.** A function is a route or task plus typed
    inputs. Everything that starts it is a *caller*: a person in the UI, a
-   Crew, an MCP or CLI connection, Slack, a webhook, a schedule.
+   Crew, an MCP connection, Slack, a webhook, a schedule.
 2. **Crews and workflows have one surface.** The same verbs apply to both;
    the kind is a detail of the target.
 3. **`ask` is the front door; functions are the fast lane.** Anyone can ask
@@ -43,7 +43,7 @@ functions with some inputs**. Today each path looks different:
 
 ---
 
-## Part 1: MCP and CLI
+## Part 1: MCP
 
 ### One set of tools
 
@@ -111,23 +111,13 @@ recorded use; the API already logs calls per tool.
 > anything runs. Targets can be names or IDs. If a response has a `call_id`,
 > call `get_call` until it finishes and pass on its progress to the user.
 
-### CLI
+### Legacy CLI
 
-Top-level commands, the same verbs:
-
-```
-agentworks agents                                  # list_agents
-agentworks agent "RTS Flow Tester"                 # get_agent
-agentworks ask "RTS Flow Tester" "re-run the Hebrew leak check"
-agentworks ask rts-pr-reviweer "why was PR 149 skipped?" --new
-agentworks call rts-pr-reviweer review_pr --PR_NUMBER 149
-agentworks call-status fn-…
-```
-
-`call` maps `--NAME value` flags to inputs. Typed values follow the
-function's schema. Any missing required input produces the same helpful
-refusal as MCP. The existing `crews` and `functions` command groups stay as
-aliases.
+MCP over HTTP is the connection path (see
+[agentworks-cli-mcp.md](../getting-started/agentworks-cli-mcp.md)); the
+`agentworks` CLI is kept only for existing scripts. It gets **no new
+commands**. Its existing `crews` and `functions` groups keep calling the old
+tool names, which stay as aliases (see Compatibility above).
 
 ### Generated tools per function (in-platform chats)
 
@@ -155,7 +145,7 @@ workflows. The built-in `ask` is always listed first.
 | **Webhook** | A URL for outside systems, with a mapping from payload fields to inputs (e.g. `pull_request.number` → `PR_NUMBER`) and the existing auth modes. |
 | **Slack** | Channels or apps that may start it, e.g. a message such as "review PR 149" in a routed channel. |
 | **Callers** | Crews, people and connections allowed to call it (`allowed_callers`), plus each caller's continuing conversation. |
-| **Copy call** | The same call as an MCP `call_function`, a CLI command, a curl command against the external API, or a Slack message. |
+| **Copy call** | The same call as an MCP `call_function`, a curl command against the external API, or a Slack message. |
 
 **Who can use Run now:** people with run access to the workflow, and the
 owner and editors of a Crew. Read-only viewers see the card but not the Run
@@ -222,13 +212,13 @@ A Crew's `ask` already sees its functions in its own chat; no change.
 |---|---|---|---|
 | 1 | `default` on inputs, applied before validation | S | Server only. Unblocks the short calls. |
 | 2 | Helpful refusals: schema, defaults, corrected call | S | Server only; all callers benefit. |
-| 3 | MCP and CLI: `list_agents`, `get_agent`, `ask`, `call_function`, `get_call`, name resolution, aliases, new instructions | M | Mostly wrappers over existing handlers. |
+| 3 | MCP: `list_agents`, `get_agent`, `ask`, `call_function`, `get_call`, name resolution, aliases, new instructions | M | Mostly wrappers over existing handlers. |
 | 4 | Function card: Run now form, defaults, copy call | M | Frontend plus one "run as viewer" endpoint that reuses `startCrewFunctionCall`. |
 | 5 | Workflow `ask` prompt lists functions and asks for missing inputs | S | Prompt text plus a test. |
 | 6 | Generated per-function names in `get_api_spec` | S | |
 | 7 | Webhooks and schedules as function callers, with "Turn into a function" | L | Data model change and migration UI. Do last. |
 
-Steps 1–3 give MCP and CLI users the consistent experience. Step 4 is the
+Steps 1–3 give MCP users the consistent experience. Step 4 is the
 biggest gain for people in the UI.
 
 ## Tests

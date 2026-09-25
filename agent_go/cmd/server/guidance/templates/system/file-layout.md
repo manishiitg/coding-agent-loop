@@ -85,7 +85,7 @@ Use this order when debugging latency:
 ### Other
 | Path | Contents |
 |------|----------|
-| builder/conversation/users/{user-id}/YYYY-MM-DD/session-{id}-conversation.json | Current user's previous builder chat sessions |
+| builder/conversation/users/{user-id}/YYYY-MM-DD/session-{id}-conversation.json | Current user's previous builder chat sessions. Its `conversation_history` holds the latest messages (`history_tail: true`, `history_total` = all); the full history is `session-{id}-conversation.history.jsonl` beside it, one JSON message per line |
 | db/db.sqlite | Workflow state and results — one SQLite database, one table per entity (agentic steps use managed DB tools; saved scripts retain direct compatibility; upsert on the primary key) |
 | db/README.md | Per-table schema contract (DDL, primary key, upsert rule, indexes, writers, consumers) |
 | db/assets/* | Durable output media/files referenced by db rows, reports, or later steps. Source belongs in the manifest-selected script directory, not here. Version 1 unlocked steps also have workflow code-tree write access; other writes remain subject to the current Folder Guard grants. |
@@ -101,4 +101,4 @@ Use this order when debugging latency:
 |------|----------|
 | skills/<folder>/SKILL.md | Installed workspace skills shared by all workflows; workflow.json records selected skills, and planning/step_config.json records per-step enabled_skills |
 
-**Cleanup**: Delete old builder conversation files when >3 exist (`find builder/conversation/users -name 'session-*-conversation.json'`, keep latest). Other users' chat folders are private and blocked by the folder guard.
+**Cleanup**: Delete old builder conversation files when >3 exist (`find builder/conversation/users -name 'session-*-conversation.json'`, keep latest; delete each one's `.history.jsonl` with it). Never edit these files by hand. Other users' chat folders are private and blocked by the folder guard.

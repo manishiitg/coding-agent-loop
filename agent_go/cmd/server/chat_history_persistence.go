@@ -589,6 +589,12 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 }
 
 func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, history []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time, botMeta *ChatHistoryBotMetadata) error {
+	return updatePersistedChatHistoryIndexWithCount(userID, sessionID, agentMode, history, len(history), runtime, conversationPath, sourceSize, now, botMeta)
+}
+
+// updatePersistedChatHistoryIndexWithCount indexes a conversation from a
+// (possibly recent-only) slice of its history and its true message count.
+func updatePersistedChatHistoryIndexWithCount(userID, sessionID, agentMode string, history []llmtypes.MessageContent, messageCount int, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time, botMeta *ChatHistoryBotMetadata) error {
 	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
 	if indexPath == "" {
 		return fmt.Errorf("cannot derive chat index path from %q", conversationPath)
@@ -651,7 +657,7 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 			BotUserEmail:     stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserEmail }),
 			CreatedAt:        createdAt,
 			UpdatedAt:        now.Format(time.RFC3339),
-			MessageCount:     len(history),
+			MessageCount:     messageCount,
 			PreviewMessages:  chatHistoryPreviewMessages(history),
 		},
 		SourceSize:          sourceSize,
@@ -4059,17 +4065,15 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	lock := chatConversationMutex(conversationPath)
 	lock.Lock()
 	defer lock.Unlock()
-	content, exists, readErr := readFileFromWorkspace(context.Background(), conversationPath)
+	// Read only the header and recent messages, then append the one new
+	// message: the whole history is never downloaded or rewritten (a 115 MB
+	// chat used to be decoded and rewritten twice per message).
+	content, exists, readErr := readConversationTailFromWorkspace(context.Background(), conversationPath, chatLiveInputTailRows)
 	if readErr != nil || !exists {
 		return
 	}
-	raw := []byte(content)
-
-	// Decode into a generic map so every field this function does not understand —
-	// agent_mode, runtime, ui_events, terminal_snapshots — survives the rewrite
-	// byte-for-byte.
 	var record map[string]interface{}
-	if err := json.Unmarshal(raw, &record); err != nil {
+	if err := json.Unmarshal([]byte(content), &record); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot decode %s: %v", conversationPath, err)
 		return
 	}
@@ -4095,45 +4099,64 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 			return
 		}
 	}
-	history = append(history, llmtypes.MessageContent{
+	total := len(history)
+	if value, ok := record["history_total"].(float64); ok && int(value) > total {
+		total = int(value)
+	}
+	userMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: message}},
-	})
-
-	record["conversation_history"] = history
-	record["updated_at"] = time.Now().Format(time.RFC3339)
-
-	advanceChatConversationRevision(record)
-	encoded, err := json.MarshalIndent(record, "", "  ")
+	}
+	encodedMessage, err := json.Marshal(userMessage)
 	if err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot marshal %s: %v", conversationPath, err)
 		return
 	}
-	if err := writeRawFileToWorkspace(context.Background(), conversationPath, string(encoded)); err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot write %s: %v", conversationPath, err)
+	updatedAt := time.Now().Format(time.RFC3339)
+	advanceChatConversationRevision(record)
+	if err := appendConversationHistoryInWorkspace(context.Background(), conversationPath, []json.RawMessage{encodedMessage}, map[string]interface{}{
+		"updated_at": updatedAt,
+		"revision":   record["revision"],
+	}); err != nil {
+		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot append to %s: %v", conversationPath, err)
 		return
 	}
-	if err := writeChatHistoryResumeSnapshot(context.Background(), conversationPath, encoded); err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update resume snapshot for %s: %v", conversationPath, err)
+	history = append(history, userMessage)
+	total++
+
+	// The resume snapshot and index are refreshed from the recent slice.
+	record["conversation_history"] = history
+	record["updated_at"] = updatedAt
+	delete(record, "history_tail")
+	delete(record, "history_total")
+	if encoded, err := json.Marshal(record); err == nil {
+		if err := writeChatHistoryResumeSnapshot(context.Background(), conversationPath, encoded); err != nil {
+			logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update resume snapshot for %s: %v", conversationPath, err)
+		}
 	}
 	// Keep the history index in step with the transcript, so a session steered
 	// only by live input still shows its latest message — and stays listed at all
 	// for callers that read the index without a local directory to fall back on.
-	if err := updatePersistedChatHistoryIndex(
+	if err := updatePersistedChatHistoryIndexWithCount(
 		userID,
 		sessionID,
 		stringFromRecord(record, "agent_mode"),
 		history,
+		total,
 		runtimeFromRecord(record),
 		conversationPath,
-		int64(len(encoded)),
+		int64(len(content)),
 		time.Now(),
 		botMetadataFromRecord(record),
 	); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update index for %s: %v", conversationPath, err)
 	}
-	logfWithContext(logCtx, "[CHAT_HISTORY] Recorded live-input message (%d messages) in %s", len(history), conversationPath)
+	logfWithContext(logCtx, "[CHAT_HISTORY] Recorded live-input message (%d messages) in %s", total, conversationPath)
 }
+
+// chatLiveInputTailRows is how much recent history a live-input append reads:
+// enough for the owner check, the resume snapshot (last 10 turns) and the
+// index preview.
+const chatLiveInputTailRows = 400
 
 func stringFromRecord(record map[string]interface{}, key string) string {
 	value, _ := record[key].(string)

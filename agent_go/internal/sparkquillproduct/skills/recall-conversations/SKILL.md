@@ -36,15 +36,26 @@ is its last activity. Newest first is `ls -t ../../chat_history/*/session-*-conv
 
 ## Reading a log
 
-`conversation_history` is a list of turns, each `{"Role": ..., "Parts": [...]}`.
+A log is two files: `session-<id>-conversation.json` (the record, whose
+`conversation_history` holds only the latest turns when `history_tail` is true)
+and `session-<id>-conversation.history.jsonl` beside it (every turn, one JSON
+object per line). Read the `.history.jsonl` when it exists; an older log has no
+`.history.jsonl` and keeps every turn in `conversation_history`.
+
+Each turn is `{"Role": ..., "Parts": [...]}`.
 `Role` is `human` (the parent, or the child in an activity), `ai` (you, or the
 tutor), `tool` (a tool result) or `system`. Only text parts matter for recall:
 
 ```
 python3 - "../../chat_history/2026-09-06/session-<id>-conversation.json" <<'EOF'
-import json, sys
-d = json.load(open(sys.argv[1]))
-for turn in d.get("conversation_history", []):
+import json, os, sys
+path = sys.argv[1]
+full = path[:-len(".json")] + ".history.jsonl"
+if os.path.exists(full):
+    turns = [json.loads(line) for line in open(full) if line.strip()]
+else:
+    turns = json.load(open(path)).get("conversation_history", [])
+for turn in turns:
     if turn.get("Role") not in ("human", "ai"):
         continue
     text = " ".join(p["Text"] for p in turn.get("Parts", []) if isinstance(p, dict) and p.get("Text"))

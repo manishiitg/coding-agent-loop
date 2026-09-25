@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -100,5 +101,31 @@ func TestBuilderConversationStaysInItsExistingFile(t *testing.T) {
 	}
 	if got := stableBuilderConversationLogPath(context.Background(), "Workflow/wf", "bob", "s1"); !strings.Contains(got, "/users/bob/") {
 		t.Fatalf("another owner must not write alice's file: %s", got)
+	}
+}
+
+// A live message is appended to the conversation, never by rewriting it.
+func TestLiveInputAppendsOneMessage(t *testing.T) {
+	path := "Workflow/wf/builder/conversation/users/alice/2026-09-20/session-live-conversation.json"
+	history := []llmtypes.MessageContent{chatMessage(llmtypes.ChatMessageTypeHuman, "first"), chatMessage(llmtypes.ChatMessageTypeAI, "answer")}
+	record, _ := json.Marshal(map[string]interface{}{"session_id": "live", "user_id": "alice", "revision": 5, "conversation_history": history})
+	workspace := &mockWorkspaceAPI{files: map[string]string{path: string(record)}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	(&StreamingAPI{}).appendLiveInputToPersistedChatHistory("alice", "live", "Workflow/wf", "steer this way")
+	var got struct {
+		Revision float64                   `json:"revision"`
+		History  []llmtypes.MessageContent `json:"conversation_history"`
+	}
+	workspace.mu.Lock()
+	_ = json.Unmarshal([]byte(workspace.files[path]), &got)
+	workspace.mu.Unlock()
+	if len(got.History) != 3 || got.History[2].Parts[0].(llmtypes.TextContent).Text != "steer this way" {
+		t.Fatalf("history after live input = %v", got.History)
+	}
+	if got.Revision != 6 {
+		t.Fatalf("revision = %v, want 6", got.Revision)
 	}
 }

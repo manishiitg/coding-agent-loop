@@ -28,7 +28,7 @@ all groups and runs; build new steps when the plan needs extending.
    when the user explicitly approved it as a durable boundary.
 
 **Read previous builder conversations** from `builder/` folder
-(`builder/conversation/users/{user-id}/YYYY-MM-DD/session-{id}-conversation.json`) to avoid repeating failed approaches
+(`builder/conversation/users/{user-id}/YYYY-MM-DD/session-{id}-conversation.json` holds the latest messages; the full history is the matching `.history.jsonl`, one message per line) to avoid repeating failed approaches
 and build on previous progress.
 
 Also read typed Pulse state and saved review history before improvement decisions.

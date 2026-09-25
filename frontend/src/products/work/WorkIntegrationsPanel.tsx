@@ -13,6 +13,7 @@ import { WorkspaceViewHeader } from '../../components/workflow/WorkspaceViewHead
 import { useChatStore } from '../../stores/useChatStore'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { isWorkIntegrationTabEnabled } from './workViewGating'
+import { crewTemplates } from './crewTemplates'
 
 export type WorkIntegrationTab = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail' | 'cli'
 
@@ -149,10 +150,11 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
   )
 }
 
-export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, tabId, enabledPanels, onAsk, onSelectedServersChange, onSelectedSkillsChange }: {
+export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, projectTemplates, tabId, enabledPanels, onAsk, onSelectedServersChange, onSelectedSkillsChange }: {
   workspacePath: string
   projectId: string
   projectTitle: string
+  projectTemplates: Array<{ id: string; version: number }>
   tabId: string
   enabledPanels?: Set<string>
   onAsk: (message: string) => Promise<void>
@@ -169,6 +171,7 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
   // Every tab loads on mount, so Refresh always remounts.
   const [tabNonce, setTabNonce] = useState(0)
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
+  const templates = crewTemplates.filter(item => projectTemplates.some(installed => installed.id === item.id && installed.version === item.version))
 
   const toggleSkill = async (folderName: string) => {
     const next = selectedSkills.includes(folderName)
@@ -213,16 +216,28 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
           onAsk={onAsk}
           onSelectedServersChange={onSelectedServersChange}
         />}
-        {activeTab === 'skills' && <SkillsManagerPanel
-          compact
-          manageOwnScroll={false}
-          workspacePath={workspacePath}
-          selectedSkills={selectedSkills}
-          onToggleSkill={folderName => { void toggleSkill(folderName) }}
-          selectionLabel="Skills for this project"
-          emptySelectionText="No project skills yet — pick one below."
-          selectionScopeLabel="project"
-        />}
+        {activeTab === 'skills' && <div className="space-y-3">
+          {templates.map(template => <div key={template.id} className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+            <p className="text-xs font-semibold text-foreground">Included with {template.name}</p>
+            <p className="mt-1 text-xs text-muted-foreground">These skills live in this Crew’s files and are selected only for this Crew.</p>
+            {template.selectedSkills.map(skill => <div key={skill} className="mt-2 flex items-center justify-between gap-2 text-xs">
+              <span className="font-medium text-foreground">{skill}</span>
+              <button type="button" onClick={() => { void toggleSkill(skill) }} className="rounded-md border border-border px-2 py-1 font-semibold text-primary hover:bg-primary/10">
+                {selectedSkills.includes(skill) ? 'Selected · remove' : 'Select skill'}
+              </button>
+            </div>)}
+          </div>)}
+          <SkillsManagerPanel
+            compact
+            manageOwnScroll={false}
+            workspacePath={workspacePath}
+            selectedSkills={selectedSkills}
+            onToggleSkill={folderName => { void toggleSkill(folderName) }}
+            selectionLabel="Skills for this project"
+            emptySelectionText="No project skills yet — pick one below."
+            selectionScopeLabel="project"
+          />
+        </div>}
         {activeTab === 'slack' && <WorkflowBotsPanel
           workspacePath={workspacePath}
           fixedChannel="slack"

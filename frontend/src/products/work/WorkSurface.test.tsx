@@ -43,8 +43,32 @@ describe('CreateWorkProjectDialog', () => {
 
     expect(submit.disabled).toBe(false)
     await act(async () => { submit.click() })
-    expect(onCreate).toHaveBeenCalledWith('Customer portal', 'Build and maintain the portal.', '🚀')
+    expect(onCreate).toHaveBeenCalledWith('Customer portal', 'Build and maintain the portal.', '🚀', undefined)
 
+    await act(async () => { root.unmount() })
+  })
+
+  it('previews the Finance Analyst template and submits its identity', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onCreate = vi.fn()
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
+    })
+
+    await act(async () => {
+      (container!.querySelector('[data-testid="work-template-finance-analyst"]') as HTMLInputElement).click()
+    })
+    expect((container.querySelector('[data-testid="work-create-project-name-input"]') as HTMLInputElement).value).toBe('Finance Analyst')
+    expect(container.textContent).toContain('Connections, schedules, triggers, functions, and Automations are not activated.')
+    await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
+    expect(onCreate).toHaveBeenCalledWith(
+      'Finance Analyst',
+      expect.stringContaining('Analyze authorized finance records'),
+      '📊',
+      'finance-analyst',
+    )
     await act(async () => { root.unmount() })
   })
 })

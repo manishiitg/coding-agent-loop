@@ -22,6 +22,7 @@ import type { PresetLLMConfig, WorkFolderGrant } from '../../services/api-types'
 import { loadWorkSessions } from './workSessions'
 import { isWorkIdentityTabEnabled } from './workViewGating'
 import { WorkModelsPanel } from './WorkModelsPanel'
+import { crewTemplates, type CrewTemplateId } from './crewTemplates'
 import type { WorkRuntimeSelection } from './workTabs'
 
 export type WorkIdentityTab = 'general' | 'secrets' | 'folders' | 'models'
@@ -40,10 +41,12 @@ const IDENTITY_TAB_ASK_AI_MESSAGE: Record<WorkIdentityTab, string> = {
   models: 'Help me choose between the coding agents available for this project. Explain the practical differences before changing anything.',
 }
 
-function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, onUpdateIdentity, onDeleteRequest }: {
+function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, projectTemplates, onInstallTemplate, onUpdateIdentity, onDeleteRequest }: {
   projectTitle: string
   projectPurpose: string
   projectIdentity?: ProductIdentity
+  projectTemplates: Array<{ id: string; version: number }>
+  onInstallTemplate: (id: CrewTemplateId) => Promise<void>
   onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>
   onDeleteRequest: () => void
 }) {
@@ -53,6 +56,8 @@ function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, onUpd
   const [purposeDraft, setPurposeDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [templateSearch, setTemplateSearch] = useState('')
+  const [installingId, setInstallingId] = useState<CrewTemplateId | null>(null)
 
   useEffect(() => {
     setNameDraft(projectIdentity?.name ?? '')
@@ -63,6 +68,7 @@ function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, onUpd
   }, [projectIdentity?.name, projectIdentity?.icon, projectIdentity?.role, projectPurpose])
 
   const displayName = nameDraft.trim() || projectTitle
+  const availableTemplates = crewTemplates.filter(item => !projectTemplates.some(installed => installed.id === item.id) && `${item.name} ${item.category} ${item.firstResult}`.toLowerCase().includes(templateSearch.toLowerCase()))
   const dirty = nameDraft.trim() !== (projectIdentity?.name ?? '')
     || iconDraft.trim() !== (projectIdentity?.icon ?? '')
     || roleDraft.trim() !== (projectIdentity?.role ?? '')
@@ -93,6 +99,21 @@ function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, onUpd
   return (
     <div className="space-y-4">
       {error && <StatusBanner tone="error">{error}</StatusBanner>}
+      <SettingsCard
+        icon={<Fingerprint aria-hidden="true" className="h-4 w-4 text-primary" />}
+        title="Crew templates"
+        description="Add reusable skills and setup to this Crew. Its name, role, purpose, files, and existing template progress are preserved."
+      >
+        {projectTemplates.length ? <div className="space-y-2">{projectTemplates.map(installed => {
+          const template = crewTemplates.find(item => item.id === installed.id && item.version === installed.version)
+          return <div key={installed.id} className="rounded-md border border-border p-2"><p className="text-sm font-semibold text-foreground">{template?.icon} {template?.name || installed.id}</p><p className="text-xs text-muted-foreground">{template?.category ? `${template.category} · ` : ''}Version {installed.version} · setup status in chat</p></div>
+        })}</div> : <p className="text-xs text-muted-foreground">No templates installed yet.</p>}
+        <Input aria-label="Search Crew templates" placeholder="Search templates" value={templateSearch} onChange={event => setTemplateSearch(event.target.value)} className="mt-3" />
+        <div className="mt-2 max-h-52 space-y-2 overflow-y-auto">{availableTemplates.map(template => <div key={template.id} className="flex items-center gap-2 rounded-md border border-border p-2">
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground">{template.icon} {template.name}</p><p className="text-xs text-muted-foreground">{template.category} · {template.firstResult}</p></div>
+          <Button type="button" disabled={Boolean(installingId)} onClick={() => { setInstallingId(template.id); setError(null); void onInstallTemplate(template.id).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not install template.')).finally(() => setInstallingId(null)) }}>{installingId === template.id ? 'Adding…' : 'Add'}</Button>
+        </div>)}</div>
+      </SettingsCard>
       <SettingsCard
         icon={<Tag aria-hidden="true" className="h-4 w-4 text-primary" />}
         title="Name and icon"
@@ -258,11 +279,13 @@ function WorkFoldersBody({ workspacePath, workflowContextPaths, onWorkflowContex
   )
 }
 
-export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescription, projectIdentity, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, nativeAgentTools, onNativeAgentToolsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
+export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescription, projectIdentity, projectTemplates, onInstallTemplate, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, nativeAgentTools, onNativeAgentToolsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
   workspacePath: string
   projectTitle: string
   projectDescription: string
   projectIdentity?: ProductIdentity
+  projectTemplates: Array<{ id: string; version: number }>
+  onInstallTemplate: (id: CrewTemplateId) => Promise<void>
   tabId: string
   selectedSecrets: string[]
   selectedGlobalSecrets: string[]
@@ -308,6 +331,8 @@ export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescript
           projectTitle={projectTitle}
           projectPurpose={projectDescription}
           projectIdentity={projectIdentity}
+          projectTemplates={projectTemplates}
+          onInstallTemplate={onInstallTemplate}
           onUpdateIdentity={onUpdateIdentity}
           onDeleteRequest={onDeleteRequest}
         />}

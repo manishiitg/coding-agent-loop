@@ -35,7 +35,7 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
 
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import type { SharedProjectSummary } from '../../services/api-types'
-import { createWorkSession, deleteWorkSession, loadWorkSessionsIncludingShared, parseSessionManifest, sessionSlug, sharedProjectToWorkSession, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
+import { createWorkSession, deleteWorkSession, installWorkSessionTemplate, loadWorkSessionsIncludingShared, parseSessionManifest, sessionSlug, sharedProjectToWorkSession, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 
 describe('sessionSlug', () => {
   it('slugifies titles and falls back', () => {
@@ -87,6 +87,11 @@ describe('parseSessionManifest', () => {
     expect(parseSessionManifest(JSON.stringify({ ...JSON.parse(manifest), product: 'video-studio' }), 'w')).toBeNull()
     expect(parseSessionManifest(JSON.stringify({ ...JSON.parse(manifest), session_id: '' }), 'w')).toBeNull()
   })
+
+  it('reads a legacy single-template Crew as one installed pack', () => {
+    const legacy = { ...JSON.parse(manifest), template: { id: 'finance-analyst', version: 1 } }
+    expect(parseSessionManifest(JSON.stringify(legacy), 'w')?.templates).toEqual([{ id: 'finance-analyst', version: 1 }])
+  })
 })
 
 describe('createWorkSession', () => {
@@ -117,6 +122,59 @@ describe('createWorkSession', () => {
       `${session.workspacePath}/code`,
       expect.stringContaining('Initialize Work project code folder'),
     )
+  })
+
+  it('creates a Finance Analyst with its local skill and no active integrations or automations', async () => {
+    updatePlannerFile.mockClear()
+    const session = await createWorkSession('My Finance Analyst', 'Review the shop’s finances.', '📊', 'finance-analyst')
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const product = JSON.parse(writes.get(`${session.workspacePath}/product.json`)!)
+    const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
+
+    expect(product.templates).toEqual([{ id: 'finance-analyst', version: 1 }])
+    expect(product.identity.role).toBe('Finance analyst for this business')
+    expect(product.description).toBe('Review the shop’s finances.')
+    expect(runtime.capabilities.selected_skills).toEqual(['finance-analyst'])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(writes.get(`${session.workspacePath}/skills/finance-analyst/SKILL.md`)).toContain('Show the calculation behind every key figure')
+    expect(writes.get(`${session.workspacePath}/TEMPLATE_SETUP.md`)).toContain('These are suggestions')
+    const setup = JSON.parse(writes.get(`${session.workspacePath}/TEMPLATE_SETUP.json`)!)
+    expect(setup).toMatchObject({ schema_version: 1, template_id: 'finance-analyst', template_version: 1, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+    expect(session.templates).toEqual([{ id: 'finance-analyst', version: 1 }])
+    expect(session.selectedSkills).toEqual(['finance-analyst'])
+  })
+
+  it('adds Tax Export to Finance Analyst without changing identity, existing skill, or setup progress', async () => {
+    const files = new Map<string, string>()
+    updatePlannerFile.mockImplementation(async (path: string, content: string) => { files.set(path, content); return {} })
+    getPlannerFileContent.mockImplementation(async (path: string) => {
+      const content = files.get(path)
+      if (content === undefined) throw { response: { status: 404 } }
+      return { data: { content } }
+    })
+    try {
+      const original = await createWorkSession('My Finance Analyst', 'Review the shop’s finances.', '📊', 'finance-analyst')
+      const financeSetupPath = `${original.workspacePath}/TEMPLATE_SETUP.json`
+      const financeSetup = JSON.parse(files.get(financeSetupPath)!)
+      financeSetup.completed_steps = ['identity', 'skill']
+      files.set(financeSetupPath, JSON.stringify(financeSetup))
+      const updated = await installWorkSessionTemplate(original, 'tax-export')
+      const product = JSON.parse(files.get(`${original.workspacePath}/product.json`)!)
+      const runtime = JSON.parse(files.get(`${original.workspacePath}/workflow.json`)!)
+      expect(updated.templates).toEqual([{ id: 'finance-analyst', version: 1 }, { id: 'tax-export', version: 1 }])
+      expect(product.identity).toEqual({ name: 'My Finance Analyst', icon: '📊', role: 'Finance analyst for this business' })
+      expect(product.description).toBe('Review the shop’s finances.')
+      expect(runtime.capabilities.selected_skills).toEqual(['finance-analyst', 'tax-export'])
+      expect(files.get(financeSetupPath)).toBe(JSON.stringify(financeSetup))
+      expect(JSON.parse(files.get(`${original.workspacePath}/templates/tax-export/TEMPLATE_SETUP.json`)!).checks).toHaveLength(8)
+      await expect(installWorkSessionTemplate(updated, 'tax-export')).rejects.toThrow('already installed')
+    } finally {
+      updatePlannerFile.mockReset().mockResolvedValue({})
+      getPlannerFileContent.mockReset()
+    }
   })
 })
 
@@ -174,6 +232,7 @@ function ownedSession(overrides: Partial<WorkSession> = {}): WorkSession {
     id: 'crew-owned',
     title: 'Owned',
     description: '',
+    templates: [],
     sessionId: 'work:project:crew-owned',
     workspacePath: 'Chats/Work/projects/owned-crew-owned',
     createdAt: '',

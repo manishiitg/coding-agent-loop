@@ -19,7 +19,7 @@ import { WORK_PROFILE_ID, WORK_PROFILE_VERSION, loadWorkProductCommands } from '
 import { isWorkIdentityComplete } from './workIdentity'
 import { setProductCommands } from '../../commands/registry'
 import { toProductCommandDefinitions } from './productCommands'
-import { createWorkSession, deleteWorkSession, loadWorkSessionsIncludingShared, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
+import { createWorkSession, deleteWorkSession, installWorkSessionTemplate, loadWorkSessionsIncludingShared, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
@@ -31,6 +31,8 @@ import { parseProductInteraction } from '../../../shared/session/interactions'
 import { belongsToWorkProject, findCanonicalWorkProjectTab, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectNativeAgentTools, updateProductProjectSelections, type ProductIdentityPatch } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
+import { crewTemplates, type CrewTemplateId } from './crewTemplates'
+import { WorkTemplateSetup } from './WorkTemplateSetup'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
@@ -174,12 +176,26 @@ function useWorkSessions() {
     return () => { cancelled = true }
   }, [setSelectedId])
 
-  const create = useCallback(async (title: string, description: string, icon?: string) => {
-    const session = await createWorkSession(title, description, icon)
+  const create = useCallback(async (title: string, description: string, icon?: string, templateId?: CrewTemplateId) => {
+    const session = await createWorkSession(title, description, icon, templateId)
     setSessions((current) => [session, ...current])
     setSelectedId(session.id)
     return session
   }, [setSelectedId])
+
+  const installTemplate = useCallback(async (projectId: string, templateId: CrewTemplateId) => {
+    const session = sessions.find(item => item.id === projectId)
+    if (!session) throw new Error('This Crew project is no longer available.')
+    const updated = await installWorkSessionTemplate(session, templateId)
+    setSessions(current => current.map(item => item.id === projectId ? updated : item))
+    for (const tab of Object.values(useChatStore.getState().chatTabs)) {
+      if (!belongsToWorkProject(tab, projectId)) continue
+      useChatStore.getState().setTabConfig(tab.tabId, { selectedSkills: updated.selectedSkills })
+      useChatStore.getState().setTabMetadata(tab.tabId, { agentProfileRuntimeDirty: true })
+    }
+    markWorkProjectRuntimeDirty(projectId)
+    return updated
+  }, [sessions])
 
   const remove = useCallback(async (projectId: string) => {
     const project = sessions.find(item => item.id === projectId)
@@ -257,6 +273,7 @@ function useWorkSessions() {
     selected: sessions.find((session) => session.id === selectedId) ?? null,
     select: setSelectedId,
     create,
+    installTemplate,
     remove,
     updateLLMConfig,
     updateNativeAgentTools,
@@ -627,7 +644,8 @@ function WorkTopBarControl({
 }
 
 export function WorkSurface() {
-  const { sessions, selected, select, create, remove, updateLLMConfig, updateNativeAgentTools, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const { sessions, selected, select, create, installTemplate, remove, updateLLMConfig, updateNativeAgentTools, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const selectedTemplates = crewTemplates.filter(template => selected?.templates.some(installed => installed.id === template.id && installed.version === template.version))
   const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected || selected.shared) return
@@ -869,12 +887,17 @@ export function WorkSurface() {
     })
   }, [reportPreviewPreference, selected?.id, setSplitRatio, startSplitDrag])
 
-  const createProject = useCallback(async (title: string, description: string, icon?: string) => {
+  const createProject = useCallback(async (title: string, description: string, icon?: string, templateId?: CrewTemplateId) => {
     if (creating) return
     setCreating(true)
     setCreateError(null)
     try {
-      await create(title, description, icon)
+      const created = await create(title, description, icon, templateId)
+      if (templateId) {
+        setPanelOpen(true)
+        setWorkspaceView('files')
+        writeWorkWorkspaceView(created.id, 'files')
+      }
       setCreateOpen(false)
     } catch (cause) {
       setCreateError(cause instanceof Error ? cause.message : 'Could not create Crew member.')
@@ -1061,6 +1084,18 @@ export function WorkSurface() {
                       </button>
                     </div>
                   ) : null}
+                  {!selected.shared && selectedTemplates.map(template => (
+                    <WorkTemplateSetup
+                      key={`${selected.id}:${template.id}`}
+                      template={template}
+                      workspacePath={selected.workspacePath}
+                      chatReady={Boolean(tabId)}
+                      onStartSetup={async () => {
+                        setChatOpen(true)
+                        await sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: selected.id, message: `Help me set up the ${template.name} template in this Crew. Read ${template.setupPath} and ${template.setupGuidePath} in this project's files. Work through the pending checks, ask me for missing decisions or access, and add a check ID to completed_steps only after you verify it. Preserve the checklist and earlier progress. Keep this Crew's identity and other templates intact. Tell me what remains and when setup is complete.` })
+                      }}
+                    />
+                  ))}
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
@@ -1106,6 +1141,8 @@ export function WorkSurface() {
                         projectTitle={selected.title}
                         projectDescription={selected.description}
                         projectIdentity={selected.identity}
+                        projectTemplates={selected.templates}
+                        onInstallTemplate={async id => { await installTemplate(selected.id, id); setChatOpen(true) }}
                         tabId={tabId}
                         view={workspaceView}
                         onViewChange={selectWorkspaceView}

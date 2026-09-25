@@ -240,6 +240,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 	defer heartbeat.Stop()
 	lastSendTime := time.Now()
 	lastEventTime := time.Time{} // zero until first event received
+	heartbeatSkipLogged := false  // log the post-reply pause once per turn, not every tick
 
 	for {
 		select {
@@ -260,8 +261,11 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 			replied := f.mainTextSent
 			f.mu.Unlock()
 			// Only send heartbeat if: session active, reply not yet sent, events flowing recently, and no message sent recently
-			if replied {
-				log.Printf("[BOT_FILTER] heartbeat: skipped for thread=%s, reply already sent", f.threadID.Key())
+			if replied && !heartbeatSkipLogged {
+				log.Printf("[BOT_FILTER] heartbeat: paused for thread=%s, reply already sent", f.threadID.Key())
+				heartbeatSkipLogged = true
+			} else if !replied {
+				heartbeatSkipLogged = false
 			}
 			if !done && !awaiting && !replied && f.capabilities().ProgressUpdates && !lastEventTime.IsZero() &&
 				time.Since(lastEventTime) < 60*time.Second &&

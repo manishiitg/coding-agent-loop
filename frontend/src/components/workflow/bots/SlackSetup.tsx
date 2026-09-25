@@ -105,6 +105,7 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
     else if (hasSharingBots) setMode(prev => prev === 'own' ? 'mine' : prev)
   }, [ownId, hasSharingBots])
   const [editing, setEditing] = useState(false)
+  const ownFormOpen = mode === 'own' && (editing || !own)
   useEffect(() => { setEditing(false) }, [ownId])
 
   if (slackLoading) {
@@ -113,7 +114,9 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
 
   return (
     <div className="space-y-4">
-      {slackError && <StatusBanner tone="error">{slackError}</StatusBanner>}
+      {/* While the own-bot form is open its errors show beside Save bot
+          instead, where the user is looking (#201 sub-issue 6). */}
+      {slackError && !ownFormOpen && <StatusBanner tone="error">{slackError}</StatusBanner>}
       {slackSuccess && <StatusBanner tone="success">{slackSuccess}</StatusBanner>}
 
       <FormSection title={`Who answers for this ${noun} in Slack?`} actions={headerAction}>

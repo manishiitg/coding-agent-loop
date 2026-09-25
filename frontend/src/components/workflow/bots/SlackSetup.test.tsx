@@ -205,3 +205,13 @@ it("opens on one of my bots when it already answers here, and lists those channe
   expect(host.textContent).toContain("C0111111111");
   expect(host.textContent).not.toContain("C0222222222");
 });
+
+it("shows a save error once, beside Save bot, while the bot form is open", async () => {
+  const message = "Slack token already in use: this Slack app is already connected as 'Bot-2'";
+  const bots = { ...makeBots(), slackError: message } as React.ComponentProps<typeof SlackSetup>["bots"];
+  const host = await render(bots);
+  expect(host.textContent?.split(message).length).toBe(2);
+  const saveButton = Array.from(host.querySelectorAll("button")).find(b => /Save bot/.test(b.textContent || ""));
+  const formText = saveButton?.closest("section, div.space-y-4, form")?.textContent || "";
+  expect(formText).toContain(message);
+});

@@ -154,7 +154,7 @@ func (m *Manager) Check(ctx context.Context) error {
 		}
 		now := m.Now().UTC()
 		r := s.CLIs[p.Name]
-		if now.Before(r.NextCheck) {
+		if now.Before(r.NextCheck) && !recordedExecutableMissing(r) {
 			continue
 		}
 		changed = true
@@ -295,6 +295,19 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(f.Name(), path)
+}
+
+// recordedExecutableMissing reports a CLI whose last good install no longer
+// resolves. A later npm run in the same prefix can drop another package's bin
+// link; the services then fall back to an older system copy until the next
+// daily check (RTS 2026-09-25: ~/.local/bin/claude vanished after an update,
+// and a root-installed 2.1.233 ran instead). Such a CLI is checked right away.
+func recordedExecutableMissing(r Result) bool {
+	if r.Executable == "" || r.Status == "not_installed" {
+		return false
+	}
+	_, err := os.Stat(r.Executable)
+	return err != nil
 }
 
 // probeSelfUpdatingVersion reports a self-updating provider's current

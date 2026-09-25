@@ -2,6 +2,7 @@ import { Activity, BellRing, CheckCircle, Cloud, FileText, GitBranch, Globe, Lay
 import type { CommandDefinition } from './types'
 import type { CommandContext } from './types'
 import { pulseReviewFocuses, resolvePulseReviewFocus } from './pulse-review-focus'
+import { renderCommandPrompt } from './commandPrompt'
 export type AgentworksProductCommand = {
   name: string
   description: string
@@ -102,6 +103,6 @@ export function executeAgentworksProductCommand(
     const focusText = fixedFocus ?? resolved?.instructions
     context = [focusText?.trim(), ctx.beforeSlash.trim()].filter(Boolean).join('\n\n')
   }
-  const prompt = command.prompt.replace(/\{\{context\}\}/g, context).trim()
+  const prompt = renderCommandPrompt(command.prompt, context)
   if (prompt) ctx.onSubmit(prompt)
 }

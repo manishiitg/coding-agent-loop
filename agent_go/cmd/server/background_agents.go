@@ -3021,7 +3021,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 			if hasReq {
 				phaseID = strings.TrimSpace(req.PhaseID)
 			}
-			logPath := workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+			logPath := stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 			var existing struct {
 				PhaseID      string                   `json:"phase_id"`
 				WorkshopMode string                   `json:"workshop_mode,omitempty"`
@@ -3045,7 +3045,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 					effectiveOwner := effectiveBuilderConversationOwner(requestUserID, existing.UserID)
 					if effectiveOwner != currentUserID {
 						currentUserID = effectiveOwner
-						logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+						logPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 					}
 				} else {
 					log.Printf("[BG AGENT] Failed to parse existing builder conversation metadata for %s", existingPath)

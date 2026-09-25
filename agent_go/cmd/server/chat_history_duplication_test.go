@@ -1,8 +1,12 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -75,5 +79,26 @@ func TestTurnEndMergeAppendsUnrelatedNewExchangeOnce(t *testing.T) {
 	}
 	if again := mergeRestoredChatHistory(merged, fresh); len(again) != 4 {
 		t.Fatalf("repeat save duplicated the new exchange: %d rows", len(again))
+	}
+}
+
+// A continued builder chat keeps writing its existing file instead of
+// starting a second one under today's date.
+func TestBuilderConversationStaysInItsExistingFile(t *testing.T) {
+	older := "Workflow/wf/builder/conversation/users/alice/2026-09-16/session-s1-conversation.json"
+	workspace := &mockWorkspaceAPI{files: map[string]string{older: `{"session_id":"s1","user_id":"alice","conversation_history":[]}`}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	if got := stableBuilderConversationLogPath(context.Background(), "Workflow/wf", "alice", "s1"); got != older {
+		t.Fatalf("continued chat path = %s, want its existing file %s", got, older)
+	}
+	today := time.Now().Format(workflowBuilderConversationDateLayout)
+	if got := stableBuilderConversationLogPath(context.Background(), "Workflow/wf", "alice", "s2"); !strings.Contains(got, "/users/alice/"+today+"/session-s2-") {
+		t.Fatalf("new chat path = %s, want today's folder", got)
+	}
+	if got := stableBuilderConversationLogPath(context.Background(), "Workflow/wf", "bob", "s1"); !strings.Contains(got, "/users/bob/") {
+		t.Fatalf("another owner must not write alice's file: %s", got)
 	}
 }

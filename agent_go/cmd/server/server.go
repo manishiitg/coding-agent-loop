@@ -7064,7 +7064,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if modeChangeConversationPath == "" && len(preModeChangeSnapshot) > 0 {
-					modeChangeConversationPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+					modeChangeConversationPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 					convData := map[string]interface{}{
 						"session_id":           sessionID,
 						"user_id":              currentUserID,
@@ -7698,7 +7698,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				logPath := persistConversationPath
 				if strings.TrimSpace(logPath) == "" {
-					logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, persistSessionID, time.Now())
+					logPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, persistSessionID)
 				}
 				// Same guard as the shared persist path: a rebuild with fewer
 				// user turns than the file already holds is partial, and

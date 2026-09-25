@@ -226,6 +226,19 @@ func workflowBuilderConversationLogPath(workspacePath, sessionID string, timesta
 // workflow (so native coding CLIs can continue them by path) while separating
 // each account's private history. The legacy helper above remains for reading
 // and migrating pre-partitioned transcripts.
+// stableBuilderConversationLogPath keeps a builder chat in one file: the
+// session's existing file for this owner when there is one, and a path dated
+// today only for a new chat. Writers used today's date whenever they lacked
+// the path, so a continued chat started a second file every day it was used
+// (RTS: one session had a 56 MB 09-16 file and a 115 MB 09-18 copy).
+func stableBuilderConversationLogPath(ctx context.Context, workspacePath, userID, sessionID string) string {
+	ownerFolder := "/users/" + sanitizeUserIDForPath(userID) + "/"
+	if existing, found, err := findWorkflowBuilderConversationPathForSession(ctx, userID, sessionID, workspacePath); err == nil && found && strings.Contains(filepath.ToSlash(existing), ownerFolder) {
+		return filepath.ToSlash(existing)
+	}
+	return workflowBuilderOwnedConversationLogPath(workspacePath, userID, sessionID, time.Now())
+}
+
 func workflowBuilderOwnedConversationLogPath(workspacePath, userID, sessionID string, timestamp time.Time) string {
 	if timestamp.IsZero() {
 		timestamp = time.Now()

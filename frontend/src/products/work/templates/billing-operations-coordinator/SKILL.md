@@ -25,3 +25,7 @@ Read `templates/billing-operations-coordinator/TEMPLATE_SETUP.json` and `SETUP.m
 The default outcome is analysis and reviewed drafts. Do not retry a charge, change a subscription or invoice, send a message, issue a refund, submit dispute evidence, or write to an accounting system just because this template is installed. Each action requires a separately selected account, narrow permission, exact-object approval, and a recorded result. Verify current provider state again immediately before an approved action; use idempotency where the provider supports it. A provider's automated dunning may already be active, so avoid duplicate recovery messages.
 
 Schedules, event triggers, Crew functions, and multi-Crew Automations are separate setup decisions. A single Crew can review a queue on a schedule; add an Automation when distinct Crews need a verified handoff.
+
+## Finance Operations Review handoff
+
+When a reviewed Finance Operations Review Automation requests a handoff, follow the artifact contract supplied in that Crew step and emit bounded `billing-exception-queue/v1` JSON. The step should provide the output path and fields; ask Builder to repair the route if it does not. Use real source IDs and observation times, stable case IDs, minor-unit amounts, and the current action state. For refunds, include original, previously refunded, proposed, and remaining amounts. The Workflow runs the blocking validator before Finance Analyst consumes the file. A valid JSON shape does not replace checking provider records or approving a refund.

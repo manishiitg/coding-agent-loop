@@ -32,7 +32,7 @@ type CreateCrewRequest struct {
 	// seeded into the starter brief. There is intentionally no separate
 	// description field — one concept, one value.
 	Instructions string
-	// TemplateID selects a trusted first-party Website Growth Agent Playbook.
+	// TemplateID selects a trusted first-party Crew Agent Playbook.
 	// Its local skill and checklist are copied after the Crew is created; no
 	// external account or recurring work is enabled by this selection.
 	TemplateID string
@@ -163,7 +163,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if profileID != "work" {
 		return CreatedCrew{}, fmt.Errorf("crew creation currently supports only the work profile")
 	}
-	template, err := loadWebsiteGrowthCrewTemplate(strings.TrimSpace(req.TemplateID))
+	template, err := loadCrewAgentTemplate(strings.TrimSpace(req.TemplateID))
 	if err != nil {
 		return CreatedCrew{}, err
 	}
@@ -260,7 +260,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if err := applyCrewCreationStarter(ctx, created.WorkspacePath, title, workflowPath, req.Purpose, req.Instructions); err != nil {
 		return CreatedCrew{}, err
 	}
-	if err := applyWebsiteGrowthCrewTemplate(ctx, created.WorkspacePath, template); err != nil {
+	if err := applyCrewAgentTemplate(ctx, created.WorkspacePath, template); err != nil {
 		return CreatedCrew{}, err
 	}
 	if err := applyCrewCreationSelections(ctx, profileID, created.WorkspacePath, skills, servers, secrets, globalSecrets); err != nil {

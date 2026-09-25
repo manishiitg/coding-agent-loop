@@ -77,6 +77,14 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   { id: 'growth-experimentation-follow-through', title: 'Growth Experimentation and Follow-Through', description: 'Prioritize evidence-backed experiments, create tracked actions, and verify KPI improvement after shipping.', version: '0.2.0', category: 'Growth Analytics', order: 4, inputCount: 6, toolCount: 4, teamScope: 'small_team' },
   { id: 'seo-intelligence', title: 'SEO Intelligence', description: 'Find winnable keywords, diagnose technical SEO issues, and close content gaps with page-level briefs.', version: '0.1.0', category: 'Growth Analytics', order: 5, inputCount: 7, toolCount: 4, teamScope: 'small_team' },
   { id: 'ai-visibility-intelligence', title: 'AI Visibility Intelligence', description: 'Track AI-assistant brand citations against competitors and close gaps with content and authority changes.', version: '0.1.0', category: 'Growth Analytics', order: 6, inputCount: 6, toolCount: 3, teamScope: 'small_team' },
+  { id: 'finance-operations-review', title: 'Finance Operations Review', description: 'Coordinate billing exceptions and a sourced finance impact review, with optional accounting close and payables specialists.', version: '0.1.0', category: 'Finance', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
+    { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'billing-exception-queue/v1' },
+    { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'finance-impact-readout/v1' },
+    { id: 'close', agent_playbook_id: 'revenue-close-analyst', required: false, output: 'revenue-close-exceptions/v1' },
+    { id: 'payables', agent_playbook_id: 'spend-payables-coordinator', required: false, output: 'payables-exception-queue/v1' },
+  ], handoffs: [
+    { id: 'billing-to-finance', from: 'billing', to: 'finance', artifact_type: 'billing-exception-queue/v1', required: true },
+  ], setupChecks: ['goal_owner', 'source_scope', 'policy_metric', 'team_bindings', 'access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.3.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

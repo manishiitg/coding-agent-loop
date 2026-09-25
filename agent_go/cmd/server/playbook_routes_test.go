@@ -62,13 +62,52 @@ func TestPlaybookReinstallPreservesProgressAndUpdateArchivesEvidence(t *testing.
 	}
 }
 
+func TestFinancePlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("finance-operations-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/finance"
+	const skill = "agentworks-playbook-finance-operations-review"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_finance_artifact.py", "examples/billing-exception-queue.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("finance playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("finance setup was pre-completed: %+v", setup)
+	}
+}
+
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 24 {
-		t.Fatalf("catalog has %d playbooks, want 24", len(items))
+	if len(items) != 25 {
+		t.Fatalf("catalog has %d playbooks, want 25", len(items))
+	}
+	finance, err := findPlaybook("finance-operations-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finance.Category != "Finance" || len(finance.AgentSlots) != 4 || len(finance.SetupChecks) != 10 {
+		t.Fatalf("finance operations review = %+v", finance)
 	}
 	growth, err := findPlaybook("website-growth-loop")
 	if err != nil {

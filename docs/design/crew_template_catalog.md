@@ -1,6 +1,6 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Finance Analyst, Tax Export Preparer, Billing Operations Coordinator, Revenue & Close Analyst, Spend & Payables Coordinator, and all ten Website Growth v1 specialists are available in the Crew creation dialog. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-25. Finance Analyst, Tax Export Preparer, Billing Operations Coordinator, Revenue & Close Analyst, Spend & Payables Coordinator, and all ten Website Growth v1 specialists are available in the Crew creation dialog. The five Finance Crew templates also install through Builder's `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
 
 ## Product model
 
@@ -18,6 +18,8 @@ The [B2B SaaS finance role and tool map](../research/b2b_saas_finance_roles_and_
 
 Start a small business with **two default Crew identities**: Finance Analyst owns read-oriented analysis, processor account checks, and planning; Billing Operations Coordinator owns customer-facing invoice follow-up, failed-payment investigation, and refund-request preparation. Add Revenue & Close Analyst or Spend & Payables Coordinator when a separate accounting or payment owner needs a distinct setup and access scope. Payroll Review Coordinator, Tax Compliance Coordinator, and Cash & Treasury Analyst are later specialist candidates. Tax Export Preparer is already available as an installable supporting pack for Finance Analyst; create a separate tax Crew only when a different owner, access scope, or review boundary requires it.
 
+The **Finance Operations Review** Automation Playbook is an installable chat proposal. Builder can reuse or create distinct Billing Operations Coordinator and Finance Analyst Crews, then plan a manual billing exception queue → validated handoff → finance impact readout. Its ten setup checks track actual source access, owner decisions, Crew binding, validators, and a real first run. The packaged fixtures demonstrate the contract; they do not count as a customer's first run. Optional close and payables roles can be proposed, but their automated handoffs are outside this first contract. No recurrence, customer message, refund, or accounting write is activated by installation.
+
 | Crew template | Job and first useful output | Minimum user input | Optional recurring work |
 | --- | --- | --- | --- |
 | **Finance Analyst** — available v1 | Explain revenue, expense, cash, SaaS metrics, and reconciliation changes in a sourced finance brief. Add optional processor checks, forecasting, expense review, and tax export capabilities within this Crew. | Authorized records, period, currency, metric definitions; further inputs only for selected capabilities. | A weekly brief or processor account check can be this Crew's schedule. A broader review Automation is useful when distinct owners or Crews must coordinate. |
@@ -27,10 +29,10 @@ Start a small business with **two default Crew identities**: Finance Analyst own
 
 | Capability pack | Installed in | First result and boundary |
 | --- | --- | --- |
-| **Revenue Reconciliation** — planned | Finance Analyst | Matched orders, invoices, payments, and refunds with a source-linked mismatch list. Read-only until the owner separately authorizes a correction. |
-| **Stripe Account Checks** — planned | Finance Analyst | Read authorized Stripe balances, balance transactions, payouts, fees, refunds, and disputes for a dated exception report; reconcile payout entries to deposits or exported accounting records when those sources exist. Use an authorized export when a live connector is unavailable. |
-| **Expense Review** — planned | Finance Analyst | Categorized expenses and an exception queue under the owner's chart of accounts and approval rules. No automatic approval or payment. |
-| **Cash Flow Planning** — planned | Finance Analyst | A forecast with source balances, receivable/payable assumptions, scenarios, and uncertainty. It is a forecast, not a verified balance. |
+| **Revenue Reconciliation** — Finance Analyst procedure v1 | Finance Analyst | Match orders, invoices, payments, and refunds with a source-linked mismatch list. Read-only until the owner separately authorizes a correction. |
+| **Processor Account Checks** — Finance Analyst procedure v1 | Finance Analyst | Read authorized Stripe or Paddle balances, transactions, payouts, fees, refunds, and disputes for a dated exception report; reconcile payout entries to deposits when bank evidence exists. An export works without a live connector. |
+| **Expense Review** — Finance Analyst procedure v1 | Finance Analyst; Spend & Payables Coordinator when payment access differs | Categorize expenses under the owner's chart of accounts and approval rules. No automatic approval or payment. |
+| **Cash Flow Planning** — Finance Analyst procedure v1 | Finance Analyst | Forecast from dated source balances, receivable/payable timing, and scenarios with stated uncertainty; do not present it as a verified balance. |
 | **Tax Export Preparer** — available v1 | Finance Analyst by default; separate Crew when access requires | Reconciled transaction export and exception list for review by the owner and tax professional. No automatic tax classification, filing, or delivery. |
 | **Invoice Chasing** — planned | Billing Operations Coordinator | Ranked overdue-invoice queue with invoice ID, open amount, due date, payment status, prior contact, and a proposed follow-up. Avoid duplicate or premature reminders; messages remain drafts until reviewed. |
 | **Failed Payment Recovery** — planned | Billing Operations Coordinator | Failed-payment investigation and policy-compliant next steps. No charge retry or customer message without a separately authorized route. |
@@ -43,7 +45,7 @@ The Billing Operations Coordinator v1 skill can inspect these case types from au
 
 **Refund boundary:** the default pack reads and prepares a reviewed refund decision. An actual refund is a separate action with narrow Stripe write access, owner approval of the exact payment and amount, an idempotency key, and a saved Stripe result/receipt. Check prior partial refunds and the remaining refundable amount first; Stripe supports partial refunds and rejects amounts beyond the remaining charge. See [Stripe refunds](https://docs.stripe.com/api/refunds/create).
 
-Setup checks belong to each selected capability pack, so a Finance Analyst can be ready for a sourced brief while Stripe checks or tax export remain pending. Builder should first inspect the existing Finance Analyst Crew and offer a supporting pack; it should propose another Crew only when the permission, owner, cadence, or independent-review boundary makes sharing inappropriate. Adding a pack never imports another Crew's connections or activates a schedule, function, trigger, refund, payment action, or delivery channel.
+Tax Export keeps its own setup checklist, so a Finance Analyst can be ready for a sourced brief while tax export remains pending. The analyst's processor, SaaS metric, reconciliation, and cash procedures require source and definition checks for each actual request; the basic Crew checklist does not certify them all. Builder should inspect the existing Finance Analyst Crew before proposing a new one and create another only when the permission, owner, cadence, or independent-review boundary makes sharing inappropriate. Adding a pack never imports another Crew's connections or activates a schedule, function, trigger, refund, payment action, or delivery channel.
 
 ## Customer Support
 

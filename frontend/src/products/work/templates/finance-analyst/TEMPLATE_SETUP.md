@@ -12,6 +12,10 @@ The ordered setup checks and their progress live in `TEMPLATE_SETUP.json`. The C
 
 The first brief needs no MCP connection. A spreadsheet skill or accounting MCP can help with larger or connected datasets; select a suitable one in this Crew only after reviewing its access. Do not copy an account, token, secret, or channel from another Crew.
 
+## Choose deeper analyses only when requested
+
+The Finance Analyst skill also covers read-only processor account checks, subscription metrics, cash planning, and spend/reconciliation questions. Each requires its own source and definition check at the time of use. For a processor check, confirm provider account, live/test mode, payout timezone and currency, balance transaction/fee/refund/dispute export, and bank evidence before calling funds deposited. For MRR or churn, confirm subscription state rules, cohort window, discounts, credits, and customer identity. For runway, confirm dated bank balance, obligations, collection timing, and scenario assumptions. When an independent billing, close, or payables owner exists, use the corresponding Crew template and propose a reviewed Finance Operations Review route only if a cross-Crew handoff is needed.
+
 ## Optional recurring capabilities
 
 These are suggestions. They are not created or enabled by this template.

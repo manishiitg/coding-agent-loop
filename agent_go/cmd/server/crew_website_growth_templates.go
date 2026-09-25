@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-type websiteGrowthCrewCatalog struct {
-	SchemaVersion int                         `json:"schema_version"`
-	Agents        []websiteGrowthCrewTemplate `json:"agents"`
+type crewAgentCatalog struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Agents        []crewAgentTemplate `json:"agents"`
 }
 
-type websiteGrowthCrewTemplate struct {
+type crewAgentTemplate struct {
 	ID             string            `json:"id"`
 	Version        int               `json:"version"`
 	Name           string            `json:"name"`
@@ -24,7 +24,7 @@ type websiteGrowthCrewTemplate struct {
 	Files          map[string]string `json:"files"`
 }
 
-func loadWebsiteGrowthCrewTemplate(id string) (*websiteGrowthCrewTemplate, error) {
+func loadCrewAgentTemplate(id string) (*crewAgentTemplate, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, nil
 	}
@@ -32,38 +32,41 @@ func loadWebsiteGrowthCrewTemplate(id string) (*websiteGrowthCrewTemplate, error
 	if err != nil {
 		return nil, err
 	}
-	content, err := os.ReadFile(path.Join(root, "crew-agents", "website-growth", "catalog.json"))
-	if err != nil {
-		return nil, fmt.Errorf("read Website Growth Crew catalog: %w", err)
-	}
-	var catalog websiteGrowthCrewCatalog
-	if err := json.Unmarshal(content, &catalog); err != nil || catalog.SchemaVersion != 1 {
-		return nil, fmt.Errorf("invalid Website Growth Crew catalog")
-	}
-	for index := range catalog.Agents {
-		item := &catalog.Agents[index]
-		if item.ID != id {
-			continue
+	for _, category := range []string{"website-growth", "finance"} {
+		content, readErr := os.ReadFile(path.Join(root, "crew-agents", category, "catalog.json"))
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s Crew catalog: %w", category, readErr)
 		}
-		if item.Version < 1 || len(item.SelectedSkills) == 0 || len(item.Files) < 3 || item.SelectedSkills[0] != id {
-			return nil, fmt.Errorf("invalid Website Growth Crew template %q", id)
+		var catalog crewAgentCatalog
+		if err := json.Unmarshal(content, &catalog); err != nil || catalog.SchemaVersion != 1 {
+			return nil, fmt.Errorf("invalid %s Crew catalog", category)
 		}
-		for relative := range item.Files {
-			if path.IsAbs(relative) || path.Clean(relative) != relative || strings.HasPrefix(relative, "../") ||
-				(!strings.HasPrefix(relative, "skills/"+id+"/") && !strings.HasPrefix(relative, "templates/"+id+"/")) {
-				return nil, fmt.Errorf("invalid path in Website Growth Crew template %q", id)
+		for index := range catalog.Agents {
+			item := &catalog.Agents[index]
+			if item.ID != id {
+				continue
 			}
+			if item.Version < 1 || len(item.SelectedSkills) == 0 || len(item.Files) < 3 || item.SelectedSkills[0] != id {
+				return nil, fmt.Errorf("invalid Crew template %q", id)
+			}
+			for relative := range item.Files {
+				legacyFinanceSetup := id == "finance-analyst" && (relative == "TEMPLATE_SETUP.md" || relative == "TEMPLATE_SETUP.json")
+				if path.IsAbs(relative) || path.Clean(relative) != relative || strings.HasPrefix(relative, "../") ||
+					(!strings.HasPrefix(relative, "skills/"+id+"/") && !strings.HasPrefix(relative, "templates/"+id+"/") && !legacyFinanceSetup) {
+					return nil, fmt.Errorf("invalid path in Crew template %q", id)
+				}
+			}
+			return item, nil
 		}
-		return item, nil
 	}
-	return nil, fmt.Errorf("unknown Website Growth Crew template %q", id)
+	return nil, fmt.Errorf("unknown Crew template %q", id)
 }
 
-// applyWebsiteGrowthCrewTemplate is idempotent across Builder retries. The
+// applyCrewAgentTemplate is idempotent across Builder retries. The
 // product manifest receipt is written last, after every local skill and setup
 // file exists and the skill is selected. Existing user-edited files are never
 // overwritten by a retried creation call.
-func applyWebsiteGrowthCrewTemplate(ctx context.Context, workspacePath string, item *websiteGrowthCrewTemplate) error {
+func applyCrewAgentTemplate(ctx context.Context, workspacePath string, item *crewAgentTemplate) error {
 	if item == nil {
 		return nil
 	}

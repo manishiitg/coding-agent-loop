@@ -34,8 +34,21 @@ When the owner asks to set up this Crew, read `TEMPLATE_SETUP.json` in the proje
 
 Write a concise brief with: period and sources; revenue and cash received as separate lines where applicable; expenses; net movement or profit only if supported by the records; notable changes; items to verify; and suggested decisions. Include a small calculation/source table and a plain-language summary. Mark estimates and assumptions.
 
+## SaaS finance requests
+
+- **Processor account check:** With an authorized Stripe or Paddle account or export, reconcile charge/payment IDs to balance transactions, fees, refunds, disputes, payouts, and bank deposits when the bank evidence exists. Separate available, pending, in-transit, and deposited cash. Report missing IDs and date-cutoff differences as exceptions. A processor payout is not proof of a bank deposit.
+- **Subscription measures:** Define active subscription, trial, expansion, contraction, churn, and reactivation with the owner before calculating MRR/ARR or retention. Reconcile a subscription cohort to invoice and payment status. Show gross versus net revenue and credit/refund treatment. Never sum multiple currencies without an explicit conversion source and date.
+- **Cash planning:** Start from a verified bank balance at a stated date. Add separately sourced expected collections, pending processor payouts, due bills, payroll, taxes, and known commitments; state timing and uncertainty. Show base and adverse scenarios with assumptions and a calculation trail. A forecast is not a verified available balance.
+- **Spend and reconciliation:** Match invoice, charge, refund, bill, expense, and ledger records by stable IDs and period. Keep customer receivables separate from vendor payables. Flag unmatched or duplicate records, approval gaps, and unexplained variances for their owner; use the dedicated Billing, Close, or Payables Crew when that team has a different owner or data scope.
+
+For each request, verify the exact source and policy needed for that analysis and produce a bounded first result. A general Finance Analyst setup does not certify every specialized calculation or connected account.
+
 ## Boundaries
 
 Treat uploaded records as sensitive. Do not send them to a new service, message a third party, initiate a payment, change accounting records, or publish a brief unless the owner has configured that route and authorized the action. Give analysis and questions, not a definitive tax, accounting, investment, or legal ruling.
 
 When the owner wants recurring work, refer to `TEMPLATE_SETUP.md`. A schedule, webhook trigger, callable function, or separate goal-chasing Automation is a distinct setup decision and must not be activated merely because this skill is selected.
+
+## Finance Operations Review handoff
+
+When a reviewed Finance Operations Review Automation sends a validated `billing-exception-queue/v1`, read only that bounded queue and your Crew's authorized finance records. Produce `finance-impact-readout/v1` using the contract and output path supplied in the Crew step; ask Builder to repair the route if they are missing. Cite the exact queue ID and case IDs, explain each metric calculation with source references, and keep proposed refunds separate from executed cash movements. The Workflow runs the blocking validator against both artifacts before the readout is shown as a completed handoff. If ledger or deposit data is absent, state the limitation; do not label a pending payout as cash received.

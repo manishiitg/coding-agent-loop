@@ -131,7 +131,7 @@ host. A release contains:
 - `video-studio-landlock-runner` (yes, that literal filename regardless of
   product — see below), built from `workspace/cmd/landlock-runner`
 - the built frontend with a runtime configuration exposing only `dominion`
-- the versioned `playbooks/` catalog, including the Website Growth Loop and Crew agent templates, copied into the release root
+- the versioned `playbooks/` catalog, including Website Growth Loop, Finance Operations Review, and their Crew agent templates, copied into the release root
 - `mcp_servers_dominion.json` with an empty `mcpServers` object
 
 ### Logs are required, not automatic (found live 2026-08-31)

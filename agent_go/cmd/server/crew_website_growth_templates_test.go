@@ -13,7 +13,7 @@ func TestWebsiteGrowthCrewCatalogHasInstallableSpecialists(t *testing.T) {
 		"landing-page-optimizer", "content-distribution-coordinator",
 	}
 	for _, id := range ids {
-		item, err := loadWebsiteGrowthCrewTemplate(id)
+		item, err := loadCrewAgentTemplate(id)
 		if err != nil {
 			t.Fatalf("load %s: %v", id, err)
 		}
@@ -31,7 +31,30 @@ func TestWebsiteGrowthCrewCatalogHasInstallableSpecialists(t *testing.T) {
 			t.Fatalf("invalid %s setup: %+v", id, setup)
 		}
 	}
-	if _, err := loadWebsiteGrowthCrewTemplate("not-a-template"); err == nil {
+	if _, err := loadCrewAgentTemplate("not-a-template"); err == nil {
 		t.Fatal("unknown template was accepted")
+	}
+}
+
+func TestFinanceCrewCatalogHasInstallableRoles(t *testing.T) {
+	for _, id := range []string{"finance-analyst", "tax-export", "billing-operations-coordinator", "revenue-close-analyst", "spend-payables-coordinator"} {
+		item, err := loadCrewAgentTemplate(id)
+		if err != nil {
+			t.Fatalf("load %s: %v", id, err)
+		}
+		setupPath := "templates/" + id + "/TEMPLATE_SETUP.json"
+		if id == "finance-analyst" {
+			setupPath = "TEMPLATE_SETUP.json"
+		}
+		var setup struct {
+			TemplateID string            `json:"template_id"`
+			Checks     []json.RawMessage `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(item.Files[setupPath]), &setup); err != nil {
+			t.Fatalf("decode %s setup: %v", id, err)
+		}
+		if item.ID != id || len(item.Files) != 3 || setup.TemplateID != id || len(setup.Checks) < 5 || len(setup.Checks) > 10 {
+			t.Fatalf("incomplete %s template: %+v, %+v", id, item, setup)
+		}
 	}
 }

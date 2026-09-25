@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(24)
+    expect(PLAYBOOK_CATALOG).toHaveLength(25)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -26,5 +26,13 @@ describe('small-team catalog', () => {
     expect(growth?.agentSlots?.find(slot => slot.id === 'technical_seo')?.required).toBe(false)
     expect(growth?.handoffs?.some(handoff => handoff.artifact_type === 'shipped-change/v1')).toBe(false)
     expect(growth?.setupChecks).toContain('action_ledger')
+  })
+
+  it('exposes the Finance Operations Review team and validated billing handoff', () => {
+    const finance = PLAYBOOK_CATALOG.find(item => item.id === 'finance-operations-review')
+    expect(finance?.category).toBe('Finance')
+    expect(finance?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual(['billing-operations-coordinator', 'finance-analyst'])
+    expect(finance?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('billing-exception-queue/v1')
+    expect(finance?.setupChecks).toContain('test_run')
   })
 })

@@ -250,6 +250,53 @@ func TestCreateCrewProjectAppliesWebsiteGrowthTemplateOnBuilderAction(t *testing
 	}
 }
 
+func TestCreateCrewProjectAppliesFinanceTemplateOnBuilderAction(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	req := CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Billing Reviewer",
+		Role: "Billing operations coordinator", Purpose: "Review payment exceptions",
+		TemplateID: "billing-operations-coordinator", StepInstruction: "Return a source-linked billing queue.",
+		IdempotencyKey: "finance-billing-specialist-1",
+	}
+	created, err := svc.CreateCrewProject(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := created.WorkspacePath
+	for _, relative := range []string{
+		"skills/billing-operations-coordinator/SKILL.md",
+		"templates/billing-operations-coordinator/SETUP.md",
+		"templates/billing-operations-coordinator/TEMPLATE_SETUP.json",
+	} {
+		if mock.files[base+"/"+relative] == "" {
+			t.Fatalf("Builder-created Finance Crew lacks %s", relative)
+		}
+	}
+	var product struct {
+		Templates []struct {
+			ID string `json:"id"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/product.json"]), &product); err != nil {
+		t.Fatal(err)
+	}
+	if len(product.Templates) != 1 || product.Templates[0].ID != req.TemplateID {
+		t.Fatalf("Finance template receipt = %+v", product.Templates)
+	}
+	var runtime struct {
+		Capabilities struct {
+			SelectedSkills  []string `json:"selected_skills"`
+			SelectedServers []string `json:"selected_servers"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/workflow.json"]), &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Capabilities.SelectedSkills) != 1 || runtime.Capabilities.SelectedSkills[0] != req.TemplateID || len(runtime.Capabilities.SelectedServers) != 0 {
+		t.Fatalf("unexpected Finance Crew capabilities = %+v", runtime.Capabilities)
+	}
+}
+
 func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	svc, _, ctx := newCrewCreationTestEnv(t)
 	valid := CreateCrewRequest{

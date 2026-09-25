@@ -186,3 +186,44 @@ it('shows Website Growth as a team proposal whose setup continues in Builder cha
     await act(async () => root.unmount())
   }
 })
+
+it('shows Finance proposal progress from its own installed setup record', async () => {
+  vi.mocked(playbooksApi.listInstalled).mockResolvedValueOnce([{
+    id: 'finance-operations-review', title: 'Finance Operations Review', version: '0.1.0',
+    category: 'Finance', skill_name: 'agentworks-playbook-finance-operations-review',
+    source_hash: 'sha256:finance', status: 'draft', installed_at: '2026-09-25T00:00:00Z',
+  }])
+  vi.mocked(playbooksApi.list).mockResolvedValueOnce([{
+    id: 'finance-operations-review', title: 'Finance Operations Review', description: 'Review billing exceptions and finance impact.',
+    version: '0.1.0', category: 'Finance', order: 1, inputCount: 6, toolCount: 4,
+    setupPrompt: 'Inspect current finance Crews and propose a manual first route.',
+    agentSlots: [
+      { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'billing-exception-queue/v1' },
+      { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'finance-impact-readout/v1' },
+    ],
+    handoffs: [{ id: 'billing-to-finance', from: 'billing', to: 'finance', artifact_type: 'billing-exception-queue/v1', required: true }],
+    setupChecks: ['goal_owner', 'team_bindings', 'test_run'],
+  }])
+  vi.mocked(agentApi.getPlannerFileContent).mockResolvedValueOnce({ data: { content: JSON.stringify({
+    schema_version: 1, playbook_id: 'finance-operations-review', playbook_version: '0.1.0',
+    checks: [{ id: 'goal_owner' }, { id: 'team_bindings' }, { id: 'test_run' }],
+    completed_steps: ['goal_owner'], evidence: { goal_owner: 'Owner and entity confirmed' },
+  }) } } as Awaited<ReturnType<typeof agentApi.getPlannerFileContent>>)
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    await act(async () => {
+      root.render(<PlaybooksPanel workspacePath="Workflow/finance" />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Open Finance Operations Review details"]'))
+    expect(container.textContent).toContain('billing operations coordinator')
+    expect(container.textContent).toContain('finance analyst')
+    expect(container.textContent).toContain('billing → finance')
+    expect(agentApi.getPlannerFileContent).toHaveBeenCalledWith('Workflow/finance/skills/agentworks-playbook-finance-operations-review/SETUP.json')
+    expect(container.textContent).toContain('1 of 3 checks recorded with evidence')
+    expect(container.textContent).toContain('Proposal saved v0.1.0 · draft')
+  } finally {
+    await act(async () => root.unmount())
+  }
+})

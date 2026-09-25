@@ -12,7 +12,7 @@ import { Input } from '../ui/Input'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { agentApi } from '../../services/api'
 import { responseContent } from '../../utils/plannerFiles'
-import { parseWebsiteGrowthSetupProgress, type WebsiteGrowthSetupProgress } from './websiteGrowthSetupProgress'
+import { parsePlaybookSetupProgress, type PlaybookSetupProgress } from './playbookSetupProgress'
 
 type PlaybooksPanelProps = {
   workspacePath: string | null
@@ -30,8 +30,8 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   const [loading, setLoading] = useState(Boolean(workspacePath))
   const [installing, setInstalling] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [growthProgress, setGrowthProgress] = useState<WebsiteGrowthSetupProgress | null>(null)
-  const [growthProgressError, setGrowthProgressError] = useState(false)
+  const [setupProgress, setSetupProgress] = useState<PlaybookSetupProgress | null>(null)
+  const [setupProgressError, setSetupProgressError] = useState(false)
   const canWrite = useCanWriteWorkflow(workspacePath)
 
   useEffect(() => {
@@ -75,37 +75,38 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   }
 
   const installedSelection = selected ? installed.find(item => item.id === selected.id) : undefined
-  const growthSkillName = selected?.id === 'website-growth-loop' ? installedSelection?.skill_name : undefined
-  const growthVersion = selected?.id === 'website-growth-loop' ? installedSelection?.version : undefined
-  const growthChecks = selected?.id === 'website-growth-loop' ? selected.setupChecks : undefined
+  const selectedId = selected?.id
+  const setupSkillName = selected?.setupChecks?.length ? installedSelection?.skill_name : undefined
+  const setupVersion = selected?.setupChecks?.length ? installedSelection?.version : undefined
+  const selectedChecks = selected?.setupChecks
   useEffect(() => {
-    if (!workspacePath || !growthSkillName || !growthVersion || !growthChecks?.length) {
-      setGrowthProgress(null)
-      setGrowthProgressError(false)
+    if (!workspacePath || !selectedId || !setupSkillName || !setupVersion || !selectedChecks?.length) {
+      setSetupProgress(null)
+      setSetupProgressError(false)
       return
     }
     let active = true
     const refresh = async () => {
       try {
-        const filePath = `${workspacePath}/skills/${growthSkillName}/SETUP.json`
+        const filePath = `${workspacePath}/skills/${setupSkillName}/SETUP.json`
         const response = await agentApi.getPlannerFileContent(filePath)
         const content = responseContent(response)?.content || ''
-        const progress = parseWebsiteGrowthSetupProgress(content, growthVersion, growthChecks)
+        const progress = parsePlaybookSetupProgress(content, selectedId, setupVersion, selectedChecks)
         if (active) {
-          setGrowthProgress(progress)
-          setGrowthProgressError(!progress)
+          setSetupProgress(progress)
+          setSetupProgressError(!progress)
         }
       } catch {
         if (active) {
-          setGrowthProgress(null)
-          setGrowthProgressError(true)
+          setSetupProgress(null)
+          setSetupProgressError(true)
         }
       }
     }
     void refresh()
     const timer = window.setInterval(() => { void refresh() }, 10000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [workspacePath, growthSkillName, growthVersion, growthChecks])
+  }, [workspacePath, selectedId, setupSkillName, setupVersion, selectedChecks])
   const updateAvailable = Boolean(installedSelection && selected && isNewerPlaybookVersion(selected.version, installedSelection.version))
   const applicableChangelog = installedSelection && selected
     ? (selected.changelog || []).filter(entry =>
@@ -194,9 +195,9 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           {setupChecks.length > 0 && (
             <section className="mt-4 rounded-lg border border-border p-4" aria-label="Setup checks">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><CheckCircle2 className="h-4 w-4 text-primary" /> Setup checks</div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">{installedSelection && growthProgress ? `${growthProgress.completed.length} of ${setupChecks.length} checks recorded with evidence. Builder updates this as you set up the actual team and test a first run.` : 'Builder verifies these with your actual team and first run. This is a setup plan, not a completed checklist.'}</p>
-              {installedSelection && growthProgressError && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Saved setup progress is unavailable. Update this proposal or ask Builder to inspect its setup file.</p>}
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">{setupChecks.map(check => <div key={check} className="flex items-center gap-2 rounded-md bg-muted/30 px-2.5 py-2 text-xs text-foreground/90">{growthProgress?.completed.includes(check) ? <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-600" /> : <CircleDot className="h-3 w-3 shrink-0 text-muted-foreground" />}{check.replaceAll('_', ' ')}</div>)}</div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{installedSelection && setupProgress ? `${setupProgress.completed.length} of ${setupChecks.length} checks recorded with evidence. Builder updates this as you set up the actual team and test a first run.` : 'Builder verifies these with your actual team and first run. This is a setup plan, not a completed checklist.'}</p>
+              {installedSelection && setupProgressError && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Saved setup progress is unavailable. Update this proposal or ask Builder to inspect its setup file.</p>}
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">{setupChecks.map(check => <div key={check} className="flex items-center gap-2 rounded-md bg-muted/30 px-2.5 py-2 text-xs text-foreground/90">{setupProgress?.completed.includes(check) ? <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-600" /> : <CircleDot className="h-3 w-3 shrink-0 text-muted-foreground" />}{check.replaceAll('_', ' ')}</div>)}</div>
             </section>
           )}
           {outputs.length > 0 && (

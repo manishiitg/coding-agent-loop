@@ -149,12 +149,14 @@ func (s *SlackService) handleSlackDirectMessage(ev *slackevents.MessageEvent) {
 	if s.isDuplicateMessage(ev.Channel + ":" + ev.TimeStamp) {
 		return
 	}
+	// A DM is one continuous chat: top-level messages share one
+	// conversation whose thread id is the DM channel itself, and the bot
+	// replies directly (slackThreadOption). A reply someone makes inside a
+	// thread is answered in that thread, in the same chat.
 	threadTS := ev.ThreadTimeStamp
 	isThreadReply := threadTS != "" && threadTS != ev.TimeStamp
-	if threadTS == "" {
-		// Each top-level DM starts its own thread (and chat); the bot
-		// answers inside it.
-		threadTS = ev.TimeStamp
+	if !isThreadReply {
+		threadTS = ev.Channel
 	}
 	ctx := context.Background()
 	text := s.stripMention(ev.Text)
@@ -177,8 +179,10 @@ func (s *SlackService) handleSlackDirectMessage(ev *slackevents.MessageEvent) {
 // DryRunDirectMessage builds the message a 1:1 DM from senderSlackID would
 // produce on this app, running the same proof as a real DM. Nothing is posted.
 func (s *SlackService) DryRunDirectMessage(ctx context.Context, senderSlackID, channelID, text string) (BotIncomingMessage, string) {
-	threadTS := fmt.Sprintf("dryrun.%d", time.Now().UnixNano())
-	msg, refusal, ignore := s.directMessage(ctx, senderSlackID, strings.ToUpper(strings.TrimSpace(channelID)), threadTS, threadTS, text, false)
+	// A top-level DM: the conversation is the DM channel itself.
+	channelID = strings.ToUpper(strings.TrimSpace(channelID))
+	messageTS := fmt.Sprintf("dryrun.%d", time.Now().UnixNano())
+	msg, refusal, ignore := s.directMessage(ctx, senderSlackID, channelID, channelID, messageTS, text, false)
 	if ignore {
 		return msg, "ignored: the sender is a bot or a deleted account"
 	}

@@ -317,10 +317,7 @@ func (s *SlackService) SendUserNotification(ctx context.Context, message string,
 			nil,
 		),
 	}
-	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
-	if threadTS != "" {
-		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
-	}
+	postOpts := append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, slackThreadOption(channelID, threadTS)...)
 
 	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "user_notification", body, 1, len(blocks))
 	_, timestamp, err := s.client.PostMessageContext(ctx, channelID, postOpts...)
@@ -629,10 +626,7 @@ func (s *SlackService) SendFeedbackNotification(
 		slack.NewTextBlockObject("mrkdwn", footerText, false, false),
 	))
 
-	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
-	if threadTS != "" {
-		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
-	}
+	postOpts := append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, slackThreadOption(channelID, threadTS)...)
 
 	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "notification", message, 1, len(blocks))
 
@@ -2114,9 +2108,10 @@ func (s *SlackService) SendThreadMessage(ctx context.Context, threadID ThreadID,
 		)
 		_, ts, err := s.client.PostMessageContext(ctx,
 			threadID.ChannelID,
-			slack.MsgOptionText(part, false),
-			slack.MsgOptionBlocks(sectionBlock),
-			slack.MsgOptionTS(threadID.ThreadTS),
+			append([]slack.MsgOption{
+				slack.MsgOptionText(part, false),
+				slack.MsgOptionBlocks(sectionBlock),
+			}, slackThreadOption(threadID.ChannelID, threadID.ThreadTS)...)...,
 		)
 		if err != nil {
 			return lastTS, fmt.Errorf("failed to post thread message: %w", err)
@@ -2174,8 +2169,7 @@ func (s *SlackService) SendThreadMessageWithBlocks(ctx context.Context, threadID
 
 	_, ts, err := s.client.PostMessageContext(ctx,
 		threadID.ChannelID,
-		slack.MsgOptionBlocks(slackBlocks...),
-		slack.MsgOptionTS(threadID.ThreadTS),
+		append([]slack.MsgOption{slack.MsgOptionBlocks(slackBlocks...)}, slackThreadOption(threadID.ChannelID, threadID.ThreadTS)...)...,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to post thread message with blocks: %w", err)
@@ -2731,13 +2725,24 @@ func (s *SlackService) GetConfig() *SlackConfig {
 	return &config
 }
 
+// slackThreadOption threads a post under threadTS, unless there is no thread
+// or the thread is the whole conversation: a 1:1 DM runs as one chat whose
+// thread id is the DM channel itself, and its replies post directly.
+func slackThreadOption(channelID, threadTS string) []slack.MsgOption {
+	threadTS = strings.TrimSpace(threadTS)
+	if threadTS == "" || threadTS == strings.TrimSpace(channelID) {
+		return nil
+	}
+	return []slack.MsgOption{slack.MsgOptionTS(threadTS)}
+}
+
 // PostRouteMessage makes exactly one Slack post, preserving the root timestamp.
 // Route scope, durable idempotency and references are owned by the application.
 func (s *SlackService) PostRouteMessage(ctx context.Context, channel, thread, message string) (string, error) {
 	if s.client == nil || !s.IsEnabled() {
 		return "", fmt.Errorf("Slack connector unavailable")
 	}
-	_, ts, err := s.client.PostMessageContext(ctx, channel, slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false), slack.MsgOptionTS(thread))
+	_, ts, err := s.client.PostMessageContext(ctx, channel, append([]slack.MsgOption{slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false)}, slackThreadOption(channel, thread)...)...)
 	return ts, err
 }
 

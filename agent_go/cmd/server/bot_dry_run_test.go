@@ -289,6 +289,10 @@ func TestBotDryRunCrewDMRunsAsTheSender(t *testing.T) {
 	if again := w.dm(t, app.ID, "U0OWNER"); again.SessionID != owner.SessionID {
 		t.Fatalf("a second DM thread opened another chat: %q vs %q", again.SessionID, owner.SessionID)
 	}
+	// The DM is one chat keyed by its channel, so replies post directly.
+	if thread, _ := owner.Request["bot_thread_ts"].(string); thread != "D0DMCHAN01" {
+		t.Fatalf("DM thread = %q, want the DM channel (replies post directly)", thread)
+	}
 	// Attachments are checked as the sender, as in their web chat: the
 	// crew's owner-only workflow keeps a reader out until it is removed.
 	if outcome := w.dm(t, app.ID, "U0READER"); outcome.Admitted {

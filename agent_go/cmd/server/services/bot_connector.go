@@ -3147,7 +3147,7 @@ func (m *BotConversationManager) IsBotSession(sessionID string) bool {
 // live sessions inject follow-ups as raw text since the LLM retains prior turns in its own context.
 func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platform string, threadID ThreadID) string {
 	connector := m.GetConnector(platform)
-	if connector == nil || !connector.Capabilities().Threads {
+	if connector == nil || !connector.Capabilities().Threads || threadIsWholeChat(threadID) {
 		return query
 	}
 

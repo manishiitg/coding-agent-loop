@@ -82,7 +82,7 @@ func (m *BotConversationManager) markThreadHistorySeen(threadID ThreadID, histor
 // is nothing new or the history cannot be read (the turn continues without it).
 func (m *BotConversationManager) threadCatchupContext(msg BotIncomingMessage, threadID ThreadID) string {
 	connector := m.GetConnector(threadID.Platform)
-	if connector == nil || !connector.Capabilities().Threads || threadID.ThreadTS == "" {
+	if connector == nil || !connector.Capabilities().Threads || threadID.ThreadTS == "" || threadIsWholeChat(threadID) {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -223,4 +223,11 @@ func withThreadCatchup(catchup, text string) string {
 		text = "## Current Message\n" + text
 	}
 	return catchup + text
+}
+
+// threadIsWholeChat reports a conversation keyed by its channel rather than a
+// thread: a 1:1 Slack DM (one continuous chat) or a thread-less platform.
+// There is no Slack thread to read, and the chat already holds every turn.
+func threadIsWholeChat(threadID ThreadID) bool {
+	return threadID.ThreadTS != "" && threadID.ThreadTS == threadID.ChannelID
 }

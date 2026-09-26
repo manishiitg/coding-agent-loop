@@ -76,6 +76,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'research-to-payables', from: 'research', to: 'payables', artifact_type: 'vendor-comparison/v1', required: true },
   ], setupChecks: ['goal_owner', 'request_scope', 'requirements_rule', 'commercial_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'order-exception-to-reviewed-update', title: 'Order Exception to Reviewed Update', description: 'Investigate a cross-system order exception and prepare a policy-safe, unsent customer update for the exact support case.', version: '0.1.0', category: 'Operations', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'operations', agent_playbook_id: 'order-operations-coordinator', required: true, output: 'order-exception/v1' },
+    { id: 'support', agent_playbook_id: 'support-reply-drafter', required: true, output: 'order-customer-update-review/v1' },
+  ], handoffs: [
+    { id: 'operations-to-support', from: 'operations', to: 'support', artifact_type: 'order-exception/v1', required: true },
+  ], setupChecks: ['goal_owner', 'order_scope', 'case_scope', 'state_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'finding-to-verified-remediation', title: 'Finding to Verified Remediation', description: 'Connect an authorized, validated security finding to owned remediation and independent retest of the affected deployed asset.', version: '0.1.0', category: 'Security', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'finding', agent_playbook_id: 'security-findings-analyst', required: true, output: 'security-finding/v1' },
     { id: 'remediation', agent_playbook_id: 'security-remediation-coordinator', required: true, output: 'security-remediation-ledger/v1' },

@@ -20,7 +20,7 @@ describe('small-team catalog', () => {
     ])
     expect(intelligence[0].handoffs?.[0].artifact_type).toBe('engineering-metric-observation/v1')
     expect(intelligence[0].setupChecks).toHaveLength(10)
-    expect(PLAYBOOK_CATALOG).toHaveLength(52)
+    expect(PLAYBOOK_CATALOG).toHaveLength(53)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -319,5 +319,16 @@ describe('small-team catalog', () => {
     expect(operations?.agentSlots?.find(slot => slot.id === 'review')?.required).toBe(false)
     expect(operations?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('meeting-action-register/v1')
     expect(operations?.setupChecks).toContain('owner_policy')
+  })
+
+  it('offers a generic order exception to exact-case unsent update handoff', () => {
+    const order = PLAYBOOK_CATALOG.find(item => item.id === 'order-exception-to-reviewed-update')
+    expect(order?.category).toBe('Operations')
+    expect(order?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'order-operations-coordinator', 'support-reply-drafter',
+    ])
+    expect(order?.handoffs?.[0].artifact_type).toBe('order-exception/v1')
+    expect(order?.setupChecks).toContain('case_scope')
+    expect(order?.setupChecks).toHaveLength(10)
   })
 })

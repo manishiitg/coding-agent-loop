@@ -64,7 +64,9 @@ AgentWorks
     ├── Product
     │   └── Feedback Theme to Product Decision
     ├── Operations
-    │   └── Meeting Decision to Owned Follow-through
+    │   ├── Meeting Decision to Owned Follow-through
+    │   ├── Vendor Evaluation to Purchase Decision
+    │   └── Order Exception to Reviewed Update
     ├── GTM
     │   └── Launch to Qualified Pipeline
     └── Shopify
@@ -93,7 +95,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Customer Support | Support Case to Reviewed Resolution; Feedback Theme to Product Decision crosses into Product | Four Support Crews are locally installable with pending setup. Triage and Reply form the required support-case route; Escalation is optional. Feedback & Review Analyst also supplies a validated theme to Product. |
 | Product | Feedback Theme to Product Decision; Released Feature to Adoption Decision | Product Feedback Coordinator and Product Adoption Analyst are locally installable with pending setup. The routes validate sourced feedback or released-feature adoption and prepare an owner decision before any issue, flag or customer action. |
-| Operations | Meeting Decision to Owned Follow-through; Vendor Evaluation to Purchase Decision; Invoice Intake to Reviewed Payable crosses into Finance | Six Operations Crews are locally installable with pending setup. Vendor Researcher and Spend & Payables Coordinator form a purchase-decision route with current quote and procurement gates. Document Intake also supports the invoice route. |
+| Operations | Meeting Decision to Owned Follow-through; Vendor Evaluation to Purchase Decision; Order Exception to Reviewed Update; Invoice Intake to Reviewed Payable crosses into Finance | Six Operations Crews are locally installable with pending setup. The order route joins Order Operations Coordinator to Support Reply Drafter for one exact case, with no send or false delivery claim. Vendor Researcher and Spend & Payables Coordinator form a purchase-decision route with current quote and procurement gates. Document Intake also supports the invoice route. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go; Checkout Signal to Reviewed Recovery; Inventory Risk to Reviewed Replenishment | Seven Shopify Crews and seven multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
@@ -140,6 +142,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | --- | --- |
 | [Meeting Decision to Owned Follow-through](agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/SKILL.md) | Propose Meeting Actions Coordinator → Project Status Reporter with optional Chief of Staff review; validate meeting revision and owner acceptance, re-read tracker status, and keep task writes separate. |
 | [Vendor Evaluation to Purchase Decision](agentic-engineering-platform/operations/vendor-evaluation-to-purchase-decision/SKILL.md) | Propose Vendor Researcher → Spend & Payables Coordinator for exact plans and quotes; validate must-haves and term cost, re-read vendor, commitments, budget and policy, and record a separate owner decision before any purchase action. |
+| [Order Exception to Reviewed Update](agentic-engineering-platform/operations/order-exception-to-reviewed-update/SKILL.md) | Propose Order Operations Coordinator → Support Reply Drafter for one exact order and support case; validate carrier state and identity before an unsent update, then keep contact and resolution on separate approved routes. |
 
 ### Shopify Automation
 

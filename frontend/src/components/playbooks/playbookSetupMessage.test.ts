@@ -5,7 +5,7 @@ import { playbookSetupMessage } from './playbookSetupMessage'
 describe('Playbook Builder setup prompt', () => {
   it('names every authored handoff and requires a blocking validator before its consumer', () => {
     const proposals = PLAYBOOK_CATALOG.filter(item => item.agentSlots?.length)
-    expect(proposals).toHaveLength(37)
+    expect(proposals).toHaveLength(38)
     for (const playbook of proposals) {
       const message = playbookSetupMessage(playbook, `agentworks-playbook-${playbook.id}`)
       expect(message).toContain('blocking validation step before the consumer')

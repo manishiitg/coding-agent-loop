@@ -26,6 +26,8 @@ AgentWorks
     │   └── Engineering Operations Intelligence
     ├── Engineering
     │   └── Incident to Verified Recovery
+    ├── QA
+    │   └── Release Candidate to Reviewed Gate
     ├── FinOps
     │   └── Cost Anomaly to Verified Savings
     ├── Reliability Operations
@@ -67,7 +69,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
-| QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles are locally installable with pending setup; existing packages remain under `browser-qa/`. |
+| QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
 | Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Customer Support | Support Case to Reviewed Resolution | Four Support Crews are locally installable with pending setup. Triage and Reply form the required route; Escalation is optional. Feedback analysis remains a standalone Crew task. |
@@ -78,6 +80,12 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Playbook | Outcome |
 | --- | --- |
 | [Incident to Verified Recovery](agentic-engineering-platform/engineering/incident-to-verified-recovery/SKILL.md) | Propose an Incident Investigator → Engineering Delivery Coordinator route, validate the incident/change handoff, review any production action, and check service recovery from telemetry before closure. |
+
+### QA Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Release Candidate to Reviewed Gate](agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/SKILL.md) | Propose Browser Journey QA Analyst → Release Quality Assistant with optional Flaky Test Investigator; validate exact candidate and required-suite evidence, preserve failures, and publish a gate only through a separately approved provider route. |
 
 ### GTM Automation
 

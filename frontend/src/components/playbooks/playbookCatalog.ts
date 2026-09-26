@@ -54,6 +54,15 @@ export type PlaybookPulseFocus = {
 // Read-only catalog projection of the first-party playbook manifests. The API
 // slice will replace this projection when installation records are introduced.
 export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
+  { id: 'release-candidate-to-reviewed-gate', title: 'Release Candidate to Reviewed Gate', description: 'Join required journey attempts and optional flake investigation to an exact-build release quality decision with separate status publication evidence.', version: '0.1.0', category: 'QA', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'journey', agent_playbook_id: 'browser-journey-qa-analyst', required: true, output: 'journey-result/v1' },
+    { id: 'flake', agent_playbook_id: 'flaky-test-investigator', required: false, output: 'flake-investigation/v1' },
+    { id: 'gate', agent_playbook_id: 'release-quality-assistant', required: true, output: 'release-quality-brief/v1' },
+  ], handoffs: [
+    { id: 'journey-to-gate', from: 'journey', to: 'gate', artifact_type: 'journey-result/v1', required: true },
+    { id: 'journey-to-flake', from: 'journey', to: 'flake', artifact_type: 'journey-result/v1', required: false },
+    { id: 'flake-to-gate', from: 'flake', to: 'gate', artifact_type: 'flake-investigation/v1', required: false },
+  ], setupChecks: ['goal_owner', 'candidate_scope', 'suite_policy', 'evidence_rules', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'support-case-to-reviewed-resolution', title: 'Support Case to Reviewed Resolution', description: 'Route an authorized customer case through sourced triage, a grounded unsent reply or owned escalation, and provider-backed follow-through.', version: '0.1.0', category: 'Customer Support', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'triage', agent_playbook_id: 'support-triage-assistant', required: true, output: 'support-case-triage/v1' },
     { id: 'reply', agent_playbook_id: 'support-reply-drafter', required: true, output: 'support-reply-draft/v1' },

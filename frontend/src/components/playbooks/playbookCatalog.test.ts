@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(35)
+    expect(PLAYBOOK_CATALOG).toHaveLength(36)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -88,5 +88,16 @@ describe('small-team catalog', () => {
     expect(support?.agentSlots?.find(slot => slot.id === 'escalation')?.required).toBe(false)
     expect(support?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('support-case-triage/v1')
     expect(support?.setupChecks).toContain('handoff_contract')
+  })
+
+  it('exposes QA release gate composition with optional flake investigation', () => {
+    const qa = PLAYBOOK_CATALOG.find(item => item.id === 'release-candidate-to-reviewed-gate')
+    expect(qa?.category).toBe('QA')
+    expect(qa?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'browser-journey-qa-analyst', 'release-quality-assistant',
+    ])
+    expect(qa?.agentSlots?.find(slot => slot.id === 'flake')?.required).toBe(false)
+    expect(qa?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('journey-result/v1')
+    expect(qa?.setupChecks).toContain('suite_policy')
   })
 })

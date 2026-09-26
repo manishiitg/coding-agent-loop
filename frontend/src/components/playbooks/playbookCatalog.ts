@@ -291,6 +291,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'billing-to-finance', from: 'billing', to: 'finance', artifact_type: 'receivable-review/v1', required: true },
   ], setupChecks: ['goal_owner', 'invoice_scope', 'balance_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'dispute-to-reconciled-outcome', title: 'Dispute to Reconciled Outcome', description: 'Review one payment dispute, then verify the actual provider decision and finance treatment without an implicit evidence submission.', version: '0.1.0', category: 'Finance', order: 5, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'dispute', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'dispute-case/v1' },
+    { id: 'finance', agent_playbook_id: 'revenue-close-analyst', required: true, output: 'dispute-finance-review/v1' },
+  ], handoffs: [
+    { id: 'dispute-to-finance', from: 'dispute', to: 'finance', artifact_type: 'dispute-case/v1', required: true },
+  ], setupChecks: ['goal_owner', 'case_scope', 'deadline_policy', 'evidence_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'discovery-to-reviewed-proposal', title: 'Discovery to Reviewed Proposal', description: 'Prepare a sourced call brief and an unsent SaaS proposal from approved post-call discovery and current pricing, with distinct seller and commercial review.', version: '0.1.0', category: 'Sales', order: 2, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'briefing', agent_playbook_id: 'sales-call-briefing', required: true, output: 'sales-call-brief/v1' },
     { id: 'proposal', agent_playbook_id: 'proposal-drafter', required: true, output: 'sales-proposal-draft/v1' },

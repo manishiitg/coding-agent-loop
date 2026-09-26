@@ -5,9 +5,11 @@ import { playbookSetupMessage } from './playbookSetupMessage'
 describe('Playbook Builder setup prompt', () => {
   it('names every authored handoff and requires a blocking validator before its consumer', () => {
     const proposals = PLAYBOOK_CATALOG.filter(item => item.agentSlots?.length)
-    expect(proposals).toHaveLength(38)
+    expect(proposals).toHaveLength(39)
     for (const playbook of proposals) {
       const message = playbookSetupMessage(playbook, `agentworks-playbook-${playbook.id}`)
+      expect(message).toContain('update_validation_schema on that Crew step')
+      expect(message).toContain('context_output to the exact JSON artifact path')
       expect(message).toContain('blocking validation step before the consumer')
       expect(message).toContain('one valid and one rejected artifact')
       expect(message).toContain('one authorized customer-like case manually')

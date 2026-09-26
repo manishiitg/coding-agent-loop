@@ -20,7 +20,7 @@ describe('small-team catalog', () => {
     ])
     expect(intelligence[0].handoffs?.[0].artifact_type).toBe('engineering-metric-observation/v1')
     expect(intelligence[0].setupChecks).toHaveLength(10)
-    expect(PLAYBOOK_CATALOG).toHaveLength(53)
+    expect(PLAYBOOK_CATALOG).toHaveLength(54)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -120,6 +120,16 @@ describe('small-team catalog', () => {
     expect(refund?.handoffs?.[0].artifact_type).toBe('refund-decision/v1')
     expect(refund?.setupChecks).toContain('action_ledger')
     expect(refund?.setupChecks).toContain('test_run')
+  })
+
+  it('exposes a dispute review with a separate finance outcome and exact handoff', () => {
+    const dispute = PLAYBOOK_CATALOG.find(item => item.id === 'dispute-to-reconciled-outcome')
+    expect(dispute?.category).toBe('Finance')
+    expect(dispute?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'billing-operations-coordinator', 'revenue-close-analyst',
+    ])
+    expect(dispute?.handoffs?.[0].artifact_type).toBe('dispute-case/v1')
+    expect(dispute?.setupChecks).toContain('deadline_policy')
   })
 
   it('exposes exact-invoice receivable recovery with a separate finance outcome', () => {

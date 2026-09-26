@@ -145,6 +145,7 @@ chat_policy:
     builder: &builder_capabilities
       - user_management
       - mcp_management
+      - mcp_inspection
       - plan_authoring
       - report_authoring
       - secret_management
@@ -153,7 +154,9 @@ chat_policy:
       - improvement_proposals
       - workspace_ui
       - bot_management
-    run: [workspace_ui, bot_management, workflow_suggestions]
+    # mcp_inspection: list the MCP servers and their connection status (no
+    # changes), so a Run chat can tell which of its tools are connected.
+    run: [workspace_ui, bot_management, workflow_suggestions, mcp_inspection]
   origins:
     interactive: *builder_capabilities
     scheduled: *builder_capabilities
@@ -162,7 +165,7 @@ chat_policy:
     child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
     bot: *builder_capabilities
     notification: *builder_capabilities
-  read_only: [workspace_ui, bot_management, workflow_suggestions]
+  read_only: [workspace_ui, bot_management, workflow_suggestions, mcp_inspection]
 
 # Prompt text stays in Markdown. Includes contain named Go-template definitions;
 # the entry file chooses which definitions to render. Runtime values stay in Go.

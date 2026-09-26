@@ -1767,7 +1767,7 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	// Detect colleague tags on the raw text: route/file enrichment below
 	// may append text, and stripping (mention path) removes tags.
 	tagsAnotherUser := slackMessageTagsAnotherUser(text, s.botUserID)
-	userEmail := s.resolveUserEmail(userID)
+	userName, userEmail := s.resolveSlackUser(userID)
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), userID, userEmail, channelID, threadTS, text, isThreadReply)
 	if handled {
 		return
@@ -1777,7 +1777,7 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	s.messageHandler(BotIncomingMessage{
 		Platform:          "slack",
 		UserID:            userID,
-		UserName:          userID,
+		UserName:          userName,
 		UserEmail:         userEmail,
 		ChannelID:         channelID,
 		ConnectionID:      s.connectionID,
@@ -2323,11 +2323,12 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
 
-	userEmail := s.resolveUserEmail(ev.User)
+	userName, userEmail := s.resolveSlackUser(ev.User)
 	msg, handled := s.mentionMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, ev.TimeStamp, text, isThreadReply)
 	if handled {
 		return
 	}
+	msg.UserName = userName
 	s.messageHandler(msg)
 }
 
@@ -2450,16 +2451,25 @@ func (s *SlackService) slackUserDisplayName(userID string) string {
 // resolveUserEmail looks up a Slack user's email via users.info API.
 // Returns empty string on failure (non-fatal).
 func (s *SlackService) resolveUserEmail(userID string) string {
+	_, email := s.resolveSlackUser(userID)
+	return email
+}
+
+// resolveSlackUser returns the sender's display name (userID when Slack has
+// none or the lookup fails) and profile email, from one users.info call.
+func (s *SlackService) resolveSlackUser(userID string) (name, email string) {
 	if s.client == nil || userID == "" {
-		return ""
+		return userID, ""
 	}
 	user, err := s.client.GetUserInfo(userID)
 	if err != nil {
-		log.Printf("[SLACK_BOT] Failed to resolve email for user %s: %v", userID, err)
-		return ""
+		log.Printf("[SLACK_BOT] Failed to resolve user %s: %v", userID, err)
+		return userID, ""
 	}
-	return user.Profile.Email
+	name = firstNonEmptyString(user.Profile.DisplayName, user.Profile.RealName, user.RealName, user.Name, userID)
+	return name, user.Profile.Email
 }
+
 
 // resolveSlackRoute routes a message that arrived on this listener: a
 // dedicated (scoped) app serves its own destination, a shared app follows

@@ -298,6 +298,12 @@ func crewReaderDeniedTools() []string {
 		"create_project_trigger",
 		"update_project_trigger",
 		"delete_project_trigger",
+		// MCP connections (readers may list them).
+		"install_mcp_server",
+		"add_mcp_server",
+		"edit_mcp_server",
+		"remove_mcp_server",
+		"trigger_mcp_discovery",
 		// Crew selections (servers, secrets, skills).
 		"update_project_mcp_server_selection",
 		"update_project_global_secret_selection",

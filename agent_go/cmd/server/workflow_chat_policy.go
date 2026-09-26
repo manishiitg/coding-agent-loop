@@ -130,10 +130,18 @@ func chatPolicyRequiresReconnect(codingProvider bool, previous, current string, 
 // Registration is shared by normal chat and workflow-phase construction, before
 // finalization/catalog publication. Other products retain their manifest gate.
 func (api *StreamingAPI) registerMCPToolsForChat(registrar definitionToolRegistrar, policy workflowChatPolicy, disabled func(string) bool) error {
-	if !policy.allows("mcp_management") {
+	if policy.allows("mcp_management") {
+		return api.registerMultiAgentMCPServerTools(registrar, disabled)
+	}
+	if !policy.allows("mcp_inspection") {
 		return nil
 	}
-	return api.registerMultiAgentMCPServerTools(registrar, disabled)
+	// Run mode lists the servers and their status and changes nothing.
+	// Without it an agent told to confirm a server before using it (the
+	// crew's work-mcp skill) reports connected tools as unavailable.
+	return api.registerMultiAgentMCPServerTools(registrar, func(name string) bool {
+		return name != "list_mcp_servers" || disabled != nil && disabled(name)
+	})
 }
 
 // Persist the same access-derived conversational mode used for tool admission.

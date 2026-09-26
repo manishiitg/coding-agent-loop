@@ -1,6 +1,7 @@
 # Bots: who a turn runs as
 
-Status: proposed 2026-09-26. Related: `bot_destination_scope.md`.
+Status: crew-in-Slack gaps shipped 2026-09-26; Slack DMs as the sender decided, not built.
+Decisions (user, 2026-09-26): identity by email match; the prompt names the sender with their email; a DM runs as the user only when it is a true 1:1 DM. Related: `bot_destination_scope.md`.
 
 ## Rule
 
@@ -56,8 +57,10 @@ workspace's email control, so a DM runs as a user only when all of these hold:
    (`is_restricted`, `is_ultra_restricted`), not an external Slack Connect
    user (`is_stranger`, or a different `team_id`), and not a bot.
 2. The email matches exactly one `users.json` record that is not disabled.
-3. The conversation is a 1:1 DM (`channel_type: "im"`, a `D…` id). A group DM
-   (`mpim`) is a group: Run mode, like a channel.
+3. The conversation is a 1:1 DM between the sender and the bot, checked with
+   Slack itself (`conversations.info` → `is_im`, and its `user` is the
+   sender), not inferred from the `D…` id or the event's `channel_type`. A
+   group DM (`mpim`), a private channel or a channel is a group: Run mode.
 
 If any check fails, the DM falls back to the channel rule (the route in Run
 mode) when the bot has one, or the bot says who it can't identify.
@@ -104,16 +107,23 @@ reports them as missing, like the other scopes. The dry run gains a DM case.
 This is separate from identity. These are the gaps the 2026-09-26 crew report
 found. They apply to channel turns (Run mode) and DM turns alike:
 
-1. **Thread history on the first turn.** The crew path skips the history
-   that workflow bot turns get (`buildQueryWithThreadHistory`); follow-ups get
-   catch-up already.
-2. **The Slack read tool.** Crew turns register the `slack` CLI only when not
-   read-only (`agent_profile_runtime.go`), so a Run-mode Slack turn can't read
-   its own thread. Register it read-only, scoped to the arrival app and thread.
-3. **MCP servers (Notion etc.).** Missing in crew Slack turns; root cause
-   under investigation.
-4. **Who is asking.** The prompt gets the sender's Slack name, and their
-   email when it maps to an AgentWorks user.
+1. **Thread history on the first turn** (shipped). A crew's Slack thread
+   chat now gets the thread (`buildQueryWithThreadHistory`) on its first
+   turn; follow-ups already got catch-up.
+2. **The Slack read tool** (shipped). Run-mode crew turns register the
+   `slack` CLI (held to the arrival channel and destination); setup changes
+   still need write access.
+3. **MCP servers (Notion etc.)** (shipped, diagnosis from code, not
+   production logs). The servers were loaded; Run mode lacked
+   `list_mcp_servers` (only `mcp_management` registered it), and the crew's
+   `work-mcp` skill forbids claiming a server before checking it. New
+   capability `mcp_inspection` (Run and Builder) registers only
+   `list_mcp_servers`. Confirm on RTS with `[CHAT_POLICY] MCP management
+   admission: ... inspect=true` on a Slack turn.
+4. **Who is asking** (shipped). Every Slack turn starts with
+   `From: <name> <email> (Slack)` (`withBotSender`), and a thread's session
+   is titled `<name>: <first message> · #channel` so its tab is not just
+   "Slack".
 
 ## Tests
 

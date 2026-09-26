@@ -6187,7 +6187,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[CHAT_POLICY] MCP management admission: mode=%s origin=%s allowed=%v", mcpPolicy.Mode, mcpPolicy.Origin, mcpPolicy.allows("mcp_management"))
+				logfWithContext(queryLogCtx, "[CHAT_POLICY] MCP management admission: mode=%s origin=%s allowed=%v inspect=%v", mcpPolicy.Mode, mcpPolicy.Origin, mcpPolicy.allows("mcp_management"), mcpPolicy.allows("mcp_inspection"))
 			}
 			if isToolBackedChat {
 				secretWorkflowPath := ""

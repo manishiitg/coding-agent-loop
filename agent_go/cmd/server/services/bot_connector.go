@@ -221,6 +221,8 @@ type BotIncomingMessage struct {
 	Timestamp     time.Time
 	IsThreadReply bool
 	IsMention     bool            // true when the bot was @mentioned (vs plain thread reply)
+	// senderNoted: withBotSender already put the sender line on Text.
+	senderNoted bool
 	// MentionsOtherUser is true when the message tags another platform user
 	// but not the bot (Slack <@U...> of someone else). Thread replies with
 	// this set are addressed to a colleague: the bot stays silent no matter
@@ -1536,6 +1538,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// private CLI directories and native resume handles are keyed to it.
 		// Each query still has its own execution ID and run logs.
 		if oldSessionID != "" {
+			withBotSender(&msg)
 			msg.Text = m.withBotRuntimeState(active, msg.Text)
 			if supportsThreads {
 				// The conversation continues, so the first-turn history
@@ -1798,6 +1801,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
+		withBotSender(&msg)
 		err := m.followUpSession(followCtx, m.turnRequestForActive(active, withThreadCatchup(catchup, m.withBotRuntimeState(active, msg.Text)), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
@@ -2432,6 +2436,12 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	if len(resumeSessionID) > 0 {
 		msg.ResumeSessionID = resumeSessionID[0]
 	}
+	// A thread keeps the title of its first message across resumes.
+	sessionTitle := ""
+	if connector := m.GetConnector(msg.Platform); connector != nil && msg.ResumeSessionID == "" {
+		sessionTitle = botSessionTitle(msg, botConnectorChannelName(context.Background(), connector, threadID))
+	}
+	withBotSender(&msg)
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 	profilePresetRoute := msg.PresetWorkflow
 	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
@@ -2501,6 +2511,9 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		}
 		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
 		addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
+	}
+	if existing, _ := queryReq["session_title"].(string); strings.TrimSpace(existing) == "" && sessionTitle != "" {
+		queryReq["session_title"] = sessionTitle
 	}
 	applyBotQueryRequestMetadata(queryReq, botMeta)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)

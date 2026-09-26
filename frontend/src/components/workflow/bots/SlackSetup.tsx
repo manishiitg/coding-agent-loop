@@ -214,6 +214,18 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
           </Button>
         </div>
         {slackConnTestResult && <SlackChecksView result={slackConnTestResult} />}
+        {/* The setup help stays reachable once the bot is installed: new
+            features (e.g. direct messages) need scopes and events added in
+            the Slack app, then a reinstall. */}
+        <details className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium text-foreground">Update the Slack app's permissions</summary>
+          <p className="mt-2 text-muted-foreground">
+            Open the app at <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">api.slack.com/apps</a>, add anything missing below, then reinstall it to the workspace. <b>Test bot</b> reports what the installed token has.
+          </p>
+          <div className="mt-3">
+            <SlackPermissionsChecklist />
+          </div>
+        </details>
       </FormSection>
     )
   }
@@ -331,16 +343,18 @@ function MyBotChannelChip({ bots, bot, channelId }: { bots: SlackSetupBots; bot:
       <div className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-foreground" title={channelId}>{channelId}</div>
       <span className="max-w-[40%] truncate text-xs text-muted-foreground" title={bot.display_name}>{bot.display_name}</span>
       {removing ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={() => void removeMyBotChannel(bot.id, channelId)}
           disabled={readOnly || !!myBotSaving}
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 px-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600"
           aria-label={`Stop answering on Slack ${channelId} through ${bot.display_name}`}
           title={readOnly ? READ_ONLY_TITLE : `Stop answering here in ${channelId}`}
         >
           <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        </Button>
       )}
     </div>
   )

@@ -116,7 +116,7 @@ function SlackAdminSections({ showWorkflowBots = false, onSaved }: { showWorkflo
       >
         <ToggleRow
           label="Shared bot enabled"
-          description="Answers @mentions in every channel the shared bot is in, not only routed ones. Bots work in channels only, not direct messages. Routed channels and own bots keep working when this is off."
+          description="Answers @mentions in every channel the shared bot is in, not only routed ones. The shared bot answers in channels only; direct messages work with a workflow's or crew's own bot. Routed channels and own bots keep working when this is off."
           checked={enabled}
           onCheckedChange={setEnabled}
           disabled={!canManage}

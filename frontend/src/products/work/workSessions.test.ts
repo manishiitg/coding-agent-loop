@@ -207,7 +207,7 @@ describe('createWorkSession', () => {
   it.each([
     ['lead-intake-qualifier', 'Lead Intake & Qualifier', 1],
     ['account-researcher', 'Account Researcher', 1],
-    ['sales-followup-coordinator', 'Sales Follow-up Coordinator', 2],
+    ['sales-followup-coordinator', 'Sales Follow-up Coordinator', 3],
   ] as const)('creates the %s Sales specialist with its checklist and no outbound route', async (id, name, version) => {
     updatePlannerFile.mockClear()
     const session = await createWorkSession(name, `Review ${name.toLowerCase()} records.`, undefined, id)
@@ -226,7 +226,7 @@ describe('createWorkSession', () => {
 
   it.each([
     ['customer-onboarding-coordinator', 'Customer Onboarding Coordinator', 1],
-    ['product-adoption-analyst', 'Product Adoption Analyst', 2],
+    ['product-adoption-analyst', 'Product Adoption Analyst', 3],
     ['customer-health-coordinator', 'Customer Health Coordinator', 1],
     ['renewal-coordinator', 'Renewal Coordinator', 1],
   ] as const)('creates the %s Customer Success Crew with pending setup', async (id, name, version) => {

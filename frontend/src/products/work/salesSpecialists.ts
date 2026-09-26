@@ -82,31 +82,33 @@ First result: research-example-001 links to brief-example-001 and the matching d
     inadequateExample: '“Harbor Clinic has three locations, uses a legacy scheduler, and is ready to buy our platform.” Reject: the scheduler and buying intent are unsupported, and a public page does not establish permission to contact anyone.',
   },
   {
-    id: 'sales-followup-coordinator', version: 2, name: 'Sales Follow-up Coordinator', icon: '✉️', subcategory: 'Follow-up',
+    id: 'sales-followup-coordinator', version: 3, name: 'Sales Follow-up Coordinator', icon: '✉️', subcategory: 'Follow-up',
     role: 'Human-reviewed B2B lead follow-up coordinator',
-    purpose: 'Prepare reviewed booking offers and track authorized delivery and meeting outcomes for qualified inbound leads.',
-    firstResult: 'A reviewable follow-up draft with cited claims, recipient reference, owner, and next-check date.',
-    minimumInput: 'Validated lead brief, offer and voice guidance, contact policy, owner, and any prior-contact history.',
-    optionalConnections: 'Approved CRM/form source, verified booking URL, email sender, and calendar outcome source. A draft needs no live connection; delivery and booking tracking do.',
-    exampleRequests: ['Draft a booking-link reply to this qualified demo request for my review. Do not send it.', 'Review follow-ups due this week and flag duplicate contact or missing approval.'],
+    purpose: 'Prepare reviewed follow-up or a no-contact decision for qualified inbound leads and trial accounts, then track only provider-backed outcomes.',
+    firstResult: 'A reviewable unsent follow-up draft or sourced no-contact decision with exact recipient, owner, evidence and next check.',
+    minimumInput: 'Choose a validated inbound lead brief or trial-usage observation, plus current CRM identity, approved offer, contact/suppression policy, owner and prior-contact history.',
+    optionalConnections: 'Approved CRM, form or trial-account export, current contact history, verified booking URL, sender and meeting source. A draft needs no live send connection.',
+    exampleRequests: ['Draft a booking-link reply to this qualified demo request for my review. Do not send it.', 'Review this trial account for a permitted seller assist; return no-contact if consent or identity is unclear.'],
     method: [
       'Confirm lead owner, current stage, contact channel and policy, allowed claims, message voice, owner-specific booking URL, and what outcome counts as a useful meeting.',
-      'Read the validated lead brief and approved research if present. Check prior messages, replies, opt-outs, and already-booked meetings before proposing another touch.',
-      'Draft one short response tied to the prospect’s actual enquiry. Cite support for factual claims and mark any uncertain personalization for review.',
+      'Read the selected validated lead brief or trial observation. For a trial, join product account to current CRM account and exact recipient through a source record; never derive a person from a tenant name. Check prior messages, replies, opt-outs, and booked meetings.',
+      'Draft one short response tied to the prospect’s actual enquiry or an owner-approved trial assistance policy. Cite supported facts and mark uncertain personalization for review. If contact is blocked or unclear, return an internal no-contact decision.',
       'Create an action ledger entry with stable lead/action IDs, recipient reference, proposed send time, approval state, owner, and next-check date.',
       'Ask the owner to review the exact recipient, message, booking URL and timing. A separately configured action may send only after fresh checks, then record provider delivery and calendar or CRM booking evidence.',
     ],
-    evidence: 'The draft links to the exact lead brief, prior-contact evidence, approved offer material, and any account research it uses.',
+    evidence: 'The draft or no-contact decision links to the selected lead or trial artifact, current CRM identity, prior-contact and permission checks, approved offer material, and any research it uses.',
     boundary: 'Do not email, message, enroll a sequence, update CRM, schedule a meeting, or mark a draft as sent without a separately approved action and verified current state.',
-    handoff: 'For Inbound Lead-to-Meeting Review, emit plain JSON `sales-followup-draft/v1` linked to the qualification brief and optional validated research. Keep `send_state` as `not_sent` and `approval_required` true. A separate approved action may create `sales-delivery-receipt/v1` from a real provider response; later observed calendar or CRM events may create `sales-meeting-outcome/v1`. Never infer these outcomes from a draft.',
+    handoff: 'For Inbound Lead-to-Meeting Review, emit `sales-followup-draft/v1` linked to the qualification brief. For Trial Account to Reviewed Sales Assist, consume the validated `trial-usage-observation/v1`, recheck current trial/CRM/contact state, and emit `trial-sales-assist/v1` with an unsent draft or no-contact decision. Keep `send_state` as `not_sent`; a separate approved action needs a provider receipt, and a later booked or paid outcome needs its own source event. Never infer those outcomes from a draft.',
     deeperMethod: `## Contact and repeat-run rules
 
-An inbound request is not blanket consent for every channel or cadence. Follow the customer's policy and current suppression state. Stop a draft when the lead is not qualified, contact is blocked, a relevant reply already arrived, or a meeting is already booked. If CRM or inbox access is absent, state that duplicate-contact checks are incomplete and keep the result an internal proposal. For an approved send, re-read the durable decision and exact message fingerprint, lead, suppression, reply and meeting state; use a stable action ID and provider receipt so retries cannot produce duplicate sends. Report booked only from a matched calendar or CRM event.`,
-    specialistProbe: 'For one validated qualified lead, verify the exact recipient reference and owner against the brief, current contact/suppression policy, prior messages and replies, existing meeting state, approved offer claims and owner-specific booking URL. Show the exact draft and next-check date to the owner. Before any separately approved send, recheck state and message fingerprint; require a provider receipt and matched meeting event for later outcome claims.',
+An inbound request or trial signup is not blanket consent for every channel or cadence. Follow the customer's policy and current suppression state. Stop a draft when fit is unreviewed, contact is blocked, a relevant reply arrived, a meeting is booked, or the trial has converted. For a trial, keep product use separate from buying intent and require an explicit product-account-to-CRM-account mapping plus an exact permitted recipient. If CRM or inbox access is absent, return needs-review rather than a contact-ready draft. For an approved send, re-read the decision and message fingerprint, suppression, reply and meeting state; use a stable action ID and provider receipt. Report booked only from a matched calendar or CRM event.`,
+    specialistProbe: 'For the selected route, read one authorized qualified lead or exact trial-usage artifact. Join its account to current CRM and recipient records where relevant, verify seller owner, fit decision, current consent/channel and suppression, prior messages/replies, meeting and converted state, approved offer claim and booking URL. Produce a no-contact or draft decision with exact source IDs; have the owner review recipient and wording. Before any separately approved send, recheck the message fingerprint and state; require a provider receipt and matched meeting event for later claims.',
     workedExample: `Fictional input: brief-example-001 qualifies lead-example-001, research-example-001 supplies a three-location observation, and the approved offer document supports a scheduling demo. The recipient is crm-export:contact-001. Contact policy remains review_required; no verified send approval or provider receipt is supplied.
 
-First result: draft-example-001 has subject “Your scheduling demo request” and a short reply about the prospect's stated multi-location question. It cites the enquiry and approved offer, names the Sales owner, sets a next-check date, and records send_state **not_sent** with approval_required **true**. The owner reviews recipient, wording, booking URL, timing and current suppression state. A draft is neither delivered nor booked.`,
-    inadequateExample: '“I sent the follow-up and booked a meeting because the lead asked for a demo.” Reject: the supplied case has no approved send, provider delivery receipt, or matched calendar/CRM meeting event; a draft and inbound interest cannot prove those outcomes.',
+First result: draft-example-001 has subject “Your scheduling demo request” and a short reply about the prospect's stated multi-location question. It cites the enquiry and approved offer, names the Sales owner, sets a next-check date, and records send_state **not_sent** with approval_required **true**. The owner reviews recipient, wording, booking URL, timing and current suppression state. A draft is neither delivered nor booked.
+
+Separate fictional trial input: validated observation U-42 belongs to product account A-42. CRM mapping M-42 links it to CRM account C-42, but contact permission is unknown despite one observed project-created event. First result: trial-sales-assist D-42 says **needs_review**, recipient and draft are null, and Sales asks the owner to resolve permission and fit. Product use is not contact consent or purchase intent.`,
+    inadequateExample: '“I sent the follow-up and booked a meeting because the lead asked for a demo.” Reject: no approved send, provider receipt or matched meeting exists. Also reject “email this trial user because they created a project”: use neither identifies an approved recipient nor proves contact permission or buying intent.',
   },
 ]
 
@@ -114,7 +116,7 @@ function checklist(spec: SalesSpecialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm the sales role', instructions: `Confirm whether ${spec.name} is the primary Crew role or a supporting capability. Preserve an existing Crew identity and record the named business owner.` },
     { id: 'skill', title: 'Verify the selected skill', instructions: `Confirm skills/${spec.id}/SKILL.md exists and ${spec.id} is selected for this Crew.` },
-    { id: 'scope', title: 'Set business and lead scope', instructions: `Confirm the offer, target buyer, market, reporting window, and authorized source scope for this role. Minimum input: ${spec.minimumInput}` },
+    { id: 'scope', title: spec.id === 'sales-followup-coordinator' ? 'Select inbound lead or trial route' : 'Set business and lead scope', instructions: `Confirm the offer, target buyer, market, reporting window, and authorized source scope for this role. Minimum input: ${spec.minimumInput}` },
     { id: 'access', title: 'Test source access', instructions: `Read a representative authorized source or export. ${spec.optionalConnections} Record the actual account or file, date coverage, and missing access; a named provider is not a connected account.` },
     { id: 'policy', title: 'Verify source and decision rules', instructions: spec.specialistProbe },
     { id: 'first_result', title: 'Produce the first result', instructions: `Produce ${spec.firstResult} ${spec.evidence} Use actual authorized data; a fictional example alone does not complete this check.` },
@@ -192,7 +194,7 @@ ${spec.optionalConnections} A file or export is sufficient for a first read-only
 
 ## Optional recurring work
 
-A schedule can repeat this Crew's own review with a timezone, source-freshness rule, and owner. An authenticated form or CRM event may trigger intake only after signature, event ID, account scope, and duplicate-delivery checks. A separately proposed Inbound Lead-to-Meeting Review Automation coordinates distinct Crews; Builder must test its handoffs manually before recurrence. ${spec.boundary}
+A schedule can repeat this Crew's own review with a timezone, source-freshness rule, and owner. An authenticated form or CRM event may trigger intake only after signature, event ID, account scope, and duplicate-delivery checks. A separately proposed ${spec.id === 'sales-followup-coordinator' ? 'Inbound Lead-to-Meeting Review or Trial Account to Reviewed Sales Assist' : 'Inbound Lead-to-Meeting Review'} Automation coordinates distinct Crews; Builder must test its handoffs manually before recurrence. ${spec.boundary}
 `
 }
 

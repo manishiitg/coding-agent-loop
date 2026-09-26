@@ -21,5 +21,8 @@ describe('Sales Crew templates', () => {
     expect(sales[0].files['skills/lead-intake-qualifier/SKILL.md']).toContain('budget **unknown**')
     expect(sales[1].files['skills/account-researcher/SKILL.md']).toContain('**hypothesis**')
     expect(sales[2].files['skills/sales-followup-coordinator/SKILL.md']).toContain('send_state **not_sent**')
+    expect(sales[2].version).toBe(3)
+    expect(sales[2].files['skills/sales-followup-coordinator/SKILL.md']).toContain('trial-sales-assist/v1')
+    expect(sales[2].files[sales[2].setupPath]).toContain('Select inbound lead or trial route')
   })
 })

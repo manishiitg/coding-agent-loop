@@ -245,6 +245,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
     { id: 'qualification-to-research', from: 'qualification', to: 'research', artifact_type: 'lead-qualification-brief/v1', required: false },
     { id: 'research-to-followup', from: 'research', to: 'followup', artifact_type: 'account-research-brief/v1', required: false },
   ], setupChecks: ['goal_owner', 'source_scope', 'policy_metric', 'team_bindings', 'access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'trial-account-to-reviewed-sales-assist', title: 'Trial Account to Reviewed Sales Assist', description: 'Review one SaaS trial account\'s sourced product use, then prepare a permitted seller assist or an explicit no-contact decision.', version: '0.1.0', category: 'Sales', order: 4, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'adoption', agent_playbook_id: 'product-adoption-analyst', required: true, output: 'trial-usage-observation/v1' },
+    { id: 'sales', agent_playbook_id: 'sales-followup-coordinator', required: true, output: 'trial-sales-assist/v1' },
+  ], handoffs: [
+    { id: 'adoption-to-sales', from: 'adoption', to: 'sales', artifact_type: 'trial-usage-observation/v1', required: true },
+  ], setupChecks: ['goal_owner', 'trial_scope', 'usage_rule', 'contact_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'new-customer-to-first-value', title: 'New Customer to First Value', description: 'Coordinate onboarding milestones and observed product adoption so a new B2B customer reaches an agreed first result.', version: '0.2.0', category: 'Customer Success', order: 1, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'onboarding', agent_playbook_id: 'customer-onboarding-coordinator', required: true, output: 'onboarding-milestone-register/v1' },
     { id: 'adoption', agent_playbook_id: 'product-adoption-analyst', required: true, output: 'first-value-readout/v1' },

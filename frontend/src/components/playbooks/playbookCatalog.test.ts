@@ -20,8 +20,18 @@ describe('small-team catalog', () => {
     ])
     expect(intelligence[0].handoffs?.[0].artifact_type).toBe('engineering-metric-observation/v1')
     expect(intelligence[0].setupChecks).toHaveLength(10)
-    expect(PLAYBOOK_CATALOG).toHaveLength(54)
+    expect(PLAYBOOK_CATALOG).toHaveLength(55)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
+  })
+
+  it('reuses Product and Sales Crews for a permission-gated trial assist', () => {
+    const trial = PLAYBOOK_CATALOG.find(item => item.id === 'trial-account-to-reviewed-sales-assist')
+    expect(trial?.category).toBe('Sales')
+    expect(trial?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'product-adoption-analyst', 'sales-followup-coordinator',
+    ])
+    expect(trial?.handoffs?.[0].artifact_type).toBe('trial-usage-observation/v1')
+    expect(trial?.setupChecks).toHaveLength(10)
   })
 
   it('reuses Product Crews for released feature adoption with a pending setup route', () => {

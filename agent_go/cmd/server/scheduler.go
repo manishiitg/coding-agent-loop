@@ -53,7 +53,7 @@ type ScheduleContext struct {
 	// PulseOnly suppresses the normal workflow message for the toolbar's one-off
 	// Pulse action. Version preflight still runs before Pulse, which reviews the
 	// latest retained workflow evidence and then executes the normal finalizer.
-	PulseOnly              bool
+	PulseOnly bool
 	// PulseFixRun marks a Pulse fix run (pulse_fix_run.go): no Gate agent,
 	// Technical Review+Fix only, and a light finish. PulseFixReason is why.
 	PulseFixRun            bool
@@ -3881,6 +3881,12 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Surfaced %d unanswered operator decision(s) to the first schedule message", len(pending))
 	}
 
+	// This run owns the session until its work is done: it alone hands step
+	// results back to the agent (scheduled_turn_followups.go). Released when
+	// this function returns, before the Pulse finalizer starts.
+	releaseCompletions := s.api.claimSessionCompletions(sessionID)
+	defer releaseCompletions()
+
 	for i, turn := range turns {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s): %q", i+1, len(turns), turn.label, turn.query)
 
@@ -3930,6 +3936,33 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		// the session for frontend tab labeling. Subsequent calls are
 		// no-ops (helper guards against overwriting an existing Title).
 		s.stampScheduleNameOnSession(sessionID, sctx)
+
+		// The turn ending is not the work ending. Wait for every step this turn
+		// started, hand the agent their results as its next turn, and repeat
+		// until a turn starts nothing new (e.g. all 12 groups).
+		turnMode := turn.workshopMode()
+		rounds, followErr := s.api.runScheduledFollowUps(ctx, sessionID, invocationStartedAt, schedulerWorkshopLiveChildCeiling, func(ctx context.Context, query string) error {
+			followReq := requestWithWorkshopMode(baseReqMap, turnMode)
+			followReq["query"] = query
+			followStartedAt := time.Now().UTC()
+			if err := s.api.startSessionInternal(ctx, followReq, sessionID, sctx.OwnerUserID, nil); err != nil {
+				return err
+			}
+			if failure := scheduledTurnFailure(s.api.eventStore, sessionID, followStartedAt); failure != "" {
+				return fmt.Errorf("step-result turn produced no response: %s", failure)
+			}
+			return nil
+		})
+		if rounds > 0 {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s): handed step results back %d time(s)", i+1, len(turns), turn.label, rounds)
+		}
+		if followErr != nil {
+			if !turn.decisionDrain || turn.failureBlocksRun {
+				s.preserveRunEvidenceAfterFailedTurn(ctx, sctx, sessionID, invocationStartedAt)
+				return sessionID, runFolder, fmt.Errorf("workshop turn %d/%d (%s) step results: %w", i+1, len(turns), turn.label, followErr)
+			}
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Pre-run decision drain step results failed (continuing to the run): %v", followErr)
+		}
 
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s) completed", i+1, len(turns), turn.label)
 	}

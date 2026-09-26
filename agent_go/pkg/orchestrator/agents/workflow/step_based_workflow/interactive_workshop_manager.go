@@ -293,8 +293,22 @@ func executeBackgroundMessageSequenceObserved(
 	messageSequence []backgroundMessageSequenceItem,
 	observer backgroundMessageSequenceObserver,
 ) (string, error) {
+	result, _, err := executeBackgroundMessageSequenceWithHistory(ctx, agent, templateVars, opening, messageSequence, observer)
+	return result, err
+}
+
+// executeBackgroundMessageSequenceWithHistory also returns the conversation,
+// so the caller can continue it (e.g. with owned step results).
+func executeBackgroundMessageSequenceWithHistory(
+	ctx context.Context,
+	agent agents.OrchestratorAgent,
+	templateVars map[string]string,
+	opening string,
+	messageSequence []backgroundMessageSequenceItem,
+	observer backgroundMessageSequenceObserver,
+) (string, []llmtypes.MessageContent, error) {
 	if agent == nil {
-		return "", fmt.Errorf("background sequence agent is nil")
+		return "", nil, fmt.Errorf("background sequence agent is nil")
 	}
 	turns := make([]backgroundMessageSequenceItem, 0, 1+len(messageSequence))
 	turns = append(turns, backgroundMessageSequenceItem{ID: "opening", Title: "Opening", Message: opening})
@@ -312,15 +326,15 @@ func executeBackgroundMessageSequenceObserved(
 		turnVars["Instruction"] = turn.Message
 		result, history, err = agent.Execute(ctx, turnVars, history)
 		if err != nil {
-			return "", fmt.Errorf("sequence turn %d (%s) failed: %w", turnIndex+1, turn.ID, err)
+			return "", history, fmt.Errorf("sequence turn %d (%s) failed: %w", turnIndex+1, turn.ID, err)
 		}
 		if observer != nil {
 			if err := observer(turn, result); err != nil {
-				return "", fmt.Errorf("sequence turn %d (%s) checkpoint failed: %w", turnIndex+1, turn.ID, err)
+				return "", history, fmt.Errorf("sequence turn %d (%s) checkpoint failed: %w", turnIndex+1, turn.ID, err)
 			}
 		}
 	}
-	return result, nil
+	return result, history, nil
 }
 
 // ValidatePulseReviewIdentity rejects a review identity that cannot name a
@@ -1136,12 +1150,15 @@ type ServerAgentInfo struct {
 
 // InteractiveWorkshopManager manages the interactive workshop phase
 type InteractiveWorkshopManager struct {
-	controller             *StepBasedWorkflowOrchestrator
-	workshopConfig         *WorkshopConfig
-	presetLLM              *AgentLLMConfig
-	sessionID              string
-	workflowID             string
-	stepRegistry           *WorkshopStepRegistry
+	controller     *StepBasedWorkflowOrchestrator
+	workshopConfig *WorkshopConfig
+	presetLLM      *AgentLLMConfig
+	sessionID      string
+	workflowID     string
+	stepRegistry   *WorkshopStepRegistry
+	// backgroundStepOwners maps a run_in_background agent's tool session to
+	// the steps it starts (background_step_ownership.go).
+	backgroundStepOwners   sync.Map
 	sessionCtx             context.Context                             // long-lived ctx for background goroutines
 	toolCallQueryFunc      ToolCallQueryFunc                           // optional: query live tool calls for running steps
 	tmuxLookupFunc         TmuxLookupFunc                              // optional: resolve live tmux session name for a coding-CLI step
@@ -2398,6 +2415,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// and can double-act — e.g. post the same tweet twice.
 			if existing, found, _ := iwm.stepRegistry.LatestSnapshotForStep(stepID); found && existing.Status == WorkshopStepRunning {
 				logger.Info(fmt.Sprintf("⏭️ Workshop: execute_step(%q) skipped — already running (execution_id=%q)", stepID, existing.ID))
+				if owner := iwm.backgroundStepOwnerFor(ctx); owner != nil {
+					owner.add(existing.ID)
+					return fmt.Sprintf("Step %q is ALREADY RUNNING (execution_id: %q) — not starting a duplicate. The runtime will wait for it and give you its final result as your next message. End your turn now if you have nothing else to do; do not poll.", stepID, existing.ID), nil
+				}
 				return fmt.Sprintf("Step %q is ALREADY RUNNING (execution_id: %q) — not starting a duplicate. You'll be notified when it completes. End the current agent turn instead of polling; use query_step(step_id=%q) only if the user explicitly requests a live status check, or stop that execution first if the user wants a fresh run. (Concurrent runs of the same step race on shared state and can double-act.)", stepID, existing.ID, stepID), nil
 			}
 
@@ -2495,19 +2516,33 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			} else if groupName != "" {
 				stepDisplayName = fmt.Sprintf("%s [%s]", stepDisplayName, groupName)
 			}
+			// A step started by a run_in_background agent belongs to that agent:
+			// it is its child, and its result goes to that agent rather than to
+			// the main session (background_step_ownership.go).
+			stepOwner := iwm.backgroundStepOwnerFor(ctx)
+			parentExecutionID := currentWorkshopParentExecutionID(execCtx)
+			startMetadata := map[string]string{
+				"execution_type": "workflow-step",
+			}
+			if stepOwner != nil {
+				parentExecutionID = stepOwner.ownerID
+				startMetadata["suppress_auto_notification"] = "true"
+				startMetadata["owned_by_background_agent"] = stepOwner.ownerID
+			}
 			registerWorkshopExecutionBeforeLaunch(iwm.executionNotifier, WorkshopExecutionStart{
 				ID:                execID,
-				ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
+				ParentExecutionID: parentExecutionID,
 				Name:              stepDisplayName,
 				// This is a real workflow step, even when a schedule invokes it
 				// directly instead of through run_full_workflow. The scheduler uses
 				// the declared kind as invocation evidence for Pulse.
-				Kind: string(orchestrator_events.ExecutionKindWorkflowStep),
-				Metadata: map[string]string{
-					"execution_type": "workflow-step",
-				},
-				Cancel: cancel,
+				Kind:     string(orchestrator_events.ExecutionKindWorkflowStep),
+				Metadata: startMetadata,
+				Cancel:   cancel,
 			})
+			if stepOwner != nil {
+				stepOwner.add(execID)
+			}
 			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
 
@@ -2641,6 +2676,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			runFolderNotice := fmt.Sprintf("\nrun_folder: %q", runFolder)
 			if displayGroupName == "" {
 				runFolderNotice += " (no group resolved — this workspace may have no defined variable groups)"
+			}
+			if stepOwner != nil {
+				return fmt.Sprintf("Step %q started.\nexecution_id: %q%s\nThe runtime will wait for it and give you its final result as your next message. End your turn now if you have nothing else to do; do not poll.", stepID, execID, runFolderNotice), nil
 			}
 			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes. End the current agent turn now instead of polling. Use query_step(step_id=%q) only if the user explicitly requests a live status check. Use send_step_message(execution_id=%q, message=...) only for a necessary live correction while an agent turn is active.", stepID, execID, runFolderNotice, stepID, execID), nil
 		},
@@ -9002,8 +9040,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		config.ServerNames = []string{mcpclient.NoServers}
 	}
 	config.CodingAgentKeepAlive = len(messageSequence) > 0
-	_, cleanupToolSession := iwm.configureWorkshopToolAgentSessionWithID(config, "background-task", readPaths, writePaths)
+	toolSessionID, cleanupToolSession := iwm.configureWorkshopToolAgentSessionWithID(config, "background-task", readPaths, writePaths)
 	defer cleanupToolSession()
+	// Steps this agent starts are its own: execute_step finds this owner from
+	// the caller's tool session, and the agent gets their results before it is
+	// done (background_step_ownership.go).
+	stepOwner := newBackgroundStepOwner(currentWorkshopParentExecutionID(ctx))
+	defer iwm.registerBackgroundStepOwner(toolSessionID, stepOwner)()
 
 	// The workshop-only tools are native definitions rather than entries in the
 	// workspace tool pool. Collect them before construction, alongside the full
@@ -9168,7 +9211,11 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	}
 	// --- Execute ---
 	logger.Info(fmt.Sprintf("🚀 Running background task agent: %q (turns=%d)", name, 1+len(messageSequence)))
-	result, err := executeBackgroundMessageSequence(ctx, agent, templateVars, instruction, messageSequence)
+	result, history, err := executeBackgroundMessageSequenceWithHistory(ctx, agent, templateVars, instruction, messageSequence, nil)
+	if err != nil {
+		return "", fmt.Errorf("background task agent failed: %w", err)
+	}
+	result, err = handOwnedStepResults(ctx, agent, templateVars, history, result, stepOwner, iwm.stepRegistry)
 	if err != nil {
 		return "", fmt.Errorf("background task agent failed: %w", err)
 	}

@@ -575,6 +575,11 @@ type StreamingAPI struct {
 	pendingStartMu                  sync.RWMutex
 	autoNotificationMu              sync.Mutex
 
+	// completionOwners marks sessions whose step completions are delivered by
+	// a runner that owns the session (a scheduled run), not by the
+	// auto-notification path. sessionID -> *int32 claim count.
+	completionOwners sync.Map
+
 	// Last query request per session — used to construct synthetic turns
 	lastQueryRequests       map[string]QueryRequest
 	lastQueryMu             sync.RWMutex

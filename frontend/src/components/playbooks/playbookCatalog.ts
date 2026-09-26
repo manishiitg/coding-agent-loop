@@ -209,6 +209,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
     { id: 'briefing-to-proposal', from: 'briefing', to: 'proposal', artifact_type: 'sales-call-brief/v1', required: true },
     { id: 'research-to-briefing', from: 'research', to: 'briefing', artifact_type: 'account-research-brief/v1', required: false },
   ], setupChecks: ['goal_owner', 'account_meeting', 'claim_policy', 'pricing_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'pipeline-health-to-owned-action', title: 'Pipeline Health to Owned Action', description: 'Explain a source-backed stale opportunity and prepare a seller-owned next step after rechecking current CRM and contact state.', version: '0.1.0', category: 'Sales', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'pipeline', agent_playbook_id: 'pipeline-analyst', required: true, output: 'pipeline-exception-brief/v1' },
+    { id: 'deal', agent_playbook_id: 'deal-follow-through-coordinator', required: true, output: 'deal-action-register/v1' },
+  ], handoffs: [
+    { id: 'pipeline-to-deal', from: 'pipeline', to: 'deal', artifact_type: 'pipeline-exception-brief/v1', required: true },
+  ], setupChecks: ['goal_owner', 'pipeline_scope', 'pipeline_policy', 'team_bindings', 'snapshot_access', 'current_state_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'feedback-theme-to-product-decision', title: 'Feedback Theme to Product Decision', description: 'Validate a bounded customer feedback theme, compare it with current product work, and prepare an owner-reviewed decision without silently creating roadmap work.', version: '0.1.0', category: 'Product', order: 1, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'feedback', agent_playbook_id: 'feedback-review-analyst', required: true, output: 'feedback-theme-brief/v1' },
     { id: 'product', agent_playbook_id: 'product-feedback-coordinator', required: true, output: 'product-feedback-decision/v1' },

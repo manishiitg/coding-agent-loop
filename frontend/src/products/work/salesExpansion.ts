@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type SalesExpansionId = 'sales-call-briefing' | 'proposal-drafter' | 'pipeline-analyst'
+export type SalesExpansionId = 'sales-call-briefing' | 'proposal-drafter' | 'pipeline-analyst' | 'deal-follow-through-coordinator'
 
 type Spec = {
   id: SalesExpansionId
@@ -92,6 +92,29 @@ const specs: readonly Spec[] = [
     goodExample: 'Fictional brief: opp_11 advanced Discovery→Proposal with unchanged USD 12,000 (S1/S2); opp_12 stale by owner rule, owner=s_3, next=confirm next activity; forecast=not computed; coverage=two comparable snapshots.',
     badExample: '“Pipeline grew $12,000 and opp_12 will close this month.”',
     badReason: 'A stage move is not new pipeline value, and the close claim has no source or owner-approved forecast rule.',
+  },
+  {
+    id: 'deal-follow-through-coordinator', name: 'Deal Follow-through Coordinator', icon: '📌', subcategory: 'Pipeline',
+    role: 'Owner-reviewed B2B opportunity next-step coordinator',
+    purpose: 'Turn a source-backed pipeline exception into a current, owned next-step decision without silently changing CRM or contacting a prospect.',
+    firstResult: 'An exact-opportunity action register with observed CRM state, prior activity and contact, seller owner, proposed next step, due rule, approval state and verification plan.',
+    minimumInput: 'Validated pipeline movement or stale-deal brief, current opportunity and activity records, seller owner, stale rule, contact policy and review window.',
+    optionalConnections: 'CRM and authorized email/calendar history through scoped MCPs or exports. Read-only review needs current records; sends and CRM updates need separate approved routes.',
+    examples: ['Review these stale opportunities and prepare next-step decisions for each seller.', 'For this opportunity, check recent activity before suggesting another follow-up; do not send anything.'],
+    method: [
+      'Bind exact tenant, CRM account, pipeline, opportunity, seller, report window and source revision from a validated pipeline brief.',
+      'Re-read current opportunity stage, status, amount, next activity, last contact, replies, meeting and opt-out state before proposing any action.',
+      'Apply the owner-defined stale rule to the current record; distinguish an observed gap from a seller judgment or missing history. Block duplicate and already-owned actions.',
+      'Prepare investigate, seller-review, no-action or approved-route options with a stable action key, due rule and source references; keep proposed versus owner-accepted state explicit.',
+      'Present the exact register for seller review. Any CRM update, message or meeting change requires fresh source checks, exact approval and a provider receipt in a separate route.',
+    ],
+    evidence: 'Cite the validated pipeline brief, current opportunity revision, activity and prior-contact sources, observation times, owner decision and any provider receipt separately.',
+    boundary: 'Do not infer buyer intent from stale stage age, treat a draft as a sent message, create duplicate tasks, move a stage, contact a prospect or report a forecast without approved evidence.',
+    repeatRule: 'Keep the same opportunity and action keys, re-read current CRM and activity state, close superseded suggestions, and count actual action only from a matching provider receipt.',
+    exampleInput: 'Fictional input: opp_12 is Discovery at snapshot S2, has no next CRM activity and last recorded contact was 20 days ago; owner stale rule is 14 days. Seller=s_3; no reply or opt-out is recorded in the authorized export.',
+    goodExample: 'Fictional register A-12: opp_12/S2, stale under 14-day rule; propose seller review of next contact because current reply history coverage is incomplete; owner decision=pending; CRM write=none; message=unsent; recheck=before any approved action.',
+    badExample: '“The buyer lost interest, so I moved opp_12 to Closed Lost and sent a final email.”',
+    badReason: 'Stage age does not prove intent, the source coverage is incomplete, and no exact seller approval or provider receipts authorize those actions.',
   },
 ]
 

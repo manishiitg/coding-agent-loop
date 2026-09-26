@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(43)
+    expect(PLAYBOOK_CATALOG).toHaveLength(44)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -108,6 +108,16 @@ describe('small-team catalog', () => {
     ])
     expect(feedback?.handoffs?.[0].artifact_type).toBe('feedback-theme-brief/v1')
     expect(feedback?.setupChecks).toContain('action_ledger')
+  })
+
+  it('exposes a bounded pipeline exception to seller-owned action', () => {
+    const pipeline = PLAYBOOK_CATALOG.find(item => item.id === 'pipeline-health-to-owned-action')
+    expect(pipeline?.category).toBe('Sales')
+    expect(pipeline?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'pipeline-analyst', 'deal-follow-through-coordinator',
+    ])
+    expect(pipeline?.handoffs?.[0].artifact_type).toBe('pipeline-exception-brief/v1')
+    expect(pipeline?.setupChecks).toContain('current_state_access')
   })
 
   it('exposes the GTM launch route and reuses the Sales qualification handoff', () => {

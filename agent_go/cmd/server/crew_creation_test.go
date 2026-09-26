@@ -345,7 +345,7 @@ func TestCreateCrewProjectAppliesSalesTemplateOnBuilderAction(t *testing.T) {
 }
 
 func TestCreateCrewProjectAppliesExpandedSalesTemplateOnBuilderAction(t *testing.T) {
-	for _, templateID := range []string{"sales-call-briefing", "proposal-drafter", "pipeline-analyst"} {
+	for _, templateID := range []string{"sales-call-briefing", "proposal-drafter", "pipeline-analyst", "deal-follow-through-coordinator"} {
 		t.Run(templateID, func(t *testing.T) {
 			svc, mock, ctx := newCrewCreationTestEnv(t)
 			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{

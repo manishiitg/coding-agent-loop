@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 59 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 60 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-one multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -186,6 +186,13 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **First result:** dated brief with stable opportunity IDs, stage movements, amount and currency, source coverage, stale-rule results and owner decisions.
 - **Setup proof:** read authorized prior and current snapshots, verify stage definitions, reporting window, currency policy and one movement calculation with the pipeline owner. A single snapshot supports current-state review only.
 - **Later run:** compare the same IDs under unchanged definitions, flag changed rules or missing records, and do not turn stage movements into new revenue or a claimed forecast.
+
+### Deal Follow-through Coordinator (`deal-follow-through-coordinator`)
+
+- **Use case:** turn one validated stale-opportunity exception into a current, seller-owned next-step decision.
+- **First result:** an exact-opportunity [action register](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/deal-action-register.json) with current CRM and activity revision, prior-contact coverage, owner, stable action key, pending decision and next check. It records no send or CRM write without a matching receipt.
+- **Setup proof:** validate a [comparable-snapshot exception](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/pipeline-exception-brief.json), re-read current opportunity and activity records, check contact and duplicate rules, and have the seller review a real next step. An export can support the read-only decision.
+- **Later run:** keep opportunity and action keys, re-read stage, owner, activity, replies and opt-outs, retire superseded suggestions, and count execution only from separately approved provider evidence.
 
 ### Lead Intake & Qualifier (`lead-intake-qualifier`)
 
@@ -451,4 +458,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-four Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-five Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 60 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-two multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-three multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -462,6 +462,13 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 - **First result:** a checkout-level decision with consent, later-order, suppression and prior-send evidence, or an unsent draft when all gates are clear. See the [review example](../../playbooks/agentic-engineering-platform/shopify/checkout-signal-to-reviewed-recovery/examples/checkout-recovery-review.json).
 - **Setup proof:** read a real authorized checkout and current consent/order/provider history; demonstrate one suppressed or unknown case, then obtain an owner review of any draft.
 - **Later run:** re-read completion, order, consent, opt-out and prior sends using a stable checkout-channel-campaign key; stop on recovery or duplicate-send risk.
+
+### Replenishment Planner (`replenishment-planner`)
+
+- **Use case:** decide whether a specific supplier SKU should be reordered for one Shopify InventoryItem and destination Location.
+- **First result:** a sourced demand and supplier review with integer target, shortage, case-pack/MOQ rounded quantity and cost, or a named missing-input decision. See the [reorder example](../../playbooks/agentic-engineering-platform/shopify/inventory-risk-to-reviewed-replenishment/examples/replenishment-review.json).
+- **Setup proof:** recompute one real item/location proposal using current available, incoming, open PO, demand and supplier terms; demonstrate a missing-data or duplicate-order case and owner decision.
+- **Later run:** re-read location quantities, open POs/transfers, demand and terms before proposing again. A PO ordered is not stock received; verify the linked transfer and later InventoryLevel separately.
 
 ## Content completion rule
 

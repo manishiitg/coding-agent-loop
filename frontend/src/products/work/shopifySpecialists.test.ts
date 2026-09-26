@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { crewTemplates, getCrewTemplate, matchesCrewTemplateSearch, parseCrewTemplateSetupState } from './crewTemplates'
 
 describe('Shopify Crew templates', () => {
-  it('offers six merchant jobs with source-verified pending setup', () => {
+  it('offers seven merchant jobs with source-verified pending setup', () => {
     const shopify = crewTemplates.filter(item => item.category === 'Shopify')
     expect(shopify.map(item => item.id)).toEqual([
       'store-operations-coordinator',
@@ -11,6 +11,7 @@ describe('Shopify Crew templates', () => {
       'shopify-growth-analyst',
       'payment-operations-investigator',
       'checkout-recovery-coordinator',
+      'replenishment-planner',
     ])
     for (const template of shopify) {
       expect(getCrewTemplate(template.id)).toBe(template)
@@ -31,5 +32,6 @@ describe('Shopify Crew templates', () => {
     expect(shopify[3].files[`skills/${shopify[3].id}/SKILL.md`]).toContain('different denominators')
     expect(shopify[4].files[`skills/${shopify[4].id}/SKILL.md`]).toContain('An authorization reserves funds')
     expect(shopify[5].files[`skills/${shopify[5].id}/SKILL.md`]).toContain('existing Shopify or provider recovery automation')
+    expect(shopify[6].files[`skills/${shopify[6].id}/SKILL.md`]).toContain('Do not subtract committed units again')
   })
 })

@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst' | 'payment-operations-investigator' | 'checkout-recovery-coordinator'
+export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst' | 'payment-operations-investigator' | 'checkout-recovery-coordinator' | 'replenishment-planner'
 
 type Specialist = {
   id: ShopifySpecialistId
@@ -23,6 +23,9 @@ type Specialist = {
   workedExample: string
   rejectedExample: string
   setupProof: string
+  reviewInstruction?: string
+  actionRoute?: string
+  actionRouteTitle?: string
 }
 
 const specialists: readonly Specialist[] = [
@@ -200,6 +203,38 @@ const specialists: readonly Specialist[] = [
     rejectedExample: '“Send a discount to every abandoned checkout; recovered revenue is confirmed.” Reject: the query can include recovered checkouts, contact consent and prior sends are unknown, no owner approved a send, and no linked order proves revenue.',
     setupProof: 'Show one real checkout with current completion/order, consent, suppression and send-history sources; demonstrate a suppressed or unknown case and obtain the owner decision on a separate unsent draft.',
   },
+  {
+    id: 'replenishment-planner', name: 'Replenishment Planner', icon: '📋', subcategory: 'Purchasing',
+    role: 'Shopify supplier replenishment and purchase-order review coordinator',
+    purpose: 'Turn a variant and location stock risk into a supplier-aware quantity and cost proposal for procurement owner review.',
+    firstResult: 'A sourced reorder or defer decision with exact inventory item and location, demand basis, incoming stock, supplier terms, rounded quantity, cost, owner and next evidence.',
+    minimumInput: 'Store, market, variant, inventory item and destination location IDs; authorized inventory and demand records; supplier SKU, lead time, MOQ/case pack, unit cost and currency; procurement owner.',
+    optionalConnections: 'Shopify InventoryLevel, Shopify purchase orders and linked transfers, supplier portal or ERP, and sales history; bounded exports can support a read-only first proposal without purchase-order access.',
+    exampleRequests: ['Should we reorder this variant for this location, and how many units under our supplier terms?', 'Review this low-stock item against incoming transfers and show a draft purchase decision.'],
+    method: [
+      'Bind exact store, variant, InventoryItem, destination Location, supplier and supplier SKU; confirm merchant inventory and procurement authority.',
+      'Reconcile Shopify available at this location with distinct confirmed incoming units and outstanding backorders. Do not subtract committed units again from available.',
+      'Use a named demand window, daily-unit basis, lead time, review interval, safety stock, minimum order and case pack; mark missing or stale inputs unknown.',
+      'Calculate target, position, shortage and proposed quantity in integer units; round to case pack and MOQ, then calculate cost in one currency and check budget.',
+      'Prepare reorder, defer or needs-information review. Keep a purchase-order draft, supplier confirmation, transfer receipt and verified stock as separate later states.',
+    ],
+    evidence: 'Cite InventoryLevel, demand export, supplier terms, open PO/transfer and budget sources with timestamps and exact IDs. A PO marked ordered is not proof that units were received.',
+    boundary: 'Do not create or submit a purchase order, promise availability, move or receive stock, or pay a supplier without a current-state recheck, procurement approval and an authorized provider route.',
+    handoff: 'For Inventory Risk to Reviewed Replenishment, consume a validated `inventory-availability-exception/v1` for the same store, market, variant, inventory item, location and case. Emit `replenishment-review/v1` with explicit demand and supplier assumptions, recomputable quantity/cost, owner decision and later PO/transfer evidence.',
+    repeatRule: 'Re-read inventory, incoming transfers, open POs and supplier terms before another proposal; use a stable item-location-supplier-window key and net out prior approved orders to avoid double ordering.',
+    sourceProbe: 'Read one authorized InventoryLevel by exact item/location ID, one same-variant demand extract, one supplier terms record, and current open PO/transfer records. Confirm which source owns lead time and incoming quantity.',
+    decisionRules: [
+      'Shopify InventoryLevel is per item and location. Available is already net of committed stock; count only confirmed incoming that is not in available, and never pool another location without an approved transfer.',
+      'Target units equal ceiling(daily demand × (lead time + review interval)) plus safety stock. Shortage equals max(0, target minus available minus confirmed incoming plus outstanding backorders). Round a positive order to the case pack and MOQ; show every assumption.',
+      'A purchase order is a supplier agreement; a linked inventory transfer records actual receipt. Do not call ordered units available before the transfer and InventoryLevel confirm them.',
+    ],
+    workedExample: '{"case_id":"stock-24","inventory_item_id":"item-81-m","location_id":"location-3","supplier_id":"supplier-4","available_qty":5,"confirmed_incoming_qty":4,"backorder_qty":0,"daily_demand_units":2,"lead_time_days":7,"review_period_days":3,"safety_stock_qty":2,"target_qty":22,"shortage_qty":13,"case_pack_qty":6,"min_order_qty":12,"proposed_qty":18,"unit_cost_minor":900,"total_cost_minor":16200,"currency":"USD","decision":"reorder_review","po_state":"not_created","owner_id":"procurement-owner"}',
+    rejectedExample: '“Order 13 units and mark them in stock.” Reject: the six-unit case pack requires 18 units, procurement has not approved a PO, and ordered units are not received stock.',
+    setupProof: 'Recompute one real item/location proposal from current inventory, demand, incoming and supplier terms; show a missing-data case, an open-PO duplicate check, and a procurement owner decision.',
+    reviewInstruction: 'Show the recomputed target, shortage, case-pack/MOQ quantity, total cost, supplier and budget evidence, missing assumptions, procurement owner decision, and separate proof required for a PO or received stock.',
+    actionRoute: 'Choose read-only chat or a separately authorized purchase-order and inventory-transfer route. Read-only chat completes this decision. A PO draft, supplier confirmation, transfer receipt, and available stock are separate states.',
+    actionRouteTitle: 'Choose procurement and inventory action routes',
+  },
 ]
 
 function checklist(spec: Specialist): string {
@@ -210,8 +245,8 @@ function checklist(spec: Specialist): string {
     { id: 'access', title: 'Test source access', instructions: `${spec.sourceProbe} Record exact IDs, freshness, and access gaps. ${spec.optionalConnections} A provider name is not a connection.` },
     { id: 'policy', title: 'Verify domain rules and owner', instructions: `Confirm the merchant's policy, owner, and unknown-state treatment. ${spec.decisionRules.join(' ')} Do not join stores or customers by name alone.` },
     { id: 'first_result', title: 'Produce the first result', instructions: `Use actual authorized evidence to produce ${spec.firstResult} ${spec.evidence} Setup proof: ${spec.setupProof} Fictional examples do not complete this check.` },
-    { id: 'review', title: 'Review the result and next action', instructions: 'Show the sourced result, unresolved facts, policy and money checks, proposed next action, approval owner, and exact evidence needed for closure. Record the owner decision.' },
-    { id: 'action_route', title: 'Choose customer and store action routes', optional: true, instructions: `Choose read-only chat or separately authorized store writes, refunds, labels, and messages. Read-only chat completes this decision. ${spec.boundary}` },
+    { id: 'review', title: 'Review the result and next action', instructions: spec.reviewInstruction ?? 'Show the sourced result, unresolved facts, policy and money checks, proposed next action, approval owner, and exact evidence needed for closure. Record the owner decision.' },
+    { id: 'action_route', title: spec.actionRouteTitle ?? 'Choose customer and store action routes', optional: true, instructions: `${spec.actionRoute ?? 'Choose read-only chat or separately authorized store writes, refunds, labels, and messages. Read-only chat completes this decision.'} ${spec.boundary}` },
     { id: 'recurrence', title: 'Choose recurrence and repeat behavior', optional: true, instructions: `Choose manual-only or a reviewed schedule, authenticated trigger, function, or Automation. Manual-only completes this decision. ${spec.repeatRule} Test a configured route before activation.` },
   ]
   return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2)}\n`

@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(45)
+    expect(PLAYBOOK_CATALOG).toHaveLength(46)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -69,9 +69,9 @@ describe('small-team catalog', () => {
     expect(marketing?.setupChecks).toContain('baseline_rule')
   })
 
-  it('exposes six Shopify routes with distinct two-Crew handoffs', () => {
+  it('exposes seven Shopify routes with distinct two-Crew handoffs', () => {
     const shopify = PLAYBOOK_CATALOG.filter(item => item.category === 'Shopify')
-    expect(shopify.map(item => item.id)).toEqual(['order-exception-to-resolution', 'storefront-opportunity-to-verified-change', 'inventory-availability-to-owner-action', 'payment-exception-to-order-decision', 'product-launch-readiness-to-go-no-go', 'checkout-signal-to-reviewed-recovery'])
+    expect(shopify.map(item => item.id)).toEqual(['order-exception-to-resolution', 'storefront-opportunity-to-verified-change', 'inventory-availability-to-owner-action', 'payment-exception-to-order-decision', 'product-launch-readiness-to-go-no-go', 'checkout-signal-to-reviewed-recovery', 'inventory-risk-to-reviewed-replenishment'])
     expect(shopify[0].version).toBe('0.1.1')
     expect(shopify[1].agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['shopify-growth-analyst', 'catalog-merchandising-analyst'])
     expect(shopify[1].handoffs?.[0].artifact_type).toBe('shopify-growth-opportunity/v1')
@@ -80,6 +80,8 @@ describe('small-team catalog', () => {
     expect(shopify[4].handoffs?.[0].artifact_type).toBe('launch-catalog-readiness/v1')
     expect(shopify[5].agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['shopify-growth-analyst', 'checkout-recovery-coordinator'])
     expect(shopify[5].handoffs?.[0].artifact_type).toBe('checkout-recovery-signal/v1')
+    expect(shopify[6].agentSlots?.[1].agent_playbook_id).toBe('replenishment-planner')
+    expect(shopify[6].handoffs?.[0].artifact_type).toBe('inventory-availability-exception/v1')
   })
 
   it('exposes the Sales route with required qualification and follow-up and optional research', () => {

@@ -130,6 +130,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'signal-to-recovery', from: 'growth', to: 'recovery', artifact_type: 'checkout-recovery-signal/v1', required: true },
   ], setupChecks: ['goal_owner', 'checkout_scope', 'contact_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'contact_ledger', 'activation_choice'] },
+  { id: 'inventory-risk-to-reviewed-replenishment', title: 'Inventory Risk to Reviewed Replenishment', description: 'Turn a Shopify item and location stock risk into a supplier-aware reorder proposal, then distinguish purchase-order status from actual receipt.', version: '0.1.0', category: 'Shopify', order: 7, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'catalog', agent_playbook_id: 'catalog-merchandising-analyst', required: true, output: 'inventory-availability-exception/v1' },
+    { id: 'procurement', agent_playbook_id: 'replenishment-planner', required: true, output: 'replenishment-review/v1' },
+  ], handoffs: [
+    { id: 'inventory-to-replenishment', from: 'catalog', to: 'procurement', artifact_type: 'inventory-availability-exception/v1', required: true },
+  ], setupChecks: ['goal_owner', 'item_location_scope', 'inventory_demand_policy', 'supplier_terms', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'incident-to-verified-recovery', title: 'Incident to Verified Recovery', description: 'Coordinate an incident investigation, an owned fix or rollback decision, and evidence that the affected service recovered.', version: '0.1.0', category: 'Engineering', order: 1, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'investigation', agent_playbook_id: 'incident-investigator', required: true, output: 'incident-investigation/v1' },
     { id: 'delivery', agent_playbook_id: 'engineering-delivery-coordinator', required: true, output: 'engineering-blocker-ledger/v1' },

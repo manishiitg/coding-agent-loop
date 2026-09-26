@@ -254,13 +254,49 @@ func TestShopifyStorefrontPlaybookInstallationCopiesContractAndPendingSetup(t *t
 	}
 }
 
+func TestExpandedShopifyPlaybooksInstallWithPendingSetup(t *testing.T) {
+	for _, id := range []string{"inventory-availability-to-owner-action", "payment-exception-to-order-decision", "product-launch-readiness-to-go-no-go"} {
+		t.Run(id, func(t *testing.T) {
+			item, err := findPlaybook(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock := &mockWorkspaceAPI{files: map[string]string{}}
+			ws := httptest.NewServer(mock)
+			defer ws.Close()
+			t.Setenv("WORKSPACE_API_URL", ws.URL)
+			const workspace = "Workflow/shopify-library"
+			skill := "agentworks-playbook-" + id
+			if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+				t.Fatal(err)
+			}
+			base := workspace + "/skills/" + skill + "/"
+			for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py"} {
+				if mock.files[base+relative] == "" {
+					t.Fatalf("%s lacks %s", id, relative)
+				}
+			}
+			var setup struct {
+				PlaybookID string   `json:"playbook_id"`
+				Completed  []string `json:"completed_steps"`
+			}
+			if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			if setup.PlaybookID != id || len(setup.Completed) != 0 {
+				t.Fatalf("%s setup = %+v", id, setup)
+			}
+		})
+	}
+}
+
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 30 {
-		t.Fatalf("catalog has %d playbooks, want 30", len(items))
+	if len(items) != 33 {
+		t.Fatalf("catalog has %d playbooks, want 33", len(items))
 	}
 	shopify, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {
@@ -275,6 +311,15 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	}
 	if storefront.Category != "Shopify" || len(storefront.AgentSlots) != 2 || len(storefront.Handoffs) != 1 || len(storefront.SetupChecks) != 10 {
 		t.Fatalf("storefront opportunity to verified change = %+v", storefront)
+	}
+	for _, id := range []string{"inventory-availability-to-owner-action", "payment-exception-to-order-decision", "product-launch-readiness-to-go-no-go"} {
+		item, err := findPlaybook(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item.Category != "Shopify" || len(item.AgentSlots) != 2 || len(item.Handoffs) != 1 || len(item.SetupChecks) != 10 {
+			t.Fatalf("%s = %+v", id, item)
+		}
 	}
 	engineering, err := findPlaybook("incident-to-verified-recovery")
 	if err != nil {

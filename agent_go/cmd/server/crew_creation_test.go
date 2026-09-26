@@ -416,8 +416,44 @@ func TestCreateCrewProjectAppliesEngineeringTemplateOnBuilderAction(t *testing.T
 	}
 }
 
+func TestCreateCrewProjectAppliesQATemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"browser-journey-qa-analyst", "flaky-test-investigator", "release-quality-assistant"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "QA Operator",
+				Role: "QA operator", Purpose: "Review exact test evidence",
+				TemplateID: templateID, StepInstruction: "Return a source-linked QA decision for review.",
+				IdempotencyKey: "qa-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("QA Crew lacks %s", relative)
+				}
+			}
+			var setup struct {
+				CompletedSteps []string `json:"completed_steps"`
+			}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			if len(setup.CompletedSteps) != 0 {
+				t.Fatalf("QA setup unexpectedly completed: %+v", setup.CompletedSteps)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
-	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst"} {
+	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator"} {
 		t.Run(templateID, func(t *testing.T) {
 			svc, mock, ctx := newCrewCreationTestEnv(t)
 			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{

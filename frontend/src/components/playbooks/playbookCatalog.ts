@@ -66,6 +66,24 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'growth-to-catalog', from: 'growth', to: 'catalog', artifact_type: 'shopify-growth-opportunity/v1', required: true },
   ], setupChecks: ['goal_owner', 'store_market_scope', 'metric_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'change_ledger', 'activation_choice'] },
+  { id: 'inventory-availability-to-owner-action', title: 'Inventory Availability to Owner Action', description: 'Investigate a Shopify variant availability mismatch, prepare a location-aware merchant action, and verify the resulting inventory or storefront state.', version: '0.1.0', category: 'Shopify', order: 3, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'catalog', agent_playbook_id: 'catalog-merchandising-analyst', required: true, output: 'inventory-availability-exception/v1' },
+    { id: 'operations', agent_playbook_id: 'store-operations-coordinator', required: true, output: 'inventory-action-review/v1' },
+  ], handoffs: [
+    { id: 'catalog-to-operations', from: 'catalog', to: 'operations', artifact_type: 'inventory-availability-exception/v1', required: true },
+  ], setupChecks: ['goal_owner', 'variant_location_scope', 'inventory_authority', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'payment-exception-to-order-decision', title: 'Payment Exception to Order Decision', description: 'Investigate an order payment exception, decide whether fulfillment must wait or can be reviewed for release, and verify any approved action.', version: '0.1.0', category: 'Shopify', order: 4, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'payments', agent_playbook_id: 'payment-operations-investigator', required: true, output: 'payment-exception/v1' },
+    { id: 'operations', agent_playbook_id: 'store-operations-coordinator', required: true, output: 'payment-order-decision/v1' },
+  ], handoffs: [
+    { id: 'payment-to-operations', from: 'payments', to: 'operations', artifact_type: 'payment-exception/v1', required: true },
+  ], setupChecks: ['goal_owner', 'order_transaction_scope', 'payment_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'product-launch-readiness-to-go-no-go', title: 'Product Launch Readiness to Go/No-Go', description: 'Check a Shopify product and market publication, test the buyer journey, prepare a merchant go/no-go decision, and verify any approved launch.', version: '0.1.0', category: 'Shopify', order: 5, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'catalog', agent_playbook_id: 'catalog-merchandising-analyst', required: true, output: 'launch-catalog-readiness/v1' },
+    { id: 'growth', agent_playbook_id: 'shopify-growth-analyst', required: true, output: 'launch-storefront-decision/v1' },
+  ], handoffs: [
+    { id: 'catalog-to-growth', from: 'catalog', to: 'growth', artifact_type: 'launch-catalog-readiness/v1', required: true },
+  ], setupChecks: ['goal_owner', 'launch_scope', 'catalog_standards', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'launch_ledger', 'activation_choice'] },
   { id: 'incident-to-verified-recovery', title: 'Incident to Verified Recovery', description: 'Coordinate an incident investigation, an owned fix or rollback decision, and evidence that the affected service recovered.', version: '0.1.0', category: 'Engineering', order: 1, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'investigation', agent_playbook_id: 'incident-investigator', required: true, output: 'incident-investigation/v1' },
     { id: 'delivery', agent_playbook_id: 'engineering-delivery-coordinator', required: true, output: 'engineering-blocker-ledger/v1' },

@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/shopif
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { shopifySpecialists } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 
-if (shopifySpecialists.length !== 4) throw new Error(`Expected four Shopify Crew templates, found ${shopifySpecialists.length}`)
+if (shopifySpecialists.length !== 5) throw new Error(`Expected five Shopify Crew templates, found ${shopifySpecialists.length}`)
 const ids = new Set()
 const catalog = shopifySpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error(`Duplicate Shopify Crew template ${id}`)

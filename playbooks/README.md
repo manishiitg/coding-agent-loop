@@ -59,10 +59,10 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
-| QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | QA Crew roles are planned; existing packages remain under `browser-qa/`. |
+| QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles are locally installable with pending setup; existing packages remain under `browser-qa/`. |
 | Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Security Crew roles are planned; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | The end-to-end launch-to-qualified-pipeline Playbook is planned. Existing Website Growth and Sales Crews are cross-listed, not duplicated. |
-| Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change | Four Shopify Crews and two multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
+| Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
 
@@ -76,6 +76,9 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | --- | --- |
 | [Order Exception to Resolution](agentic-engineering-platform/shopify/order-exception-to-resolution/SKILL.md) | Propose a Store Operations Coordinator → Returns & Refunds Coordinator route for an order problem tied to a return or refund request; verify store/order identity, policy and money rules, then require owner approval and provider receipts for actions. |
 | [Storefront Opportunity to Verified Change](agentic-engineering-platform/shopify/storefront-opportunity-to-verified-change/SKILL.md) | Propose a Shopify Growth Analyst → Catalog & Merchandising Analyst route for an observed shopper problem, validate the exact product/variant handoff, review a merchant edit, and verify the shipped change before measuring a comparable result. |
+| [Inventory Availability to Owner Action](agentic-engineering-platform/shopify/inventory-availability-to-owner-action/SKILL.md) | Propose a Catalog & Merchandising Analyst → Store Operations Coordinator route for a variant/location stock or display mismatch; review the action and retest inventory and storefront state. |
+| [Payment Exception to Order Decision](agentic-engineering-platform/shopify/payment-exception-to-order-decision/SKILL.md) | Propose a Payment Operations Investigator → Store Operations Coordinator route that distinguishes authorization from capture and gates fulfillment release on source evidence and owner approval. |
+| [Product Launch Readiness to Go/No-Go](agentic-engineering-platform/shopify/product-launch-readiness-to-go-no-go/SKILL.md) | Propose a Catalog & Merchandising Analyst → Shopify Growth Analyst preflight for one product, market, and Publication; block on unresolved facts and verify any approved launch. |
 
 ### Browser QA
 

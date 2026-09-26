@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 29 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 33 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The seven multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The ten multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -189,6 +189,29 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** read an authorized bill or export, reconcile one change against usage or allocation evidence, confirm discounts and owner map, and review a candidate with the service owner.
 - **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The existing [FinOps Workflow](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) covers the longer route.
 
+## QA
+
+### Browser Journey QA Analyst
+
+- **Use case:** run an approved user journey against an exact build and investigate a failure.
+- **First result:** an attempt-level pass, fail, or blocked result with build and environment, expected and observed behavior, reproduction steps, and durable video, screenshot, and console/network evidence.
+- **Setup proof:** verify a representative authorized test account, canonical journey revision, runner, evidence policy, and real attempt. Review a failure or pass against the expected outcome with the QA owner.
+- **Later run:** preserve prior attempts, record changed build or test revisions, and verify the same journey on the named later artifact. A retry never erases a failure.
+
+### Flaky Test Investigator
+
+- **Use case:** investigate intermittent outcomes for the same canonical test and build.
+- **First result:** a controlled attempt comparison with passing and failing evidence, classification with confidence limits, and a reviewable experiment or fix.
+- **Setup proof:** bind test, source revision, build, environment, fixtures, concurrency and retry policy; inspect one real history or bounded repeat and review the diagnosis.
+- **Later run:** retain earlier attempts, recheck the classification when product or environment evidence changes, and verify any approved stabilization without weakening assertions.
+
+### Release Quality Assistant
+
+- **Use case:** determine whether a release candidate has complete QA evidence under an agreed gate policy.
+- **First result:** a required suite matrix for the exact SHA, build, and environment; a pass, fail, or needs-review proposal; and missing evidence or owner decisions.
+- **Setup proof:** verify one real release identity, required suite policy, result source, owner, and status destination. Reproduce a gate decision from the source records before enabling any publication route.
+- **Later run:** evaluate each new build independently, preserve previous failures and waivers, and count a published gate only from the destination receipt.
+
 ## Shopify
 
 ### Store Operations Coordinator (`store-operations-coordinator`)
@@ -219,6 +242,13 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** inspect the storefront and one representative authorized analytics report if making performance claims; agree on market, currency, timezone, conversion action, attribution limits and owner.
 - **Later run:** check what actually shipped, compare the same segment and metric rule, and report inconclusive results when traffic or instrumentation is inadequate.
 
+### Payment Operations Investigator (`payment-operations-investigator`)
+
+- **Use case:** investigate a Shopify order's authorization, capture, pending/failure, void, or refund transaction and its effect on the fulfillment decision.
+- **First result:** a payment exception with exact order and transaction IDs, kind, status, parent, presentment currency and amount, owner, and next evidence. See the [authorization-only example](../../playbooks/agentic-engineering-platform/shopify/payment-exception-to-order-decision/examples/payment-exception.json).
+- **Setup proof:** read a real authorized OrderTransaction and matching order, including kind/status, parent, amount/currency, capture policy, and owner. An authorization is not successful capture; a Refund object alone does not establish that the money arrived.
+- **Later run:** re-read the transaction and order before any retry or release decision, preserve a stable case/action ID, and stop a stale proposal when a later capture, void, dispute, or refund changes the state.
+
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. Shopify's installed skills and guides now include fictional good/rejected outputs and source probes for each of the four roles. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized merchant data, review its first result, and exercise a repeat case. The existing seven Playbook fixture sets cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. Shopify's installed skills and guides include fictional good/rejected outputs and source probes for each of the five roles. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized merchant data, review its first result, and exercise a repeat case. The existing ten Playbook fixture sets cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

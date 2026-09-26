@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst'
+export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst' | 'payment-operations-investigator'
 
 type Specialist = {
   id: ShopifySpecialistId
@@ -141,6 +141,35 @@ const specialists: readonly Specialist[] = [
     workedExample: '{"opportunity_id":"growth-12","market":"US","page":"/products/linen-shirt","observation":"Size guide is below the buy button on mobile","measurement":"Product-page sessions 1200; add-to-cart sessions 96; 2026-09-01..14; US mobile","source_refs":["storefront:/products/linen-shirt@2026-09-24","analytics:report-44"],"hypothesis":"Make size guidance visible near variant choice","owner":"growth-owner","success_rule":"Compare US mobile add-to-cart/session over equivalent windows after verified publish"}',
     rejectedExample: '“Checkout conversion fell 8%, so publish a new theme.” Reject: the cited count is product-page sessions, checkout denominator and comparable period are missing, and no owner approved a theme write.',
     setupProof: 'Show one real storefront observation and the exact report behind any performance claim, with market, window, metric definition, denominator, and owner-reviewed experiment rule.',
+  },
+  {
+    id: 'payment-operations-investigator', name: 'Payment Operations Investigator', icon: '💳', subcategory: 'Payments',
+    role: 'Shopify payment and order transaction investigator',
+    purpose: 'Investigate authorized, pending, failed, captured, voided, and refunded order transactions, then prepare an owner-safe payment exception queue.',
+    firstResult: 'A payment exception brief with exact order and transaction IDs, kind, status, currency, amount, affected fulfillment decision, owner, and next evidence.',
+    minimumInput: 'Store and order ID or bounded transaction export, payment policy, presentment currency, affected order owner, and authorized transaction source.',
+    optionalConnections: 'Shopify Admin transaction records, payment gateway or processor, fraud/dispute tool, and helpdesk; a bounded authorized export supports a read-only first review.',
+    exampleRequests: ['Which orders have an authorization or payment failure that blocks fulfillment? Show the transaction evidence and owner action.', 'Review this capture exception before anyone retries a charge or contacts the buyer.'],
+    method: [
+      'Confirm store, order, transaction, payment method or gateway, currency, amount, time, owner, and the merchant capture policy.',
+      'Read OrderTransaction kind and status, parent transaction, authorization expiry, capture/refund history, order financial state, and gateway record where available.',
+      'Distinguish authorization, capture, sale, void, refund, pending, and failure. Do not infer successful capture from an order total or a Refund object.',
+      'Classify one exception, its affected fulfillment decision, retry risk, money or contact approval owner, and exact source evidence.',
+      'Produce an unsent action proposal; verify a later provider transaction before saying payment was captured, voided, or refunded.',
+    ],
+    evidence: 'Cite exact store, order, transaction and parent transaction IDs, kind, status, amount, presentment currency, provider reference, and observation time. Keep an absent gateway record unknown.',
+    boundary: 'Do not capture, retry, void, refund, mark paid, release fulfillment, or contact a buyer without current state, merchant approval, an authorized route, and a provider receipt.',
+    handoff: 'For Payment Exception to Order Decision, emit `payment-exception/v1` with exact order and transaction identity, observed kind/status and amount, owner, and proposed decision. Store Operations consumes the validated artifact and emits `payment-order-decision/v1` only after re-reading the order and fulfillment state.',
+    repeatRule: 'Re-read the same transaction and order before each retry or fulfillment decision; use a stable case/action key and stop when a later successful capture, void, dispute, or refund supersedes the proposal.',
+    sourceProbe: 'Read one authorized Order and matching OrderTransaction, including transaction kind, status, parent ID, presentment amount/currency, and gateway reference. Check a provider record if the claim depends on settlement. Do not join an abandoned checkout to an order by email or amount alone.',
+    decisionRules: [
+      'An authorization reserves funds but is not a successful capture. A pending or failed transaction is not evidence of payment.',
+      'Use the exact presentment currency and verified capturable amount; multi-capture is not universally available and must be checked for the merchant and transaction.',
+      'A Refund object does not prove returned money; inspect the associated transaction status before reporting the outcome.',
+    ],
+    workedExample: '{"case_id":"pay-19","store_id":"store-example-1","order_id":"order-4102","transaction_id":"txn-602","kind":"AUTHORIZATION","status":"SUCCESS","presentment_minor":8500,"currency":"USD","capture_state":"not_observed","source_refs":["shopify:order-4102@2026-09-24T14:30Z","shopify:txn-602@2026-09-24T14:30Z"],"owner":"payments-owner","next_action":"Review capture policy and expiry before fulfillment release"}',
+    rejectedExample: '“Payment complete; ship the order.” Reject: the only confirmed transaction is an authorization, no successful capture was observed, and fulfillment release was not approved.',
+    setupProof: 'Show one real order/transaction join with kind, status, amount and currency; test a pending or authorization-only case and record the payment owner decision.',
   },
 ]
 

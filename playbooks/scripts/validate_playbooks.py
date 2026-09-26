@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -327,7 +328,24 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print(f"Validated {len(packages)} playbook packages against agentworks-playbook/v1")
+    contract_suites = sorted((ROOT / "scripts").glob("test_*_artifacts.py"))
+    contract_suites.extend(package / "scripts" / "test_validate_handoff.py" for package in packages if (package / "scripts" / "test_validate_handoff.py").is_file())
+    for suite in contract_suites:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(suite)], capture_output=True, text=True, timeout=30, check=False
+            )
+        except subprocess.TimeoutExpired:
+            fail(errors, suite, "contract test timed out")
+            continue
+        if result.returncode != 0:
+            fail(errors, suite, f"contract test failed: {(result.stderr or result.stdout)[-1200:].strip()}")
+    if errors:
+        print("Playbook contract validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    print(f"Validated {len(packages)} playbook packages and {len(contract_suites)} contract suites against agentworks-playbook/v1")
     return 0
 
 

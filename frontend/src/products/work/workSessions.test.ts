@@ -207,6 +207,25 @@ describe('createWorkSession', () => {
     expect(setup.checks).toHaveLength(9)
   })
 
+  it.each([
+    ['browser-journey-qa-analyst', 'Browser Journey QA Analyst'],
+    ['flaky-test-investigator', 'Flaky Test Investigator'],
+    ['release-quality-assistant', 'Release Quality Assistant'],
+  ] as const)('creates the %s QA Crew without activating a test or status route', async (id, name) => {
+    updatePlannerFile.mockClear()
+    const session = await createWorkSession(name, 'Review exact QA evidence.', undefined, id)
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const runtime = JSON.parse(writes.get(session.workspacePath + '/workflow.json')!)
+    const setup = JSON.parse(writes.get(session.workspacePath + '/templates/' + id + '/TEMPLATE_SETUP.json')!)
+    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(runtime.capabilities.selected_skills).toEqual([id])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(setup).toMatchObject({ template_id: id, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+  })
+
   it('creates a Website Growth Starter with a separate setup checklist and no active connections', async () => {
     updatePlannerFile.mockClear()
     const session = await createWorkSession('Our Website Growth Crew', 'Grow relevant website visits.', '🌱', 'website-growth-starter')

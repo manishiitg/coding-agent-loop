@@ -74,8 +74,32 @@ func Transport(base http.RoundTripper) http.RoundTripper {
 
 var installOnce sync.Once
 
-// InstallDefault wraps http.DefaultTransport once, covering http.DefaultClient
-// and every client built without its own Transport.
+// InstallDefault makes requests on http.DefaultTransport (http.DefaultClient
+// and every client built without its own Transport) carry the token.
+//
+// http.DefaultTransport must stay an *http.Transport: libraries assert that
+// type (whatsmeow's NewClient does http.DefaultTransport.(*http.Transport)
+// and panicked on a wrapper). So the token is attached through the
+// transport's Proxy hook, which http.Transport calls with each outgoing
+// request before its headers are written; the proxy decision itself is
+// delegated unchanged.
 func InstallDefault() {
-	installOnce.Do(func() { http.DefaultTransport = Transport(http.DefaultTransport) })
+	installOnce.Do(func() {
+		base, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return
+		}
+		proxy := base.Proxy
+		base.Proxy = func(req *http.Request) (*url.URL, error) {
+			if IsWorkspaceRequest(req) && req.Header.Get(HeaderName) == "" {
+				if token := Token(); token != "" {
+					req.Header.Set(HeaderName, token)
+				}
+			}
+			if proxy == nil {
+				return nil, nil
+			}
+			return proxy(req)
+		}
+	})
 }

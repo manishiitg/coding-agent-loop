@@ -106,6 +106,13 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** read the approved brief and brand/source material, inspect the existing page context, and review the rendered preview if an implementation is supplied. Drafting is distinct from publication.
 - **Later run:** revise the same draft against reviewer comments and changed facts; require an actual ship record before any measurement route treats it as published.
 
+### Website Publishing Coordinator (`website-publishing-coordinator`)
+
+- **Use case:** move an approved site-page draft through a separately authorized publication and verify what is live.
+- **First result:** a readiness record with the exact draft, target and blockers; after release, a `shipped-change/v1` with approval, provider receipt, live revision and inspection evidence. The [fictional verified record](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/shipped-change.json) and [rejected false ship](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/invalid-shipped-change.json) show the boundary.
+- **Setup proof:** bind the approved page and content artifact IDs, confirm owner and release authority, test a live-page check, and capture a provider receipt from an authorized release. A draft, merge or approval alone is not shipped.
+- **Later run:** compare the same target URL and revision to prior release evidence, retest links and target action, and keep unverified changes pending. Distribution and measurement use only a verified change.
+
 ### Search Console Optimizer (`search-console-optimizer`)
 
 - **Use case:** find existing pages with actionable query evidence.

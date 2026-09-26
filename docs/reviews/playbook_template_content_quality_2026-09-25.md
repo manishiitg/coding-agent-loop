@@ -18,6 +18,8 @@ On 2026-09-26, the other eight Website Growth specialists gained domain-specific
 
 Website Growth Loop v0.4.0 now binds the strategist and search artifacts by exact IDs and validates the selected optional search → content brief → page draft chain. The new fixtures reject an unapproved, low-confidence question and a draft that uses an unverified claim or claims publication. This is an authored contract improvement; Builder still must insert blocking validator steps and test them on customer data.
 
+Website Growth Loop v0.5.0 adds Website Publishing Coordinator and optional page → verified ship → distribution and measurement handoffs. The fictional fixtures and executable validator distinguish approved draft, publication receipt, live-page verification, unsent channel plan, delivery receipt and comparable traffic readout. Tests reject an unapproved publication claim, invalid distribution and misleading traffic comparison. This improves the authored library; it does not prove a real provider integration or customer outcome. Builder must wire blocking checks to actual run files and a reviewer must inspect underlying source truth.
+
 Finance Analyst now includes a worked invoice/payment/payout/bank calculation that keeps invoiced, collected, deposited and recognized amounts separate. Its setup checks require source row, basis, sign, FX, cutoff and reconciliation decisions. Tax Export Preparer now includes a fictional CSV, signed refund/fee normalization, deposit-transfer deduplication, reconciliation and an explicit classification exception. Its setup checks require recipient format and professional review. These are authored examples, not validated customer accounting or tax results.
 
 ## Most important content findings

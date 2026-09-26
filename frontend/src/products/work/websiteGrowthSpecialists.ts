@@ -6,6 +6,7 @@ export type WebsiteGrowthSpecialistId =
   | 'search-opportunity-mapper'
   | 'content-brief-writer'
   | 'content-page-builder'
+  | 'website-publishing-coordinator'
   | 'search-console-optimizer'
   | 'traffic-engagement-analyst'
   | 'ai-visibility-analyst'
@@ -103,6 +104,18 @@ Save a structured \`search-opportunity-list/v1\` artifact for the Loop with \`si
     automationOutput: 'When invoked as the Website Growth Loop page step, return one plain JSON reviewable-page-draft/v1 object with artifact_id, exact source_content_artifact_id and question ID, target URL, reviewable draft reference, sections citing only verified claim IDs, unresolved claim IDs, pending review, and publication_state not_published. A separate publication record is needed before measurement treats this as shipped.',
   },
   {
+    id: 'website-publishing-coordinator', name: 'Website Publishing Coordinator', icon: '🚀', role: 'Reviewed website publication and verification coordinator',
+    purpose: 'Carry an approved page draft through a separately authorized publication route and verify the exact live page before recording a shipped change.',
+    firstResult: 'A publication readiness record with blockers, owner and exact target; after an approved release, a source-linked live change record.',
+    minimumInput: 'Approved page draft and content brief, canonical target URL, site owner, CMS or deploy authority, release policy, and live-page verification method.',
+    optionalConnections: 'CMS, repository/deploy provider and browser for authorized release and live checks; an owner-provided release receipt plus public-page inspection supports read-only verification.',
+    exampleRequests: ['Check whether this approved page draft is ready for publication and list the blockers.', 'Verify that this exact approved page revision went live at the target URL.'],
+    method: ['Match the approved brief, page artifact, question, target URL and exact draft revision.', 'Confirm factual review, required links, mobile layout, target action, accessibility basics, publication owner and rollback route.', 'Record the owner decision and separately authorized CMS/deploy action. A draft or approved review is not a publication receipt.', 'After release, inspect the canonical live URL and exact revision, links and target action; record the provider receipt and observation time.', 'Emit pending when approval, release or live verification is missing; only a verified record may feed distribution or outcome measurement.'],
+    evidence: 'Bind draft and content artifact IDs, approval reference, provider publish or deploy receipt, exact URL/revision, observed live check and ship time.',
+    boundary: 'Do not publish, overwrite a live page, change DNS or run a deploy from template selection. Do not call a draft or merged change shipped, or a live page a traffic success without measurement.',
+    automationOutput: 'When invoked in Website Growth Loop, return one plain JSON shipped-change/v1 object with the exact page/content artifact IDs, source_draft_ref and question, site and target URL, action ID, owner, pending or verified state, and separate approval, provider publication receipt, live revision and inspection evidence. Distribution and measurement consume only verified state.',
+  },
+  {
     id: 'search-console-optimizer', name: 'Search Console Optimizer', icon: '📈', role: 'Search Console page and query optimization analyst',
     purpose: 'Find page/query opportunities in authorized Search Console data and propose bounded page improvements.',
     firstResult: 'A sourced page/query opportunity report with proposed title, copy, or link changes.',
@@ -123,6 +136,7 @@ Save a structured \`search-opportunity-list/v1\` artifact for the Loop with \`si
     method: ['Confirm property, consent coverage, events, filters, attribution, and comparison windows.', 'Calculate source, landing-page, engagement, and conversion metrics with denominators.', 'Flag data gaps, small samples, bot/internal traffic, seasonality, and instrumentation changes.', 'Connect observed changes to shipped work without claiming causality automatically.', 'Produce a concise readout with evidence, confidence, and one or two next checks.'],
     evidence: 'Include metric definitions, numerator and denominator, source property/export, date windows, page/source dimensions, and data-quality notes.',
     boundary: 'Do not mix Search Console clicks with analytics sessions or call an unmeasured change a traffic win.',
+    automationOutput: 'When invoked in Website Growth Loop after a verified ship, return one plain JSON traffic-readout/v1 object with the exact shipped-change artifact ID and optional distribution artifact ID, site and page, source exports, property, metric and event definition, timezone, filters, comparable windows, eligible-session and action counts, observed directions, decision, owner and next evidence. Use baseline_first with null trend fields when no comparable window exists; never assert causality from timing alone.',
   },
   {
     id: 'ai-visibility-analyst', name: 'AI Visibility Analyst', icon: '✨', role: 'AI answer visibility and citation analyst',
@@ -156,6 +170,7 @@ Save a structured \`search-opportunity-list/v1\` artifact for the Loop with \`si
     method: ['Confirm the asset is published and its factual claims and target audience are current.', 'Evaluate channel fit, community rules, and permitted contact sources.', 'Draft channel-specific summaries and messages with an appropriate next action.', 'Set review, timing, attribution, and response-handling expectations.', 'Prepare a distribution log and a follow-up measurement plan.'],
     evidence: 'Each channel recommendation states audience fit, source, draft message, destination, approver, and measurable follow-up.',
     boundary: 'Do not scrape contacts, spam communities, send messages, or post without explicit authorization and channel access.',
+    automationOutput: 'When invoked in Website Growth Loop, return one plain JSON distribution-plan/v1 object tied to the exact verified shipped-change artifact ID and published URL. For each channel, include audience fit, rules reference, draft, unique tracking key, owner, approval state, delivery state and provider receipt only if approved and actually sent. An unsent plan is a valid result and must not claim delivery.',
   },
 ]
 

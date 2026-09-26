@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "website-growth-loop",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "changelog": [
+    { "version": "0.5.0", "summary": "Adds an optional approved draft to verified publication, distribution plan and post-ship traffic readout route with separate artifact checks." },
     { "version": "0.4.0", "summary": "Binds exact strategist and search artifacts and adds executable optional search-to-content-to-page draft handoff checks with approved-opportunity and claim gates." },
     { "version": "0.3.0", "summary": "Adds executable strategist/search artifact checks, worked examples, an action ledger and repeat-run method, and separates technical SEO from buyer-question mapping." },
     { "version": "0.2.0", "summary": "Adds a saved nine-check setup checklist with evidence references for Builder chat and the Playbook screen." },
@@ -33,19 +34,25 @@
     { "id": "analytics", "name": "Website analytics connection or export", "type": "mcp", "purpose": "Measure useful visitors and conversion actions after a valid baseline", "capability": "traffic_measurement", "optional": true }
   ],
   "pulse_focus": [{ "module": "strategic_review", "label": "Website growth progress", "focus_areas": ["Whether shipped work serves the target buyer and useful visitor action", "Evidence quality and comparability of traffic signals"], "review_when": ["The site or offer changes, an action ships, or comparable data becomes available"] }],
-  "outputs": ["Reviewed Crew roster and access map", "Versioned growth brief and search opportunity handoff", "Manual two-Crew test run", "Website Growth dashboard with evidence and open questions", "Paused recurrence proposal"],
+  "outputs": ["Reviewed Crew roster and access map", "Versioned growth brief and search opportunity handoff", "Manual two-Crew test run", "Optional approved draft, verified shipped change, distribution plan and traffic readout", "Website Growth dashboard with evidence and open questions", "Paused recurrence proposal"],
   "agent_slots": [
     { "id": "strategist", "agent_playbook_id": "website-growth-starter", "required": true, "output": "growth-priority-brief/v1" },
     { "id": "search", "agent_playbook_id": "search-opportunity-mapper", "required": true, "output": "search-opportunity-list/v1" },
     { "id": "technical_seo", "agent_playbook_id": "seo-analyst", "required": false, "output": "seo-issue-list/v1" },
     { "id": "content", "agent_playbook_id": "content-brief-writer", "required": false, "output": "content-brief/v1" },
     { "id": "page", "agent_playbook_id": "content-page-builder", "required": false, "output": "reviewable-page-draft/v1" },
+    { "id": "publication", "agent_playbook_id": "website-publishing-coordinator", "required": false, "output": "shipped-change/v1" },
+    { "id": "distribution", "agent_playbook_id": "content-distribution-coordinator", "required": false, "output": "distribution-plan/v1" },
     { "id": "measurement", "agent_playbook_id": "traffic-engagement-analyst", "required": false, "output": "traffic-readout/v1" }
   ],
   "handoffs": [
     { "id": "strategy-to-search", "from": "strategist", "to": "search", "artifact_type": "growth-priority-brief/v1", "required": true },
     { "id": "search-to-content", "from": "search", "to": "content", "artifact_type": "search-opportunity-list/v1", "required": false },
-    { "id": "content-to-page", "from": "content", "to": "page", "artifact_type": "content-brief/v1", "required": false }
+    { "id": "content-to-page", "from": "content", "to": "page", "artifact_type": "content-brief/v1", "required": false },
+    { "id": "page-to-publication", "from": "page", "to": "publication", "artifact_type": "reviewable-page-draft/v1", "required": false },
+    { "id": "publication-to-distribution", "from": "publication", "to": "distribution", "artifact_type": "shipped-change/v1", "required": false },
+    { "id": "publication-to-measurement", "from": "publication", "to": "measurement", "artifact_type": "shipped-change/v1", "required": false },
+    { "id": "distribution-to-measurement", "from": "distribution", "to": "measurement", "artifact_type": "distribution-plan/v1", "required": false }
   ],
   "setup_checks": ["goal_owner", "metric_policy", "team_bindings", "site_scope", "capabilities", "handoff_contract", "plan_review", "test_run", "action_ledger", "activation_choice"]
 }

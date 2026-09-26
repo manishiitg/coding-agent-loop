@@ -12,6 +12,8 @@ This review inspected the Crew catalog, installation and identity receipts, chat
 
 Current branch update, 2026-09-26: Website Growth Loop v0.4.0 now ships executable validators and good/rejected fixtures for the strategist → search → optional content brief → page draft chain. The library validator also checks that all 44 Playbook slots resolve to installed Crew templates and that handoff graphs have matching versioned outputs, valid required edges and no cycles. Builder still must insert and test blocking steps; the generic Crew runner does not enforce these contracts automatically. Findings below remain the original review record where they describe the older checkout.
 
+Later library update, 2026-09-26: Website Growth Loop v0.5.0 extends the authored route through approved page publication, distribution and traffic readout with exact-ID checks and rejected fixtures. The generated catalog now has 11 Website Growth Crews. These are template and contract changes; runtime wiring and customer source verification remain open for a real installation. Counts in the original verification section below describe that earlier review run.
+
 ## Findings, highest priority first
 
 ### 1. High — Builder Crew creation missed the admin-only Work restriction. Fixed locally.

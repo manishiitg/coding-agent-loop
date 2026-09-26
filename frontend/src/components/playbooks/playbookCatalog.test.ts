@@ -20,11 +20,12 @@ describe('small-team catalog', () => {
 
   it('keeps the buyer-question handoff with Search Opportunity Mapper', () => {
     const growth = PLAYBOOK_CATALOG.find(item => item.id === 'website-growth-loop')
-    expect(growth?.version).toBe('0.4.0')
+    expect(growth?.version).toBe('0.5.0')
     expect(growth?.agentSlots?.find(slot => slot.id === 'search')?.agent_playbook_id).toBe('search-opportunity-mapper')
     expect(growth?.agentSlots?.find(slot => slot.id === 'search')).not.toHaveProperty('accepts')
     expect(growth?.agentSlots?.find(slot => slot.id === 'technical_seo')?.required).toBe(false)
-    expect(growth?.handoffs?.some(handoff => handoff.artifact_type === 'shipped-change/v1')).toBe(false)
+    expect(growth?.agentSlots?.find(slot => slot.id === 'publication')?.agent_playbook_id).toBe('website-publishing-coordinator')
+    expect(growth?.handoffs?.some(handoff => handoff.artifact_type === 'shipped-change/v1')).toBe(true)
     expect(growth?.setupChecks).toContain('action_ledger')
   })
 

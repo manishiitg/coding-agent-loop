@@ -4,7 +4,7 @@ import { crewTemplates, getCrewTemplate, parseCrewTemplateSetupState } from './c
 describe('Website Growth Crew templates', () => {
   it('makes every planned specialist selectable with its own skill and chat checklist', () => {
     const growth = crewTemplates.filter(item => item.category === 'Website Growth')
-    expect(growth).toHaveLength(10)
+    expect(growth).toHaveLength(11)
     expect(new Set(growth.map(item => item.id)).size).toBe(growth.length)
     for (const template of growth) {
       expect(getCrewTemplate(template.id)).toBe(template)
@@ -23,6 +23,7 @@ describe('Website Growth Crew templates', () => {
       'search-opportunity-mapper': ['question_sources', 'mapping_decision'],
       'content-brief-writer': ['opportunity_trace', 'claim_review'],
       'content-page-builder': ['brief_claims', 'draft_acceptance'],
+      'website-publishing-coordinator': ['release_authority', 'live_retest'],
       'search-console-optimizer': ['dimension_coverage', 'reproduce_metric'],
       'traffic-engagement-analyst': ['event_definition', 'rate_reproduction'],
       'ai-visibility-analyst': ['sampling_policy', 'citation_check'],

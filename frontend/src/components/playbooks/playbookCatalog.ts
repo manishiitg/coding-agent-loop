@@ -233,17 +233,23 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'feedback-to-product', from: 'feedback', to: 'product', artifact_type: 'feedback-theme-brief/v1', required: true },
   ], setupChecks: ['goal_owner', 'feedback_scope', 'product_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
-  { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.4.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
+  { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.5.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },
     { id: 'technical_seo', agent_playbook_id: 'seo-analyst', required: false, output: 'seo-issue-list/v1' },
     { id: 'content', agent_playbook_id: 'content-brief-writer', required: false, output: 'content-brief/v1' },
     { id: 'page', agent_playbook_id: 'content-page-builder', required: false, output: 'reviewable-page-draft/v1' },
+    { id: 'publication', agent_playbook_id: 'website-publishing-coordinator', required: false, output: 'shipped-change/v1' },
+    { id: 'distribution', agent_playbook_id: 'content-distribution-coordinator', required: false, output: 'distribution-plan/v1' },
     { id: 'measurement', agent_playbook_id: 'traffic-engagement-analyst', required: false, output: 'traffic-readout/v1' },
   ], handoffs: [
     { id: 'strategy-to-search', from: 'strategist', to: 'search', artifact_type: 'growth-priority-brief/v1', required: true },
     { id: 'search-to-content', from: 'search', to: 'content', artifact_type: 'search-opportunity-list/v1', required: false },
     { id: 'content-to-page', from: 'content', to: 'page', artifact_type: 'content-brief/v1', required: false },
+    { id: 'page-to-publication', from: 'page', to: 'publication', artifact_type: 'reviewable-page-draft/v1', required: false },
+    { id: 'publication-to-distribution', from: 'publication', to: 'distribution', artifact_type: 'shipped-change/v1', required: false },
+    { id: 'publication-to-measurement', from: 'publication', to: 'measurement', artifact_type: 'shipped-change/v1', required: false },
+    { id: 'distribution-to-measurement', from: 'distribution', to: 'measurement', artifact_type: 'distribution-plan/v1', required: false },
   ], setupChecks: ['goal_owner', 'metric_policy', 'team_bindings', 'site_scope', 'capabilities', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
 ] as const
 

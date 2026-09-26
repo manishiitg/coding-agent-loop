@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(36)
+    expect(PLAYBOOK_CATALOG).toHaveLength(37)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -99,5 +99,15 @@ describe('small-team catalog', () => {
     expect(qa?.agentSlots?.find(slot => slot.id === 'flake')?.required).toBe(false)
     expect(qa?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('journey-result/v1')
     expect(qa?.setupChecks).toContain('suite_policy')
+  })
+
+  it('exposes the Security finding-to-remediation route', () => {
+    const security = PLAYBOOK_CATALOG.find(item => item.id === 'finding-to-verified-remediation')
+    expect(security?.category).toBe('Security')
+    expect(security?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'security-findings-analyst', 'security-remediation-coordinator',
+    ])
+    expect(security?.handoffs?.[0].artifact_type).toBe('security-finding/v1')
+    expect(security?.setupChecks).toContain('remediation_rule')
   })
 })

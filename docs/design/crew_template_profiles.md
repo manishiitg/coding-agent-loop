@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 42 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The fourteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -246,6 +246,8 @@ The [Release Candidate to Reviewed Gate](../../playbooks/agentic-engineering-pla
 
 ## Security
 
+The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/SKILL.md) Automation Playbook composes Findings Analyst and Remediation Coordinator. Its fictional [finding](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/security-finding.json), [open ledger](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/security-remediation-ledger.json), and [verified closure](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/verified-security-remediation-ledger.json) show the contract. They do not establish a real customer's scope authorization, deployed state, or retest.
+
 ### Security Findings Analyst
 
 - **Use case:** triage an authorized application, dependency, code, or configuration finding against a named asset and build.
@@ -322,4 +324,4 @@ The [Release Candidate to Reviewed Gate](../../playbooks/agentic-engineering-pla
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twelve Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirteen Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

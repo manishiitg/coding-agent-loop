@@ -54,6 +54,12 @@ export type PlaybookPulseFocus = {
 // Read-only catalog projection of the first-party playbook manifests. The API
 // slice will replace this projection when installation records are introduced.
 export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
+  { id: 'finding-to-verified-remediation', title: 'Finding to Verified Remediation', description: 'Connect an authorized, validated security finding to owned remediation and independent retest of the affected deployed asset.', version: '0.1.0', category: 'Security', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'finding', agent_playbook_id: 'security-findings-analyst', required: true, output: 'security-finding/v1' },
+    { id: 'remediation', agent_playbook_id: 'security-remediation-coordinator', required: true, output: 'security-remediation-ledger/v1' },
+  ], handoffs: [
+    { id: 'finding-to-remediation', from: 'finding', to: 'remediation', artifact_type: 'security-finding/v1', required: true },
+  ], setupChecks: ['scope_owner', 'finding_identity', 'severity_policy', 'remediation_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'release-candidate-to-reviewed-gate', title: 'Release Candidate to Reviewed Gate', description: 'Join required journey attempts and optional flake investigation to an exact-build release quality decision with separate status publication evidence.', version: '0.1.0', category: 'QA', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'journey', agent_playbook_id: 'browser-journey-qa-analyst', required: true, output: 'journey-result/v1' },
     { id: 'flake', agent_playbook_id: 'flaky-test-investigator', required: false, output: 'flake-investigation/v1' },

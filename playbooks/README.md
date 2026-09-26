@@ -28,6 +28,8 @@ AgentWorks
     │   └── Incident to Verified Recovery
     ├── QA
     │   └── Release Candidate to Reviewed Gate
+    ├── Security
+    │   └── Finding to Verified Remediation
     ├── FinOps
     │   └── Cost Anomaly to Verified Savings
     ├── Reliability Operations
@@ -70,7 +72,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | --- | --- | --- |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
-| Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
+| Security | Finding to Verified Remediation; Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Customer Support | Support Case to Reviewed Resolution | Four Support Crews are locally installable with pending setup. Triage and Reply form the required route; Escalation is optional. Feedback analysis remains a standalone Crew task. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
@@ -86,6 +88,12 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Playbook | Outcome |
 | --- | --- |
 | [Release Candidate to Reviewed Gate](agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/SKILL.md) | Propose Browser Journey QA Analyst → Release Quality Assistant with optional Flaky Test Investigator; validate exact candidate and required-suite evidence, preserve failures, and publish a gate only through a separately approved provider route. |
+
+### Security Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Finding to Verified Remediation](agentic-engineering-platform/security/finding-to-verified-remediation/SKILL.md) | Propose Security Findings Analyst → Security Remediation Coordinator for a written-scope finding; validate exact identity, separate merged from deployed, and require independent matching retest and owner decision before closure. |
 
 ### GTM Automation
 

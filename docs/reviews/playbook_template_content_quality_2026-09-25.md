@@ -16,6 +16,8 @@ Later on 2026-09-25, Website Growth Starter and Search Opportunity Mapper gained
 
 On 2026-09-26, the other eight Website Growth specialists gained domain-specific decision rules, a fictional input and reviewable output with a failed example, and two checks for their hardest task. Their generated skills and setup guides now carry those examples; each specialist has ten pending checks. This closes the authored-example and generic-checklist gaps for Website Growth, but it does not establish a real customer-site evaluation, live source truth, or operational readiness. The older findings below remain the dated review record.
 
+Finance Analyst now includes a worked invoice/payment/payout/bank calculation that keeps invoiced, collected, deposited and recognized amounts separate. Its setup checks require source row, basis, sign, FX, cutoff and reconciliation decisions. Tax Export Preparer now includes a fictional CSV, signed refund/fee normalization, deposit-transfer deduplication, reconciliation and an explicit classification exception. Its setup checks require recipient format and professional review. These are authored examples, not validated customer accounting or tax results.
+
 ## Most important content findings
 
 ### 1. Specialist checklists repeat the same structure without enough specialist verification

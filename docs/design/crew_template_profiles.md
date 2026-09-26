@@ -9,7 +9,7 @@ Each profile answers: **when to use it, what a first result must contain, what s
 ### Finance Analyst (`finance-analyst`)
 
 - **Use case:** explain revenue, expense, cash, or SaaS metric changes from authorized records for a named period.
-- **First result:** a sourced brief that distinguishes billed, collected, recognized, and cash amounts, shows calculations and definitions, and lists unreconciled items. The Finance Operations Review has an [illustrative impact readout](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/examples/finance-impact-readout.json).
+- **First result:** a sourced brief that distinguishes billed, collected, recognized, and cash amounts, shows calculations and definitions, and lists unreconciled items. The [Finance Analyst skill](../../frontend/src/products/work/templates/finance-analyst/SKILL.md) includes a fictional calculation; Finance Operations Review has an [illustrative impact readout](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/examples/finance-impact-readout.json).
 - **Setup proof:** read one actual statement/export or connected record, agree on entity, period, currency, accounting basis, and metric definitions, reproduce one calculation, and have the owner review the brief. A spreadsheet skill or accounting MCP is optional when the file route works.
 - **Later run:** preserve definitions and source IDs, explain changes against the prior period, and carry unresolved exceptions forward rather than generating a new unsupported forecast.
 
@@ -37,7 +37,7 @@ Each profile answers: **when to use it, what a first result must contain, what s
 ### Tax Export Preparer (`tax-export`)
 
 - **Use case:** prepare transaction records for the owner and tax professional.
-- **First result:** a reconciled export with source references, period, jurisdiction, currencies, classification questions, and an exceptions list.
+- **First result:** a reconciled export with source references, period, jurisdiction, currencies, classification questions, and an exceptions list. The [Tax Export skill](../../frontend/src/products/work/templates/tax-export/SKILL.md) shows a fictional CSV and transfer-aware reconciliation.
 - **Setup proof:** agree on recipient format and required fields; verify one invoice/payment/refund mapping and totals against an authorized export; have the owner or professional review unresolved treatment.
 - **Later run:** carry prior source IDs and recipient decisions forward, avoid duplicate rows, and identify changed or newly missing evidence. This pack does not file or classify tax obligations automatically.
 

@@ -16,7 +16,7 @@
     {
       "id": "data_source",
       "title": "Choose a data source",
-      "instructions": "Ask the owner for an uploaded statement or an authorized finance connection. Verify that the chosen data is readable. An uploaded file is sufficient; do not require an MCP connection."
+      "instructions": "Ask the owner for an uploaded statement or an authorized finance connection. Verify one actual source row and its ID, period, entity, account, currency, opening/closing cutoff and coverage. An uploaded file is sufficient; do not require an MCP connection."
     },
     {
       "id": "period_currency",
@@ -26,12 +26,12 @@
     {
       "id": "metrics",
       "title": "Define the numbers",
-      "instructions": "Agree on the measures used for revenue, cash received, refunds, and expenses. Keep invoiced, recognized, and collected amounts distinct. Save stable definitions in MEMORY.md."
+      "instructions": "Agree on the measures used for invoiced, recognized and collected amounts, refunds, fees, bank deposits and expenses. Confirm accounting basis, sign, currency/FX source, period cutoff, matching IDs and reconciliation tolerance. Reproduce one source-linked calculation and save stable definitions in MEMORY.md."
     },
     {
       "id": "first_brief",
       "title": "Test the first brief",
-      "instructions": "Produce a finance brief from authorized data with sources and calculations. Ask the owner to review it. Complete only after a brief was produced and the owner confirms it is useful."
+      "instructions": "Produce a finance brief from authorized data with source rows, calculations, opening/closing cutoff and explicit unreconciled items. Demonstrate one matching and one missing/ambiguous record or state that none was found. Ask the owner to review it; complete only after a brief was produced and the owner confirms it is useful."
     },
     {
       "id": "delivery",

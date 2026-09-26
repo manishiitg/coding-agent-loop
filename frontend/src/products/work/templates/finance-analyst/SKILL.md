@@ -34,6 +34,23 @@ When the owner asks to set up this Crew, read `TEMPLATE_SETUP.json` in the proje
 
 Write a concise brief with: period and sources; revenue and cash received as separate lines where applicable; expenses; net movement or profit only if supported by the records; notable changes; items to verify; and suggested decisions. Include a small calculation/source table and a plain-language summary. Mark estimates and assumptions.
 
+### Fictional worked brief
+
+Input: A USD invoice export for 2026-09 has invoice I-1 for 1,000 issued September 2 and invoice I-2 for 500 issued September 28. Processor records show P-1 collected 1,000 for I-1, fee F-1 of 30, and payout PO-1 of 970. Bank statement B-1 shows deposit D-1 of 970 and an unrelated operating expense E-1 of 200. All rows share the stated September cutoff; I-2 remains unpaid. No ledger or revenue-recognition schedule is provided.
+
+| Measure | Calculation and source | September result |
+| --- | --- | ---: |
+| Invoiced customer amount | I-1 1,000 + I-2 500, invoice export | USD 1,500 |
+| Collected from customer | P-1, processor payment record | USD 1,000 |
+| Processor fee | F-1, processor balance record | USD 30 |
+| Payout and bank deposit | P-1 1,000 − F-1 30 = PO-1 970; D-1 on B-1 matches | USD 970 |
+| Bank movement from shown rows | D-1 970 − E-1 200 | USD +770 |
+| Open invoice balance | I-2 is unpaid; confirm current status before follow-up | USD 500 |
+
+Plain-language result: invoices total 1,500 but only 1,000 was collected from customers in this period. The processor retained 30 before a 970 bank deposit. The 770 movement describes only the shown bank rows, not the account's full cash balance or profit. Recognized revenue, taxes, opening cash, and any other bank activity remain unknown. Owner review: confirm source completeness, accounting basis, and whether I-2 has since been paid.
+
+Inadequate: “Revenue and cash were 1,500, profit was 1,300, and the bank received 1,000.” This double-counts unpaid I-2 as cash, ignores the fee and deposit, and invents recognized revenue and profit. On a later run, re-read I-2, P-1/PO-1 and the bank cutoff; retain the same IDs and report cleared or new exceptions rather than repeating the brief unchanged.
+
 ## SaaS finance requests
 
 - **Processor account check:** With an authorized Stripe or Paddle account or export, reconcile charge/payment IDs to balance transactions, fees, refunds, disputes, payouts, and bank deposits when the bank evidence exists. Separate available, pending, in-transit, and deposited cash. Report missing IDs and date-cutoff differences as exceptions. A processor payout is not proof of a bank deposit.

@@ -333,7 +333,7 @@ describe('createWorkSession', () => {
     const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
     const runtime = JSON.parse(writes.get(session.workspacePath + '/workflow.json')!)
     const setup = JSON.parse(writes.get(session.workspacePath + '/templates/' + id + '/TEMPLATE_SETUP.json')!)
-    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(session.templates).toEqual([{ id, version: 2 }])
     expect(runtime.capabilities.selected_skills).toEqual([id])
     expect(runtime.capabilities.selected_servers).toEqual([])
     expect(runtime.schedules).toEqual([])

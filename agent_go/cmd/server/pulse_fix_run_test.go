@@ -18,7 +18,7 @@ func TestDecidePulseFixRunStartsOnlyWhenThereIsSomethingToFix(t *testing.T) {
 	if !due || !strings.Contains(reason, "2 open issue(s)") || !strings.Contains(reason, "1 failed scheduled run(s)") {
 		t.Fatalf("open issues should start a fix run with a reason, got %v %q", due, reason)
 	}
-	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 1}, now.Add(-time.Hour), 1, now); due || !strings.Contains(reason, "minimum gap") {
+	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 1, OpenIssuesLastActivity: now.Add(-30 * time.Minute)}, now.Add(-time.Hour), 1, now); due || !strings.Contains(reason, "minimum gap") {
 		t.Fatalf("a fix run within the minimum gap must wait, got %v %q", due, reason)
 	}
 	if due, reason := decidePulseFixRun(pulseFixSignals{NewConcerns: 1}, now.Add(-5*time.Hour), pulseFixRunMaxPerDay, now); due || !strings.Contains(reason, "daily limit") {
@@ -27,11 +27,19 @@ func TestDecidePulseFixRunStartsOnlyWhenThereIsSomethingToFix(t *testing.T) {
 	if due, _ := decidePulseFixRun(pulseFixSignals{NewConcerns: 1}, now.Add(-4*time.Hour), 1, now); !due {
 		t.Fatal("after the gap and under the limit a fix run should start")
 	}
+	// Old issues nobody touched since the last fix run: a new pass would end
+	// the same way (upwork: 4 identical partial runs in one night).
+	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 1, OpenIssuesLastActivity: now.Add(-30 * 24 * time.Hour)}, now.Add(-5*time.Hour), 1, now); due || !strings.Contains(reason, "unchanged") {
+		t.Fatalf("unchanged open issues must not start another fix run, got %v %q", due, reason)
+	}
+	if due, _ := decidePulseFixRun(pulseFixSignals{OpenIssues: 1, OpenIssuesLastActivity: now.Add(-time.Hour)}, now.Add(-5*time.Hour), 1, now); !due {
+		t.Fatal("an open issue that changed since the last fix run should start one")
+	}
 	// Fresh trouble is fixed quickly; an older backlog waits longer.
 	if due, _ := decidePulseFixRun(pulseFixSignals{FailedRuns: 1}, now.Add(-2*time.Hour), 1, now); !due {
 		t.Fatal("a new failed run two hours after the last fix run should start one")
 	}
-	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 3}, now.Add(-2*time.Hour), 1, now); due || !strings.Contains(reason, "4h0m0s") {
+	if due, reason := decidePulseFixRun(pulseFixSignals{OpenIssues: 3, OpenIssuesLastActivity: now.Add(-time.Hour)}, now.Add(-2*time.Hour), 1, now); due || !strings.Contains(reason, "4h0m0s") {
 		t.Fatalf("an unchanged backlog must wait the longer gap, got %v %q", due, reason)
 	}
 }

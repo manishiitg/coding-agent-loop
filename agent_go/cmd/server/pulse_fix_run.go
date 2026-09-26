@@ -119,6 +119,9 @@ type pulseFixSignals struct {
 	OpenIssues  int
 	NewConcerns int
 	FailedRuns  int
+	// OpenIssuesLastActivity is the latest time any open issue was seen again
+	// or had an event recorded.
+	OpenIssuesLastActivity time.Time
 }
 
 func (s pulseFixSignals) any() bool { return s.OpenIssues > 0 || s.NewConcerns > 0 || s.FailedRuns > 0 }
@@ -147,6 +150,13 @@ func decidePulseFixRun(signals pulseFixSignals, lastFix time.Time, fixesLastDay 
 	if fixesLastDay >= pulseFixRunMaxPerDay {
 		return false, fmt.Sprintf("daily limit of %d fix runs reached", pulseFixRunMaxPerDay)
 	}
+	// Only old open issues, none touched since the last fix run started: a new
+	// pass would see exactly what the last one left, so it would end the same
+	// way. They wait for new trouble or the full Pulse.
+	if signals.NewConcerns == 0 && signals.FailedRuns == 0 && !lastFix.IsZero() &&
+		!signals.OpenIssuesLastActivity.After(lastFix) {
+		return false, "open issues unchanged since the last fix run"
+	}
 	gap := pulseFixRunBacklogGap
 	if signals.NewConcerns > 0 || signals.FailedRuns > 0 {
 		gap = pulseFixRunFreshGap
@@ -165,6 +175,17 @@ func collectPulseFixSignals(ctx context.Context, workspacePath string, since tim
 		return signals, err
 	}
 	signals.OpenIssues = open
+	if open > 0 {
+		issues, err := stepworkflow.ListPulseActionableWorkflowIssues(ctx, workspacePath)
+		if err != nil {
+			return signals, err
+		}
+		for _, issue := range issues {
+			if issue.LastActivity.After(signals.OpenIssuesLastActivity) {
+				signals.OpenIssuesLastActivity = issue.LastActivity
+			}
+		}
+	}
 	signals.NewConcerns = collectStepConcerns(workspacePath, since).Total
 	runs, err := ReadScheduleRuns(ctx, workspacePath)
 	if err != nil {

@@ -3488,7 +3488,22 @@ func validatePulseTechnicalRepairDrain(ctx context.Context, workspacePath, pulse
 		return fmt.Errorf("read actionable Pulse repair backlog: %w", err)
 	}
 	if remaining > 0 {
-		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s) routed to it or new since the previous Pulse; the repair drain is incomplete", remaining)
+		// Name them: an unnamed count let a pass leave the same issue
+		// untouched run after run (upwork PUL-2B0668E4, filed by Goal Work,
+		// skipped as "strategy-owned" by 4 fix runs in one night).
+		left := ""
+		if issues, listErr := stepworkflow.ListPulseActionableWorkflowIssues(ctx, workspacePath); listErr == nil && len(issues) > 0 {
+			ids := make([]string, 0, len(issues))
+			for i, issue := range issues {
+				if i == 10 {
+					ids = append(ids, fmt.Sprintf("and %d more", len(issues)-10))
+					break
+				}
+				ids = append(ids, issue.ID)
+			}
+			left = " (" + strings.Join(ids, ", ") + ")"
+		}
+		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s)%s without a recorded outcome; the repair drain is incomplete. Every one is this pass's, whichever review filed it: fix and verify it, reject it with the reason, or turn it into a decision for the user, and record that with record_pulse_result", remaining, left)
 	}
 	return nil
 }

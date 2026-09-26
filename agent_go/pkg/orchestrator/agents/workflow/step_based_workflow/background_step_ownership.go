@@ -164,18 +164,18 @@ Continue your task now with these results: check whether they show what you expe
 // handOwnedStepResults runs after a background agent's turns: it waits for the
 // steps it started and continues the same conversation with their results,
 // until a turn starts nothing new.
-func handOwnedStepResults(ctx context.Context, agent agents.OrchestratorAgent, templateVars map[string]string, history []llmtypes.MessageContent, result string, owner *backgroundStepOwner, registry *WorkshopStepRegistry) (string, error) {
+func handOwnedStepResults(ctx context.Context, agent agents.OrchestratorAgent, templateVars map[string]string, history []llmtypes.MessageContent, result string, owner *backgroundStepOwner, registry *WorkshopStepRegistry) (string, []llmtypes.MessageContent, error) {
 	if owner == nil || registry == nil || agent == nil {
-		return result, nil
+		return result, history, nil
 	}
 	const maxRounds = 50
 	for round := 1; round <= maxRounds; round++ {
 		finished, err := owner.waitForOwnedSteps(ctx, registry, backgroundStepCeiling)
 		if err != nil {
-			return result, fmt.Errorf("wait for owned steps: %w", err)
+			return result, history, fmt.Errorf("wait for owned steps: %w", err)
 		}
 		if len(finished) == 0 {
-			return result, nil
+			return result, history, nil
 		}
 		turnVars := make(map[string]string, len(templateVars))
 		for key, value := range templateVars {
@@ -184,8 +184,38 @@ func handOwnedStepResults(ctx context.Context, agent agents.OrchestratorAgent, t
 		turnVars["Instruction"] = formatOwnedStepResults(finished)
 		result, history, err = agent.Execute(ctx, turnVars, history)
 		if err != nil {
-			return result, fmt.Errorf("step-results turn %d failed: %w", round, err)
+			return result, history, fmt.Errorf("step-results turn %d failed: %w", round, err)
 		}
 	}
-	return result, fmt.Errorf("stopped after %d step-results turns", maxRounds)
+	return result, history, fmt.Errorf("stopped after %d step-results turns", maxRounds)
+}
+
+// ensurePulseReviewerRecorded gives a Pulse reviewer that is about to finish
+// without its terminal result one more turn, in its own conversation, to
+// record it (and hands back any step that turn starts).
+func ensurePulseReviewerRecorded(ctx context.Context, agent agents.OrchestratorAgent, templateVars map[string]string, history []llmtypes.MessageContent, result, module, pulseRunID string, check func(context.Context, string, string) error, owner *backgroundStepOwner, registry *WorkshopStepRegistry) (string, error) {
+	if strings.TrimSpace(module) == "" || check == nil || agent == nil {
+		return result, nil
+	}
+	missing := check(ctx, module, pulseRunID)
+	if missing == nil {
+		return result, nil
+	}
+	vars := make(map[string]string, len(templateVars))
+	for key, value := range templateVars {
+		vars[key] = value
+	}
+	vars["Instruction"] = pulseReviewerRecordReminder(module, pulseRunID, missing)
+	result, history, err := agent.Execute(ctx, vars, history)
+	if err != nil {
+		return "", fmt.Errorf("record-result turn: %w", err)
+	}
+	result, _, err = handOwnedStepResults(ctx, agent, templateVars, history, result, owner, registry)
+	return result, err
+}
+
+// pulseReviewerRecordReminder is the reviewer's extra turn when it is about to
+// finish without its terminal result.
+func pulseReviewerRecordReminder(module, pulseRunID string, missing error) string {
+	return fmt.Sprintf(`[RESULT NOT RECORDED] You are finishing the %s review for pulse_run_id=%q without its recorded result (%v). Record it now with record_pulse_result(module=%q, pulse_run_id=%q): what you checked, what you changed or verified, and the outcome for each issue you handled. Do not start new work.`, module, pulseRunID, missing, module, pulseRunID)
 }

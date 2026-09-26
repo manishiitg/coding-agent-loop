@@ -594,11 +594,16 @@ type WorkshopConfig struct {
 	// the background review agents that turn launches to PresetPulseLLM.
 	// Refreshed on every turn through WorkshopChatSession.SetPulseLifecycleTurn.
 	PulseLifecycleTurn bool
-	UseKnowledgebase   bool
-	LLMAllocationMode  string
-	TieredConfig       *TieredLLMConfig
-	Logger             loggerv2.Logger
-	EventBridge        mcpagent.AgentEventListener
+	// PulseReviewResultCheck reports whether a Pulse reviewer has recorded
+	// its terminal result for module in pulse run pulseRunID (nil means it
+	// has). A reviewer about to finish without one gets one more turn, in its
+	// own conversation, to record it.
+	PulseReviewResultCheck func(ctx context.Context, module, pulseRunID string) error
+	UseKnowledgebase       bool
+	LLMAllocationMode      string
+	TieredConfig           *TieredLLMConfig
+	Logger                 loggerv2.Logger
+	EventBridge            mcpagent.AgentEventListener
 	// Session tracking — needed for MCP connection sharing and session cleanup
 	SessionID string
 	// Secrets for step execution (merged global + user secrets)

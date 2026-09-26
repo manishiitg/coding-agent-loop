@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestBackgroundAgentGetsTheResultOfTheStepItStarted(t *testing.T) {
 
 	agent := &reviewerAgent{}
 	history := []llmtypes.MessageContent{{}, {}}
-	result, err := handOwnedStepResults(context.Background(), agent, map[string]string{}, history, "sequence done", owner, registry)
+	result, _, err := handOwnedStepResults(context.Background(), agent, map[string]string{}, history, "sequence done", owner, registry)
 	if err != nil {
 		t.Fatalf("handOwnedStepResults: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestBackgroundAgentLoopsUntilATurnStartsNothing(t *testing.T) {
 			startOwnedTestStep(registry, owner, "exec-2", "step-a", "second run passed", 20*time.Millisecond)
 		}
 	}
-	if _, err := handOwnedStepResults(context.Background(), agent, nil, nil, "", owner, registry); err != nil {
+	if _, _, err := handOwnedStepResults(context.Background(), agent, nil, nil, "", owner, registry); err != nil {
 		t.Fatalf("handOwnedStepResults: %v", err)
 	}
 	if len(agent.turns) != 2 || !strings.Contains(agent.turns[1], "second run passed") {
@@ -106,7 +107,7 @@ func TestBackgroundAgentLoopsUntilATurnStartsNothing(t *testing.T) {
 // With no steps started, the agent's own answer stands and nothing waits.
 func TestBackgroundAgentWithoutStepsIsUnchanged(t *testing.T) {
 	agent := &reviewerAgent{}
-	result, err := handOwnedStepResults(context.Background(), agent, nil, nil, "final", newBackgroundStepOwner("bg"), NewWorkshopStepRegistry())
+	result, _, err := handOwnedStepResults(context.Background(), agent, nil, nil, "final", newBackgroundStepOwner("bg"), NewWorkshopStepRegistry())
 	if err != nil || result != "final" || len(agent.turns) != 0 {
 		t.Fatalf("want the original result and no extra turns, got %q %d %v", result, len(agent.turns), err)
 	}
@@ -121,7 +122,7 @@ func TestBackgroundAgentStopsAtTheCeiling(t *testing.T) {
 	registry := NewWorkshopStepRegistry()
 	owner := newBackgroundStepOwner("bg")
 	startOwnedTestStep(registry, owner, "stuck", "step-a", "", time.Hour)
-	if _, err := handOwnedStepResults(context.Background(), &reviewerAgent{}, nil, nil, "", owner, registry); err == nil || !strings.Contains(err.Error(), "still running") {
+	if _, _, err := handOwnedStepResults(context.Background(), &reviewerAgent{}, nil, nil, "", owner, registry); err == nil || !strings.Contains(err.Error(), "still running") {
 		t.Fatalf("want a still-running error, got %v", err)
 	}
 }
@@ -145,5 +146,40 @@ func TestBackgroundStepOwnerIsFoundFromTheCallerToolSession(t *testing.T) {
 	release()
 	if got := iwm.backgroundStepOwnerFor(mcpexecutor.WithSessionID(context.Background(), "tool-session-bg-1")); got != nil {
 		t.Fatal("the owner must be forgotten once the background agent ends")
+	}
+}
+
+// A reviewer about to finish without its recorded result gets one more turn,
+// in its own conversation, naming what is missing; one that recorded it, or a
+// non-Pulse background agent, gets nothing extra.
+func TestPulseReviewerIsAskedToRecordAMissingResult(t *testing.T) {
+	agent := &reviewerAgent{}
+	checks := 0
+	check := func(_ context.Context, module, runID string) error {
+		checks++
+		if module != "technical_review" || runID != "run-1" {
+			t.Fatalf("checked %s/%s", module, runID)
+		}
+		return fmt.Errorf("technical_review has no terminal result")
+	}
+	result, err := ensurePulseReviewerRecorded(context.Background(), agent, nil, nil, "fixed it", "technical_review", "run-1", check, newBackgroundStepOwner("bg"), NewWorkshopStepRegistry())
+	if err != nil {
+		t.Fatalf("ensurePulseReviewerRecorded: %v", err)
+	}
+	if checks != 1 || len(agent.turns) != 1 || !strings.HasPrefix(agent.turns[0], "[RESULT NOT RECORDED]") ||
+		!strings.Contains(agent.turns[0], `record_pulse_result(module="technical_review", pulse_run_id="run-1")`) {
+		t.Fatalf("want one record-your-result turn, got %q", agent.turns)
+	}
+	if !strings.HasPrefix(result, "recorded:") {
+		t.Fatalf("the reminder turn's answer must be the result, got %q", result)
+	}
+
+	recorded := &reviewerAgent{}
+	if _, err := ensurePulseReviewerRecorded(context.Background(), recorded, nil, nil, "done", "technical_review", "run-1", func(context.Context, string, string) error { return nil }, nil, nil); err != nil || len(recorded.turns) != 0 {
+		t.Fatalf("a recorded result needs no extra turn, got %q %v", recorded.turns, err)
+	}
+	plain := &reviewerAgent{}
+	if _, err := ensurePulseReviewerRecorded(context.Background(), plain, nil, nil, "done", "", "", check, nil, nil); err != nil || len(plain.turns) != 0 {
+		t.Fatalf("a non-Pulse background agent is not checked, got %q %v", plain.turns, err)
 	}
 }

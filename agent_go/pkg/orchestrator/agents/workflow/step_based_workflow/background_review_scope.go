@@ -129,7 +129,7 @@ func goalWorkPermissionInstructions(perms goalWorkPermissions) string {
 }
 
 func validateBackgroundReviewScope(module, runID string) error {
-	if module != "technical_review" && module != "architecture_review" && module != "strategic_review" {
+	if module != "plan_drift_review" && module != "technical_review" && module != "architecture_review" && module != "strategic_review" {
 		return fmt.Errorf("unknown review_module %q", module)
 	}
 	if strings.TrimSpace(runID) == "" || strings.TrimSpace(runID) != runID || runID == "." || runID == ".." || strings.ContainsAny(runID, "/\\\x00") {

@@ -2787,7 +2787,14 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 				continue
 			}
 		}
-		result := runStep(st)
+		// A due reviewer is started by the runtime itself, from the Gate's
+		// worklist, instead of asking this conversation's agent to launch it
+		// (pulse_direct_dispatch.go). A session with no workshop yet (a fix
+		// run's first reviewer) still uses the dispatch turn, which creates it.
+		result, direct := s.runPulseReviewerDirect(ctx, sctx, sessionID, pulseRunID, st.label)
+		if !direct {
+			result = runStep(st)
+		}
 		contractupgrade.Revoke(sessionID)
 		if abortIfInterrupted(st, result) {
 			return
@@ -3099,19 +3106,30 @@ func pulseLifecyclePlanDriftReviewStep(pulseRunID string) pulseLifecycleStep {
 // Architecture proposes against the clean baseline, Technical repairs concrete
 // behavior, and Strategic evaluates outcomes.
 func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleStep {
-	label, reference, contract := "technical-review", "technical-review", "First close every open workflow issue in get_pulse_state(view=\"backlog\"): fix it, close it as not a problem with the check that shows it, ask the user through a decision with the exact change, or hand a platform defect off. Nothing stays open waiting: an old next_check that waits for a future run or more evidence is not a reason to wait (check whether the fix is already in place and close it, or fix it now), and a due or failed Plan Drift is not a reason to leave issues open. Then investigate new correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
+	label, reference, contract := pulseModuleReviewParts(module)
+	return pulseLifecycleStep{label: label, query: fmt.Sprintf(`PULSE MODULE REVIEW DISPATCH. pulse_run_id=%q. This step owns ONLY module=%q. Earlier lifecycle steps have finished; later modules must not be dispatched here.
+Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction to read get_pulse_state(view="review_notes", module=%q) once for relevant prior reasoning. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
+%sAfter dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, module, reference, contract, pulseReviewerRecordRules)}
+}
+
+// pulseModuleReviewParts is one module's review contract, shared by the
+// reviewer the runtime starts directly and the fallback dispatch turn.
+func pulseModuleReviewParts(module string) (label, reference, contract string) {
+	label, reference, contract = "technical-review", "technical-review", "First close every open workflow issue in get_pulse_state(view=\"backlog\"): fix it, close it as not a problem with the check that shows it, ask the user through a decision with the exact change, or hand a platform defect off. Nothing stays open waiting: an old next_check that waits for a future run or more evidence is not a reason to wait (check whether the fix is already in place and close it, or fix it now), and a due or failed Plan Drift is not a reason to leave issues open. Then investigate new correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
 	switch module {
 	case pulseModuleArchitectureReview:
 		label, reference, contract = "architecture-review", "architecture-review", "Improve the construction of a working workflow, including evidence-based execution tier/model choices. Use actual quality, retries, cost and latency evidence; preserve explicit user pins and propose measured trials with a checkpoint and rollback through architecture decisions. Runtime does not change tiers from run counts. Research and propose bounded improvements; do not mutate implementation in the review."
 	case pulseModuleStrategicReview:
 		label, reference, contract = "strategic-review", "strategy-auditor", "GOAL WORK: this is Pulse's main job. Do work that moves the user's goals, not only proposals. Read soul.md and get_goal_metrics early, follow up earlier Goal Work items (get_pulse_state view=goal_work), find what would move the primary metric that nobody is doing or the user does not know, and complete 1-3 bounded items now within the permission levels the runtime granted (prepare under pulse/work/; run existing steps only when Run is auto; never act outward or edit the workflow yourself; put those to the user as ready decisions). Record each with record_pulse_goal_work. Challenge soul.md constraints only with evidence through a keep/test/change decision; boundary constraints only get clarification; never break one meanwhile. This module is not blocked by a due Plan Drift; when Drift is due, prepare and research but do not run steps."
 	}
-	return pulseLifecycleStep{label: label, query: fmt.Sprintf(`PULSE MODULE REVIEW DISPATCH. pulse_run_id=%q. This step owns ONLY module=%q. Earlier lifecycle steps have finished; later modules must not be dispatched here.
-Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction to read get_pulse_state(view="review_notes", module=%q) once for relevant prior reasoning. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
-Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist only canonical issues (and, for strategic_review, Goal Work items with record_pulse_goal_work), a human decision when genuinely required, and one terminal review result for this module. Put the expected benefit, baseline, guardrails and next outcome boundary in the issue or review summary rather than a separate proposal/impact lifecycle. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
-The user reads issue concerns and summaries, Goal Work titles and actions, decision questions and your result reason. Write those in plain language: lead with what changed or what the user needs to do, short sentences, everyday words, no issue IDs, state names or code terms. Keep IDs, evidence and technical detail in review_note, impact, evidence and the Goal Work detail; the tools refuse user-facing text that carries them.
-After dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, module, reference, contract)}
+	return label, reference, contract
 }
+
+// pulseReviewerRecordRules tells a reviewer what to persist and how to
+// write for the user.
+const pulseReviewerRecordRules = `Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist only canonical issues (and, for strategic_review, Goal Work items with record_pulse_goal_work), a human decision when genuinely required, and one terminal review result for this module. Put the expected benefit, baseline, guardrails and next outcome boundary in the issue or review summary rather than a separate proposal/impact lifecycle. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
+The user reads issue concerns and summaries, Goal Work titles and actions, decision questions and your result reason. Write those in plain language: lead with what changed or what the user needs to do, short sentences, everyday words, no issue IDs, state names or code terms. Keep IDs, evidence and technical detail in review_note, impact, evidence and the Goal Work detail; the tools refuse user-facing text that carries them.
+`
 
 func pulseLifecycleReviewFixContinuationStep(pulseRunID string, receiptErr error) pulseLifecycleStep {
 	return pulseLifecycleStep{

@@ -2703,7 +2703,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Opening-turn instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
 				},
-				"review_module":    map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}, "description": "Pulse review role. Architecture has research access but cannot edit workflow implementation. strategic_review is Goal Work: it can also prepare work under pulse/work/ and, when the workflow's Run permission is auto, run existing steps; it never edits the plan or acts outward."},
+				"review_module":    map[string]interface{}{"type": "string", "enum": []string{"plan_drift_review", "technical_review", "architecture_review", "strategic_review"}, "description": "Pulse review role. Architecture has research access but cannot edit workflow implementation. strategic_review is Goal Work: it can also prepare work under pulse/work/ and, when the workflow's Run permission is auto, run existing steps; it never edits the plan or acts outward."},
 				"pulse_run_id":     map[string]interface{}{"type": "string", "description": "Exact scheduler Pulse run id; required with review_module."},
 				"message_sequence": backgroundMessageSequenceSchema(),
 				"agent_type": map[string]interface{}{
@@ -9215,9 +9215,18 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	if err != nil {
 		return "", fmt.Errorf("background task agent failed: %w", err)
 	}
-	result, err = handOwnedStepResults(ctx, agent, templateVars, history, result, stepOwner, iwm.stepRegistry)
+	result, history, err = handOwnedStepResults(ctx, agent, templateVars, history, result, stepOwner, iwm.stepRegistry)
 	if err != nil {
 		return "", fmt.Errorf("background task agent failed: %w", err)
+	}
+	// A Pulse reviewer finishes with its result recorded: if it has not, it
+	// gets one more turn in its own conversation to record it, rather than the
+	// Pulse conversation reconstructing it afterwards.
+	if iwm.workshopConfig != nil {
+		result, err = ensurePulseReviewerRecorded(ctx, agent, templateVars, history, result, reviewScope.Module, reviewScope.RunID, iwm.workshopConfig.PulseReviewResultCheck, stepOwner, iwm.stepRegistry)
+		if err != nil {
+			return "", fmt.Errorf("background task agent failed: %w", err)
+		}
 	}
 	return result, nil
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/md5" //nolint:gosec // mirrors cursor CLI's own chat-store directory naming
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -102,6 +103,7 @@ type crewRootMigrationReport struct {
 	AlreadyDone     bool           `json:"already_done,omitempty"`
 	Moves           []crewRootMove `json:"moves"`
 	Conflicts       []string       `json:"conflicts,omitempty"`
+	SecretDocs      int            `json:"secret_documents_moved"`
 	JSONFiles       int            `json:"json_files_rewritten"`
 	SQLiteRows      int64          `json:"sqlite_rows_rewritten"`
 	CLISessionsCopy int            `json:"cli_session_dirs_copied"`
@@ -173,9 +175,12 @@ func migrateCrewRoot(opts crewRootMigrationOptions) (*crewRootMigrationReport, e
 			continue
 		}
 		// Recorded per crew: an interrupted pass never leaves a moved crew
-		// without its alias.
+		// without its alias or its pinned owner.
 		if err := recordCrewPathAliases(docsRoot, []crewRootMove{move}); err != nil {
 			return report, fmt.Errorf("record crew path alias for %s: %w", move.From, err)
+		}
+		if err := recordCrewOwners(docsRoot, []crewRootMove{move}); err != nil {
+			return report, fmt.Errorf("record crew owner for %s: %w", move.To, err)
 		}
 		moved = append(moved, move)
 	}
@@ -185,6 +190,13 @@ func migrateCrewRoot(opts crewRootMigrationOptions) (*crewRootMigrationReport, e
 	// pass's: a rerun after an interrupted pass finishes the earlier crews.
 	// Every step below is idempotent.
 	allMoved := crewMovesFromAliasFile(docsRoot)
+	// Secrets first: a moved crew whose secrets stay keyed by its old path
+	// silently loses every $SECRET_* value.
+	secretDocs, err := migrateCrewSecretStores(docsRoot, allMoved)
+	report.SecretDocs = secretDocs
+	if err != nil {
+		return report, fmt.Errorf("move crew secrets (migration not marked done; rerun after fixing): %w", err)
+	}
 	replacements := crewRootReplacements(docsRoot, allMoved)
 	jsonCount, warnings := rewriteCrewRootJSON(docsRoot, stateRoot, replacements)
 	report.JSONFiles = jsonCount
@@ -200,6 +212,12 @@ func migrateCrewRoot(opts crewRootMigrationOptions) (*crewRootMigrationReport, e
 	report.CLISessionsCopy = copied
 	report.Warnings = append(report.Warnings, warnings...)
 
+	// Done means done: a crew that failed to move, a conflict, or a reference
+	// or session store that failed to rewrite leaves the marker unwritten,
+	// so the next deploy (or start) runs the idempotent pass again.
+	if len(report.Warnings) > 0 || len(report.Conflicts) > 0 {
+		return report, fmt.Errorf("crew root migration incomplete (%d warning(s), %d conflict(s)); not marked done", len(report.Warnings), len(report.Conflicts))
+	}
 	stamp, _ := json.MarshalIndent(map[string]interface{}{"completed_at": time.Now().UTC().Format(time.RFC3339), "moves": moved, "conflicts": conflicts}, "", "  ")
 	if err := writeFileAtomic(marker, append(stamp, '\n'), 0o600); err != nil {
 		return report, err
@@ -444,14 +462,21 @@ func rewriteCrewRootJSON(docsRoot, stateRoot string, replacements []crewRootRepl
 	var warnings []string
 	count := 0
 	// The alias file maps old roots to new ones; rewriting it would erase them.
-	seen := map[string]bool{filepath.Join(docsRoot, filepath.FromSlash(crewPathAliasFile)): true}
+	seen := map[string]bool{
+		filepath.Join(docsRoot, filepath.FromSlash(crewPathAliasFile)):     true,
+		filepath.Join(docsRoot, filepath.FromSlash(crewOwnerRegistryFile)): true,
+	}
 	for _, path := range files {
 		if seen[path] {
 			continue
 		}
 		seen[path] = true
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<20 {
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if info.Size() > 512<<20 {
+			log.Printf("[CREW_ROOT_MIGRATION] skipped %s (%d bytes): too large to rewrite; its crew paths keep resolving through the alias file", path, info.Size())
 			continue
 		}
 		raw, err := os.ReadFile(path)
@@ -471,9 +496,20 @@ func rewriteCrewRootJSON(docsRoot, stateRoot string, replacements []crewRootRepl
 	return count, warnings
 }
 
-// rewriteCrewRootSQLite rewrites TEXT columns in platform SQLite stores
-// (cost ledger, bot/WhatsApp routing, chat events). User databases inside a
-// crew or workflow (db/db.sqlite) are not touched.
+// crewRootSQLiteStores names the platform SQLite stores that can hold crew
+// paths, and for each the tables that may be rewritten (nil = every table).
+// Anything else -- a crew's or workflow's own db.sqlite, CLI databases,
+// WhatsApp's own session tables -- is never touched.
+var crewRootSQLiteStores = map[string][]string{
+	"costs.sqlite":                     nil,
+	"schedule-state.sqlite":            nil,
+	"structured-chat-events-v2.sqlite": nil,
+	"session.db":                       {"whatsapp_meta"},
+}
+
+// rewriteCrewRootSQLite rewrites TEXT columns in the platform SQLite stores
+// (cost ledger, schedule state, chat events, WhatsApp routing), one
+// transaction per database.
 func rewriteCrewRootSQLite(docsRoot, stateRoot string, replacements []crewRootReplacement) (int64, []string) {
 	if len(replacements) == 0 {
 		return 0, nil
@@ -487,62 +523,103 @@ func rewriteCrewRootSQLite(docsRoot, stateRoot string, replacements []crewRootRe
 			if d.IsDir() {
 				rel, _ := filepath.Rel(docsRoot, path)
 				rel = filepath.ToSlash(rel)
-				if strings.HasPrefix(rel, "Workflow") || strings.HasPrefix(rel, "Crew") || strings.Contains(rel, "/Chats") || d.Name() == "node_modules" || d.Name() == ".git" {
+				if strings.HasPrefix(rel, "Workflow") || strings.HasPrefix(rel, "Crew") || strings.Contains(rel, "/Chats") || strings.Contains(rel, "cli-runtimes") || d.Name() == "node_modules" || d.Name() == ".git" {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if name := d.Name(); strings.HasSuffix(name, ".sqlite") || strings.HasSuffix(name, ".db") {
+			if _, ok := crewRootSQLiteStores[d.Name()]; ok {
 				dbs = append(dbs, path)
 			}
 			return nil
 		})
 	}
 	collect(filepath.Join(docsRoot, "_system"))
+	collect(filepath.Join(docsRoot, "config"))
 	collect(filepath.Join(docsRoot, "_users"))
 	collect(stateRoot)
 	sort.Strings(dbs)
 	var total int64
 	var warnings []string
+	seen := map[string]bool{}
 	for _, path := range dbs {
-		rows, err := rewriteSQLiteTextColumns(path, replacements)
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		started := time.Now()
+		rows, err := rewriteSQLiteTextColumns(path, crewRootSQLiteStores[filepath.Base(path)], replacements)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("sqlite %s: %v", path, err))
 		}
+		log.Printf("[CREW_ROOT_MIGRATION] sqlite %s: %d row(s) in %s", path, rows, time.Since(started).Round(time.Millisecond))
 		total += rows
 	}
 	return total, warnings
 }
 
-func rewriteSQLiteTextColumns(path string, replacements []crewRootReplacement) (int64, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+// rewriteSQLiteTextColumns rewrites every text column of the allowed tables
+// in one transaction: all or nothing per database. instr() is an exact,
+// case-sensitive substring test (LIKE would read "_" as a wildcard).
+func rewriteSQLiteTextColumns(path string, allowedTables []string, replacements []crewRootReplacement) (int64, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(30000)")
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
 	tables, err := sqliteTableNames(db)
 	if err != nil {
 		return 0, err
 	}
-	var total int64
+	if allowedTables != nil {
+		allowed := map[string]bool{}
+		for _, name := range allowedTables {
+			allowed[name] = true
+		}
+		kept := tables[:0]
+		for _, name := range tables {
+			if allowed[name] {
+				kept = append(kept, name)
+			}
+		}
+		tables = kept
+	}
+	type target struct{ table, column string }
+	var targets []target
 	for _, table := range tables {
 		columns, err := sqliteTextColumns(db, table)
 		if err != nil {
-			return total, err
+			return 0, err
 		}
 		for _, column := range columns {
-			for _, r := range replacements {
-				// The SQL REPLACE has no boundary check; folder names end in
-				// the crew's unique id, so a root never prefixes another's.
-				result, err := db.Exec(fmt.Sprintf(`UPDATE %q SET %q = REPLACE(%q, ?, ?) WHERE %q LIKE '%%' || ? || '%%'`, table, column, column, column), r.old, r.new, r.old)
-				if err != nil {
-					return total, fmt.Errorf("%s.%s: %w", table, column, err)
-				}
-				if n, err := result.RowsAffected(); err == nil {
-					total += n
-				}
+			targets = append(targets, target{table, column})
+		}
+	}
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, t := range targets {
+		for _, r := range replacements {
+			// Folder names end in the crew's unique id, so a root never
+			// prefixes another's; REPLACE needs no boundary check.
+			result, err := tx.Exec(fmt.Sprintf(`UPDATE %q SET %q = REPLACE(%q, ?, ?) WHERE instr(%q, ?) > 0`, t.table, t.column, t.column, t.column), r.old, r.new, r.old)
+			if err != nil {
+				_ = tx.Rollback()
+				return 0, fmt.Errorf("%s.%s: %w", t.table, t.column, err)
+			}
+			if n, err := result.RowsAffected(); err == nil {
+				total += n
 			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return total, nil
 }
@@ -590,6 +667,11 @@ func sqliteTextColumns(db *sql.DB, table string) ([]string, error) {
 	return columns, rows.Err()
 }
 
+func crewRootDefaultHome() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // crewRootCLIHomes: $HOME and every provider-connection account home, where
 // the coding CLIs keep per-working-directory session stores.
 func crewRootCLIHomes() []string {
@@ -613,11 +695,18 @@ func copyCrewCLISessions(docsRoot string, homes []string, moves []crewRootMove, 
 		oldAbs := filepath.Join(docsRoot, filepath.FromSlash(move.From))
 		newAbs := filepath.Join(docsRoot, filepath.FromSlash(move.To))
 		for _, home := range homes {
-			pairs := [][2]string{
-				{filepath.Join(home, ".claude", "projects", claudeProjectDirName(oldAbs)), filepath.Join(home, ".claude", "projects", claudeProjectDirName(newAbs))},
-				{filepath.Join(home, ".cursor", "chats", cursorChatsDirName(oldAbs)), filepath.Join(home, ".cursor", "chats", cursorChatsDirName(newAbs))},
-				{filepath.Join(home, ".cursor", "projects", cursorProjectDirName(oldAbs)), filepath.Join(home, ".cursor", "projects", cursorProjectDirName(newAbs))},
+			claudeDirs := []string{filepath.Join(home, ".claude")}
+			if configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configured != "" && home == crewRootDefaultHome() {
+				claudeDirs = append(claudeDirs, configured)
 			}
+			var pairs [][2]string
+			for _, dir := range claudeDirs {
+				pairs = append(pairs, [2]string{filepath.Join(dir, "projects", claudeProjectDirName(oldAbs)), filepath.Join(dir, "projects", claudeProjectDirName(newAbs))})
+			}
+			for _, chats := range []string{filepath.Join(home, ".cursor", "chats"), filepath.Join(home, ".config", "cursor", "chats")} {
+				pairs = append(pairs, [2]string{filepath.Join(chats, cursorChatsDirName(oldAbs)), filepath.Join(chats, cursorChatsDirName(newAbs))})
+			}
+			pairs = append(pairs, [2]string{filepath.Join(home, ".cursor", "projects", cursorProjectDirName(oldAbs)), filepath.Join(home, ".cursor", "projects", cursorProjectDirName(newAbs))})
 			for _, pair := range pairs {
 				if info, err := os.Stat(pair[0]); err != nil || !info.IsDir() {
 					continue
@@ -734,4 +823,165 @@ func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+// migrateCrewSecretStores moves every secret document keyed by a moved crew's
+// old path to its new one. Stores are keyed by sha256(workflow path):
+//   - _users/_shared/workflow_secrets: values are AES-GCM sealed with
+//     "workflow:<path>" as additional data, so each value is decrypted with the
+//     old path and re-sealed with the new one;
+//   - _users/<uid>/workflow_secrets and workflow_provider_credentials: values
+//     are bound to the user, not the path, so the records move as they are.
+//
+// The old document is kept beside the new one as <hash>.json.pre-crew-root
+// (rollback). Any failure is returned: a crew must never lose its secrets
+// silently, so the caller does not mark the migration done.
+func migrateCrewSecretStores(docsRoot string, moves []crewRootMove) (int, error) {
+	if len(moves) == 0 {
+		return 0, nil
+	}
+	byPath := map[string]crewRootMove{}
+	for _, move := range moves {
+		byPath[move.From] = move
+	}
+	var files []string
+	for _, pattern := range []string{"workflow_secrets", "workflow_provider_credentials"} {
+		matches, _ := filepath.Glob(filepath.Join(docsRoot, "_users", "*", pattern, "*.json"))
+		files = append(files, matches...)
+	}
+	sort.Strings(files)
+	migrated := 0
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return migrated, fmt.Errorf("read %s: %w", path, err)
+		}
+		var doc map[string]json.RawMessage
+		if json.Unmarshal(raw, &doc) != nil {
+			continue
+		}
+		var oldPath string
+		if json.Unmarshal(doc["workflow_path"], &oldPath) != nil {
+			continue
+		}
+		oldPath = strings.Trim(filepath.ToSlash(strings.TrimSpace(oldPath)), "/")
+		storeOwner := filepath.Base(filepath.Dir(filepath.Dir(path)))
+		move, ok := byPath[oldPath]
+		if !ok {
+			// A document keyed by the owner's user-relative spelling.
+			if dir := strings.TrimPrefix(oldPath, "Chats/Work/projects/"); dir != oldPath && !strings.Contains(dir, "/") {
+				for _, candidate := range moves {
+					if candidate.Dir == dir && (candidate.Owner == storeOwner || storeOwner == "_shared") {
+						move, ok = candidate, true
+						break
+					}
+				}
+			}
+		}
+		if !ok {
+			continue
+		}
+		recordsKey := "secrets"
+		if filepath.Base(filepath.Dir(path)) == "workflow_provider_credentials" {
+			recordsKey = "credentials"
+		}
+		var records map[string]map[string]interface{}
+		if len(doc[recordsKey]) > 0 {
+			if err := json.Unmarshal(doc[recordsKey], &records); err != nil {
+				return migrated, fmt.Errorf("decode %s: %w", path, err)
+			}
+		}
+		shared := storeOwner == "_shared" && recordsKey == "secrets"
+		if shared && len(records) > 0 {
+			if err := ValidateConfiguredAuthSecret(); err != nil {
+				return migrated, fmt.Errorf("crew secrets for %s need AUTH_SECRET to be re-sealed under the new path: %w", oldPath, err)
+			}
+			oldAAD, err := sharedWorkflowSecretAAD(oldPath)
+			if err != nil {
+				return migrated, err
+			}
+			newAAD, err := sharedWorkflowSecretAAD(move.To)
+			if err != nil {
+				return migrated, err
+			}
+			for name, record := range records {
+				encrypted, _ := record["encrypted_value"].(string)
+				plaintext, err := decryptSecretValueWithAAD(encrypted, oldAAD)
+				if err != nil {
+					return migrated, fmt.Errorf("crew secret %q of %s cannot be decrypted (wrong AUTH_SECRET?): %w", name, oldPath, err)
+				}
+				resealed, err := encryptSecretValueWithAAD(plaintext, newAAD)
+				if err != nil {
+					return migrated, err
+				}
+				record["encrypted_value"] = resealed
+			}
+		}
+		target := filepath.Join(filepath.Dir(path), workflowSecretStoreHash(move.To)+".json")
+		// A partly finished earlier pass may have written the target: keep
+		// what it holds and add only names it lacks.
+		if existingRaw, err := os.ReadFile(target); err == nil {
+			var existing map[string]json.RawMessage
+			var existingRecords map[string]map[string]interface{}
+			if json.Unmarshal(existingRaw, &existing) == nil && json.Unmarshal(existing[recordsKey], &existingRecords) == nil {
+				for name, record := range existingRecords {
+					records[name] = record
+				}
+			}
+		}
+		encodedRecords, err := json.Marshal(records)
+		if err != nil {
+			return migrated, err
+		}
+		encodedPath, _ := json.Marshal(move.To)
+		doc["workflow_path"] = encodedPath
+		doc[recordsKey] = encodedRecords
+		out, err := json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			return migrated, err
+		}
+		if err := writeFileAtomic(target, append(out, '\n'), 0o600); err != nil {
+			return migrated, fmt.Errorf("write %s: %w", target, err)
+		}
+		if err := os.Rename(path, path+".pre-crew-root"); err != nil {
+			return migrated, fmt.Errorf("retire %s: %w", path, err)
+		}
+		migrated++
+	}
+	return migrated, nil
+}
+
+func workflowSecretStoreHash(workflowPath string) string {
+	sum := sha256.Sum256([]byte(strings.Trim(filepath.ToSlash(filepath.Clean(workflowPath)), "/")))
+	return hex.EncodeToString(sum[:])
+}
+
+// recordCrewOwners pins each moved crew's owner (the folder it came from) in
+// the server registry. An existing entry is never overwritten.
+func recordCrewOwners(docsRoot string, moves []crewRootMove) error {
+	if len(moves) == 0 {
+		return nil
+	}
+	path := filepath.Join(docsRoot, filepath.FromSlash(crewOwnerRegistryFile))
+	file := struct {
+		Owners map[string]string `json:"owners"`
+	}{Owners: map[string]string{}}
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &file); err != nil {
+			return fmt.Errorf("existing %s is unreadable: %w", crewOwnerRegistryFile, err)
+		}
+		if file.Owners == nil {
+			file.Owners = map[string]string{}
+		}
+	}
+	for _, move := range moves {
+		if _, taken := file.Owners[move.To]; !taken {
+			file.Owners[move.To] = move.Owner
+		}
+	}
+	encoded, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, append(encoded, '\n'), 0o600)
 }

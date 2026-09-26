@@ -40,8 +40,8 @@ interface MarkdownRendererProps {
   renderEmbeddedWidget?: (spec: unknown) => React.ReactNode
 }
 
-const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/', 'learnings/']
-const workspaceStandardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'learnings/']
+const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'Crew/', 'knowledgebase/', '_users/', 'learnings/']
+const workspaceStandardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'Crew/', 'learnings/']
 const linkableWorkspaceFileExtensions = [
   'md', 'markdown', 'txt', 'json', 'jsonl', 'csv', 'tsv', 'yaml', 'yml', 'xml',
   'html', 'htm', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg',
@@ -454,7 +454,7 @@ const getParentPath = (path: string): string => {
 
 const cleanToWorkspaceRelativePath = (path: string): string => {
   const normalizedPath = path.replace(/\\/g, '/')
-  const prefixes = ['Workflow/', 'skills/', 'Chats/', 'Downloads/', 'knowledgebase/', '_users/', 'learnings/']
+  const prefixes = ['Workflow/', 'Crew/', 'skills/', 'Chats/', 'Downloads/', 'knowledgebase/', '_users/', 'learnings/']
   // Slice from the EARLIEST-occurring prefix, not the first one in the list.
   // A list-order match would truncate "_users/bob/Chats/x.md" to "Chats/x.md"
   // (dropping the user scope) because "Chats/" is checked before "_users/".
@@ -843,7 +843,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:_users\/[\w.-]+\/(?:Chats|memories)|Chats|Downloads|Workflow|skills|knowledgebase|learnings)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
+    const pathRegex = /(`?)\b((?:_users\/[\w.-]+\/(?:Chats|memories)|Chats|Downloads|Workflow|Crew|skills|knowledgebase|learnings)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.

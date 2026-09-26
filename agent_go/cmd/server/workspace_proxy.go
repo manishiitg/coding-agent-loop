@@ -192,6 +192,13 @@ func workspaceProxyPathIsOtherUser(raw, own string) bool {
 	if clean == "_users" || clean == crewSharedRootName {
 		return true
 	}
+	// Server state (crew owners and path aliases, schedule state, ledgers)
+	// and operator config (bot connections) are never raw-browser paths.
+	for _, internal := range []string{"_system", "config"} {
+		if clean == internal || strings.HasPrefix(clean, internal+"/") {
+			return true
+		}
+	}
 	if strings.HasPrefix(clean, crewSharedRootName+"/") {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

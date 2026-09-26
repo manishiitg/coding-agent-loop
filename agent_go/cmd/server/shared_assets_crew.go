@@ -78,6 +78,27 @@ func (api *StreamingAPI) crewReaderSharedAsset(w http.ResponseWriter, r *http.Re
 		return "", "", false, false, false
 	}
 	crewRoot := path.Join("_users", owner, "Chats/Work/projects", parts[3])
+	// A link made before the crew moved to Crew/<id> follows it there.
+	if moved := crewPathAliases.lookup(r.Context(), crewRoot); moved != "" {
+		ref, _ := resolveCrewPath(r.Context(), caller, moved+"/"+strings.Join(parts[4:], "/"))
+		ref.Rest = strings.Trim(ref.Rest, "/")
+		access := crewAccessFor(claims, ref)
+		if access == crewAccessNone {
+			externalError(w, 403, "forbidden", "You do not have access to this crew.")
+			return "", "", false, true, false
+		}
+		relative := ref.Rest
+		if access == crewAccessReader && relative != "" {
+			if _, confined := confineSharedProjectPath(ref.Root, relative); !confined {
+				externalError(w, 403, "protected_path", "This part of the crew is private to its owner.")
+				return "", "", false, true, false
+			}
+		}
+		if relative == "" {
+			relative = "."
+		}
+		return ref.Root, relative, access == crewAccessReader && ref.Rest == "", true, true
+	}
 	if !crewLinkReadAllowed(api, claims, crewRoot) {
 		externalError(w, 403, "forbidden", "You do not have access to this crew.")
 		return "", "", false, true, false

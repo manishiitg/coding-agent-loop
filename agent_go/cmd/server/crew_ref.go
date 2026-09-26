@@ -182,12 +182,24 @@ func (c *crewOwnerCache) owner(ctx context.Context, root string) string {
 	}
 	owner := read(ctx, root)
 	c.mu.Lock()
+	if len(c.entries) >= 4096 { // any caller can probe Crew/<random>; bound it
+		c.entries = map[string]crewOwnerEntry{}
+	}
 	c.entries[root] = crewOwnerEntry{owner: owner, expires: now.Add(crewOwnerCacheTTL)}
 	c.mu.Unlock()
 	return owner
 }
 
+// readCrewManifestOwner returns a shared crew's owner. The authority is the
+// server-only registry (_system/crew-owners.json), which no browser or agent
+// write can reach. product.json owner_id is trusted once, the first time the
+// server sees the crew (creation, migration), and recorded; a later edit of
+// that field -- by the owner, their agent, or a crew with write access to it --
+// changes nothing.
 func readCrewManifestOwner(ctx context.Context, root string) string {
+	if owner, known := crewOwnerRegistry.owner(ctx, root); known {
+		return owner
+	}
 	raw, found, err := readFileFromWorkspace(ctx, root+"/product.json")
 	if err != nil || !found {
 		return ""
@@ -199,7 +211,114 @@ func readCrewManifestOwner(ctx context.Context, root string) string {
 	if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
 		return ""
 	}
-	return sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID))
+	owner := crewManifestOwner(manifest.OwnerID)
+	if owner == "" {
+		return ""
+	}
+	return crewOwnerRegistry.claim(ctx, root, owner)
+}
+
+const crewOwnerRegistryFile = "_system/crew-owners.json"
+
+// crewOwnerRegistry is the server-only record of who owns each shared crew.
+var crewOwnerRegistry = &crewOwnerRegistryStore{}
+
+type crewOwnerRegistryStore struct {
+	mu     sync.Mutex
+	loaded time.Time
+	owners map[string]string
+	// read/write are replaced in tests.
+	read  func(ctx context.Context) (string, bool, error)
+	write func(ctx context.Context, content string) error
+}
+
+func (r *crewOwnerRegistryStore) refreshLocked(ctx context.Context) {
+	if r.owners != nil && time.Since(r.loaded) < crewOwnerCacheTTL {
+		return
+	}
+	read := r.read
+	if read == nil {
+		read = func(ctx context.Context) (string, bool, error) {
+			return readFileFromWorkspace(ctx, crewOwnerRegistryFile)
+		}
+	}
+	owners := map[string]string{}
+	if raw, found, err := read(ctx); err == nil && found {
+		var file struct {
+			Owners map[string]string `json:"owners"`
+		}
+		if json.Unmarshal([]byte(raw), &file) == nil {
+			for root, owner := range file.Owners {
+				if owner = crewManifestOwner(owner); owner != "" {
+					owners[strings.Trim(root, "/")] = owner
+				}
+			}
+		}
+	} else if err != nil && r.owners != nil {
+		return // keep the last good view through a transient read failure
+	}
+	r.owners, r.loaded = owners, time.Now()
+}
+
+func (r *crewOwnerRegistryStore) owner(ctx context.Context, root string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refreshLocked(ctx)
+	owner, ok := r.owners[strings.Trim(root, "/")]
+	return owner, ok
+}
+
+// claim records owner for root unless the registry already names one, and
+// returns the owner the registry holds afterwards.
+func (r *crewOwnerRegistryStore) claim(ctx context.Context, root, owner string) string {
+	root = strings.Trim(root, "/")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.loaded = time.Time{} // re-read: another process may have claimed it
+	r.refreshLocked(ctx)
+	if existing, ok := r.owners[root]; ok {
+		return existing
+	}
+	next := make(map[string]string, len(r.owners)+1)
+	for k, v := range r.owners {
+		next[k] = v
+	}
+	next[root] = owner
+	encoded, err := json.MarshalIndent(map[string]interface{}{"owners": next}, "", "  ")
+	if err != nil {
+		return ""
+	}
+	write := r.write
+	if write == nil {
+		write = func(ctx context.Context, content string) error {
+			return writeRawFileToWorkspace(ctx, crewOwnerRegistryFile, content)
+		}
+	}
+	if err := write(ctx, string(encoded)+"\n"); err != nil {
+		// Unrecorded ownership is not granted: better a crew that cannot
+		// open until the registry is writable than an unpinned owner.
+		return ""
+	}
+	r.owners = next
+	return owner
+}
+
+// crewManifestOwner is the owner a crew manifest names, or "" when it names
+// none or an invalid id. sanitizeUserIDForPath maps anything invalid to
+// "default"; a crew must never fall to that account by accident.
+func crewManifestOwner(ownerID string) string {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" || len(ownerID) > 128 || !safeUserIDForPath.MatchString(ownerID) {
+		return ""
+	}
+	return ownerID
+}
+
+// crewRootOwnedBy reports whether the shared crew at root belongs to userID,
+// by the server's owner registry (see readCrewManifestOwner).
+func crewRootOwnedBy(ctx context.Context, root, userID string) bool {
+	owner := crewOwners.owner(ctx, strings.Trim(filepath.ToSlash(root), "/"))
+	return owner != "" && owner == sanitizeUserIDForPath(userID)
 }
 
 // crewPathAliases maps a migrated legacy crew root to its Crew/<id> root. The
@@ -282,6 +401,14 @@ type crewCatalogEntry struct {
 func listCrewCatalog(ctx context.Context, store productProjectStore) ([]crewCatalogEntry, error) {
 	var entries []crewCatalogEntry
 	seen := map[string]bool{}
+	disabled := map[string]bool{}
+	if dir, err := loadUserDirectory(); err == nil && dir != nil {
+		for _, rec := range dir.Users {
+			if rec.Disabled {
+				disabled[sanitizeUserIDForPath(strings.TrimSpace(rec.ID))] = true
+			}
+		}
+	}
 	scan := func(root, pathOwner string) error {
 		paths, exists, err := store.listPaths(ctx, root)
 		if err != nil || !exists {
@@ -310,10 +437,12 @@ func listCrewCatalog(ctx context.Context, store productProjectStore) ([]crewCata
 			}
 			owner := pathOwner
 			if owner == "" {
-				if strings.TrimSpace(manifest.OwnerID) == "" {
+				if owner = crewOwners.owner(ctx, filepath.ToSlash(filepath.Dir(candidate))); owner == "" {
 					continue
 				}
-				owner = sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID))
+			}
+			if disabled[owner] {
+				continue // a disabled account's crews are not listed
 			}
 			entries = append(entries, crewCatalogEntry{Root: filepath.ToSlash(filepath.Dir(candidate)), OwnerID: owner, ManifestPath: candidate, Manifest: manifest})
 		}

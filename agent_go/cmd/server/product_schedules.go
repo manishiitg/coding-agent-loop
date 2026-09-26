@@ -376,7 +376,7 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 		}
 		// The shared crew root holds every owner's crews; a schedule runs as
 		// its crew's owner, so each user's scan keeps only their own.
-		if runtimeRoot == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
+		if runtimeRoot == crewSharedRootName && !crewRootOwnedBy(ctx, filepath.Dir(candidate), userID) {
 			continue
 		}
 		manifestActivatedAt := parseRFC3339OrZero(manifest.UpdatedAt)

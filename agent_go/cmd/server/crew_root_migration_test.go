@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
 func writeMigrationFixture(t *testing.T, root, rel, content string) {
@@ -69,6 +72,23 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 	}
 	db.Close()
 
+	// Crew secrets: shared (sealed with the crew path) and a legacy per-user
+	// copy (sealed with the user id), both keyed by the old path.
+	t.Setenv("AUTH_SECRET", "crew-root-migration-test-secret-0123456789")
+	store, err := chathistory.NewFilesystemStore(docs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAAD, _ := sharedWorkflowSecretAAD(oldRoot)
+	sealed, _ := encryptSecretValueWithAAD("sk-live-crew-value", oldAAD)
+	if err := store.UpsertWorkflowSecret(context.Background(), chathistory.SharedWorkflowSecretsUserID, oldRoot, "API_KEY", sealed); err != nil {
+		t.Fatal(err)
+	}
+	userSealed, _ := encryptSecretValueWithAAD("legacy-user-value", []byte("alice"))
+	if err := store.UpsertWorkflowSecret(context.Background(), "alice", oldRoot, "OLD_KEY", userSealed); err != nil {
+		t.Fatal(err)
+	}
+
 	// Coding-CLI stores keyed by the old working directory.
 	writeMigrationFixture(t, home, ".claude/projects/"+claudeProjectDirName(oldAbs)+"/sid-1.jsonl", `{"cwd":"`+oldAbs+`","type":"user"}`+"\n")
 	writeMigrationFixture(t, home, ".cursor/chats/"+cursorChatsDirName(oldAbs)+"/agent-1/store.db", "binary-store")
@@ -83,11 +103,13 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 		t.Fatal("dry run moved a crew")
 	}
 
+	// Bob's same-named crew is a conflict: everything else completes, but the
+	// pass is not marked done until the conflict is resolved.
 	report, err := migrateCrewRoot(crewRootMigrationOptions{DocsRoot: docs, StateRoot: state, Apply: true, CLIHomes: []string{home}})
-	if err != nil {
-		t.Fatalf("migrate: %v (%+v)", err, report)
+	if err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("a conflict must leave the migration unmarked: %v (%+v)", err, report)
 	}
-	if len(report.Moves) != 2 || len(report.Conflicts) != 1 || !strings.Contains(report.Conflicts[0], "_users/bob/") {
+	if len(report.Conflicts) != 1 || !strings.Contains(report.Conflicts[0], "_users/bob/") {
 		t.Fatalf("report: %+v", report)
 	}
 	if _, err := os.Stat(oldAbs); !os.IsNotExist(err) {
@@ -99,6 +121,9 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(docs, "_users/bob/Chats/Work/projects/sde-1a2b3c4d/product.json")); err != nil {
 		t.Fatal("conflicting crew was moved")
+	}
+	if len(report.Moves) != 2 {
+		t.Fatalf("moves: %+v", report.Moves)
 	}
 
 	transcript := readMigrationFixture(t, docs, "Crew/sde-1a2b3c4d/builder/conversation/2026-09-26/session-x-conversation.json")
@@ -134,6 +159,10 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 		t.Fatalf("cost ledger: %v", ids)
 	}
 
+	owners := readMigrationFixture(t, docs, crewOwnerRegistryFile)
+	if !strings.Contains(owners, `"Crew/sde-1a2b3c4d": "alice"`) {
+		t.Fatalf("owner not pinned in the server registry: %s", owners)
+	}
 	aliases := readMigrationFixture(t, docs, crewPathAliasFile)
 	if !strings.Contains(aliases, `"`+oldRoot+`": "Crew/sde-1a2b3c4d"`) {
 		t.Fatalf("aliases: %s", aliases)
@@ -152,9 +181,38 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 		t.Fatalf("cursor project transcripts not carried over: %q", got)
 	}
 
+	// Secrets decrypt under the new path; the old documents are kept aside.
+	shared, err := store.ListWorkflowSecrets(context.Background(), chathistory.SharedWorkflowSecretsUserID, "Crew/sde-1a2b3c4d")
+	if err != nil || len(shared) != 1 {
+		t.Fatalf("shared secrets under the new path: %v %v", shared, err)
+	}
+	if plaintext, err := decryptSharedWorkflowSecret("Crew/sde-1a2b3c4d", shared[0]); err != nil || plaintext != "sk-live-crew-value" {
+		t.Fatalf("shared secret not re-sealed: %q %v", plaintext, err)
+	}
+	if old, _ := store.ListWorkflowSecrets(context.Background(), chathistory.SharedWorkflowSecretsUserID, oldRoot); len(old) != 0 {
+		t.Fatalf("secrets still under the old path: %v", old)
+	}
+	userSecrets, _ := store.ListWorkflowSecrets(context.Background(), "alice", "Crew/sde-1a2b3c4d")
+	if len(userSecrets) != 1 {
+		t.Fatalf("legacy per-user secret not moved: %v", userSecrets)
+	}
+	if plaintext, err := decryptSecretValue(userSecrets[0].EncryptedValue, "alice"); err != nil || plaintext != "legacy-user-value" {
+		t.Fatalf("legacy per-user secret: %q %v", plaintext, err)
+	}
+	if report.SecretDocs != 2 {
+		t.Fatalf("secret documents moved: %d", report.SecretDocs)
+	}
+
+	// Resolving the conflict lets the next pass finish and mark itself done.
+	if err := os.RemoveAll(filepath.Join(docs, "_users/bob")); err != nil {
+		t.Fatal(err)
+	}
+	if final, err := migrateCrewRoot(crewRootMigrationOptions{DocsRoot: docs, StateRoot: state, Apply: true, CLIHomes: []string{home}}); err != nil || final.AlreadyDone {
+		t.Fatalf("pass after resolving the conflict: %+v %v", final, err)
+	}
 	again, err := migrateCrewRoot(crewRootMigrationOptions{DocsRoot: docs, StateRoot: state, Apply: true, CLIHomes: []string{home}})
 	if err != nil || !again.AlreadyDone {
-		t.Fatalf("second run not a no-op: %+v %v", again, err)
+		t.Fatalf("run after completion not a no-op: %+v %v", again, err)
 	}
 }
 

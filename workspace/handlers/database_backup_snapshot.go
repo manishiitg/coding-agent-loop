@@ -44,7 +44,7 @@ func CreateWorkflowDatabaseBackupSnapshot(c *gin.Context) {
 		return
 	}
 	cleanRequest = strings.TrimSpace(filepath.ToSlash(filepath.Clean(filepath.FromSlash(cleanRequest))))
-	isManagedRoot := strings.HasPrefix(cleanRequest, "Workflow/") || strings.HasPrefix(cleanRequest, "Chats/Work/projects/")
+	isManagedRoot := strings.HasPrefix(cleanRequest, "Workflow/") || strings.HasPrefix(cleanRequest, "Crew/") || strings.HasPrefix(cleanRequest, "Chats/Work/projects/")
 	if filepath.IsAbs(filepath.FromSlash(cleanRequest)) || !isManagedRoot || !strings.HasSuffix(cleanRequest, "/db/db.sqlite") || strings.HasPrefix(cleanRequest, "../") {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid db_path", Error: "managed databases must use <workspace>/db/db.sqlite"})
 		return

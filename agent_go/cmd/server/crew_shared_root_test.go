@@ -35,6 +35,12 @@ func sharedCrewStore() productProjectStore {
 	}
 }
 
+// sharedCrewOwners is the server owner registry for sharedCrewStore: the
+// orphan has no entry (and an unrecorded owner is nobody's).
+func sharedCrewOwners() map[string]string {
+	return map[string]string{"Crew/sde-aaaa1111": "alice", "Crew/ops-bbbb2222": "bob"}
+}
+
 func sharedCrewProfile() agentprofiles.Profile {
 	profile := routeTestProfile("work", true, "")
 	profile.Runtime.Workspace = agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: crewSharedRootName}
@@ -44,6 +50,7 @@ func sharedCrewProfile() agentprofiles.Profile {
 
 // At the shared root a binding is the resolving user's: their own crews only.
 func TestSharedRootBindingFiltersByManifestOwner(t *testing.T) {
+	stubCrewLookups(t, sharedCrewOwners(), nil)
 	store, profile := sharedCrewStore(), sharedCrewProfile()
 	binding, err := resolveProductProjectBindingWithStore(context.Background(), "alice", profile, "crew-a", store)
 	if err != nil || binding.WorkspacePath != "Crew/sde-aaaa1111" {
@@ -65,6 +72,7 @@ func TestSharedRootBindingFiltersByManifestOwner(t *testing.T) {
 // a crew without an owner is nobody's and is not listed.
 func TestCrewCatalogListsSharedAndLegacyCrews(t *testing.T) {
 	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice"},{"id":"bob","username":"bob"},{"id":"carol","username":"carol"}]}`)
+	stubCrewLookups(t, sharedCrewOwners(), nil)
 	catalog, err := listCrewCatalog(context.Background(), sharedCrewStore())
 	if err != nil {
 		t.Fatal(err)

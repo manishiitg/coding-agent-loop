@@ -508,6 +508,11 @@ func ListDocuments(c *gin.Context) {
 			if doc.FilePath == utils.UsersDirectory || strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") {
 				continue
 			}
+			// Crews (every owner's; listed per owner by the agent server),
+			// server state and operator config are not part of anyone's tree.
+			if hiddenFromRootListing(doc.FilePath) {
+				continue
+			}
 			// Skip root-level per-user folders (they'll be replaced with user-scoped ones)
 			if utils.IsPerUserPath(doc.FilePath) {
 				continue
@@ -2655,4 +2660,13 @@ func isTextDocumentContent(filename, contentType string, content []byte) bool {
 		return isLikelyTextContent(content)
 	}
 	return isLikelyTextContent(content)
+}
+
+func hiddenFromRootListing(path string) bool {
+	for _, root := range []string{"Crew", "_system", "config"} {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
 }

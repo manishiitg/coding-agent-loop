@@ -461,6 +461,12 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 	if err := createWorkspaceFolder(ctx, filepath.ToSlash(filepath.Join(workspacePath, "code"))); err != nil {
 		return CreatedCrew{}, fmt.Errorf("initialize crew code folder: %w", err)
 	}
+	// A shared-root crew's owner is pinned in the server registry at birth.
+	if ref, ok := parseCrewPath("", workspacePath); ok && ref.Shared {
+		if crewOwnerRegistry.claim(ctx, ref.Root, userID) != sanitizeUserIDForPath(userID) {
+			return CreatedCrew{}, fmt.Errorf("could not record the owner of crew %s", ref.Root)
+		}
+	}
 	return CreatedCrew{CrewID: crewID, Title: title, WorkspacePath: workspacePath, ManifestPath: manifestPath, SessionID: sessionID}, nil
 }
 

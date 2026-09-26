@@ -5793,6 +5793,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// A Crew writes only its own database; other Crews' db/
 						// stays readable but never writable.
 						guardBlocked = append(guardBlocked, foreignCrewDBWriteBlockedPaths(profileRoot, workflowReadOnlyFolders)...)
+						guardBlocked = append(guardBlocked, foreignCrewManifestWriteBlockedPaths(profileRoot, workflowReadOnlyFolders)...)
 					}
 					if len(guardBlocked) > 0 {
 						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, guardBlocked)

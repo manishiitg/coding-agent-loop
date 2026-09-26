@@ -84,7 +84,12 @@ func resolveProductResumeTarget(userID string, conversation ProductConversationR
 	// variants; the history reader can still fall back to legacy global chats.
 	lookupWorkspacePath := workspacePath
 	if workspacePath != "" {
-		lookupWorkspacePath = filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(userID), filepath.FromSlash(workspacePath)))
+		// A crew at (or migrated to) the shared root has one physical path;
+		// any other product project lives below the user's own tree.
+		lookupWorkspacePath = productConversationRuntimeWorkspace(userID, conversation.WorkspacePath)
+		if lookupWorkspacePath == "" {
+			lookupWorkspacePath = filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(userID), filepath.FromSlash(workspacePath)))
+		}
 	}
 	target, ok, err := readRestoredChatHistoryPersistTargetForSession(userID, conversation.SessionID, lookupWorkspacePath)
 	if err != nil || !ok || target == nil {

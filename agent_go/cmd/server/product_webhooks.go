@@ -508,7 +508,7 @@ func (s *ProductScheduleService) findProductWebhook(ctx context.Context, id stri
 					continue
 				}
 				// Shared crew root: a webhook runs as its crew's owner.
-				if root == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
+				if root == crewSharedRootName && !crewRootOwnedBy(ctx, filepath.Dir(candidate), userID) {
 					continue
 				}
 				runtimePath := candidate

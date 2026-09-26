@@ -2369,6 +2369,14 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		// happened to list the shared folder first.
 		if strings.HasPrefix(strings.Trim(workspaceRoot, "/"), "_users/") {
 			ownerID = userID
+		} else if ref, ok := parseCrewPath("", workspaceRoot); ok && ref.Shared {
+			// A crew's own transcripts (moved from the owner's tree) belong to
+			// its owner.
+			if owner := crewOwners.owner(context.Background(), ref.Root); owner != "" {
+				ownerID = owner
+			} else {
+				ownerID = "default"
+			}
 		} else {
 			ownerID = "default"
 		}

@@ -341,13 +341,17 @@ fi
 # retries until it completes; old crew paths keep resolving through the alias
 # file meanwhile.
 echo "==> [$RELEASE_ID] Moving crews to the shared Crew/ root"
+# The migration moves folders and rewrites stores directly: nothing else may
+# write the documents root meanwhile (the agent is already stopped).
+systemctl --user stop "$PRODUCT-workspace"
 # shellcheck disable=SC1091
 if ! ( set -a; . "$REMOTE_APP/.env"; set +a; exec "$BUILD_DIR/bin/$PRODUCT-agent" server migrate-crew-root \
   --docs-root "$REMOTE_APP/data/docs" \
   --state-root "$REMOTE_APP/state" \
   --apply ); then
-  echo "WARNING: [$RELEASE_ID] crew root migration failed; the agent retries it at startup" >&2
+  echo "WARNING: [$RELEASE_ID] crew root migration incomplete; the agent retries it at startup" >&2
 fi
+systemctl --user start "$PRODUCT-workspace"
 
 # Build the canonical chat log last, so it reads the layout the migrations
 # above produced. Marker-backed; a no-op on later deployments. A failure is not

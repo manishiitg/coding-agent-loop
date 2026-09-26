@@ -797,6 +797,26 @@ func resolveProductProjectBindingWithStore(
 		return productConversationBinding{}, fmt.Errorf("invalid product projects root: %w", err)
 	}
 	runtimeRoot := agentProfileRuntimeWorkspace(userID, projectsRoot)
+	binding, err := resolveProductProjectBindingInRoot(ctx, userID, profile, conversationKey, resourceProjectID, store, runtimeRoot)
+	// A crew the shared-root migration could not move (a name conflict)
+	// stays in its owner's tree; it must still open.
+	if err != nil && runtimeRoot == crewSharedRootName {
+		if legacy, legacyErr := resolveProductProjectBindingInRoot(ctx, userID, profile, conversationKey, resourceProjectID, store, legacyCrewProjectsRoot(userID)); legacyErr == nil {
+			return legacy, nil
+		}
+	}
+	return binding, err
+}
+
+func resolveProductProjectBindingInRoot(
+	ctx context.Context,
+	userID string,
+	profile agentprofiles.Profile,
+	conversationKey string,
+	resourceProjectID string,
+	store productProjectStore,
+	runtimeRoot string,
+) (productConversationBinding, error) {
 	paths, exists, err := store.listPaths(ctx, runtimeRoot)
 	if err != nil {
 		return productConversationBinding{}, fmt.Errorf("list product projects: %w", err)
@@ -838,7 +858,7 @@ func resolveProductProjectBindingWithStore(
 		// A shared root holds every owner's crews: this binding is the
 		// resolving user's, so only their own manifests match. Readers bind
 		// through resolveCrewProjectBinding with the owner's ID.
-		if runtimeRoot == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
+		if runtimeRoot == crewSharedRootName && !crewRootOwnedBy(ctx, filepath.Dir(candidate), userID) {
 			continue
 		}
 		if strings.TrimSpace(manifest.Title) == "" || strings.TrimSpace(manifest.SessionID) == "" {

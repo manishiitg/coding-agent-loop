@@ -15,6 +15,21 @@ What changed from the design below:
   (transcripts, tool output), which is copied along with `chats/<md5>`.
 - The Crew UI lists and creates crews through `GET/POST
   /api/agent-profiles/work/my-projects`; the raw proxy never lists `Crew/`.
+- After an independent review (2026-09-26):
+  - Ownership lives in the server-only registry `_system/crew-owners.json`.
+    `product.json` `owner_id` is trusted once, at creation or migration, and
+    later edits to it change nothing.
+  - The file proxy never serves `_system/` or `config/`.
+  - Other owners' attached crews have `product.json` and `workflow.json`
+    write-blocked.
+  - The migration re-encrypts each crew's shared secrets under the new path
+    and moves per-user secret and credential documents. It pins owners and
+    writes the done-marker only when every step succeeded; a conflict or
+    failure leaves it to rerun.
+  - The SQLite rewrite is limited to an allowlist of platform stores, one
+    transaction per database, with exact matching.
+  - Deploys stop the workspace service while the migration runs.
+
 
 ## Problem
 

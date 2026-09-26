@@ -149,6 +149,19 @@ func foreignCrewDBWriteBlockedPaths(ownRoot string, folders []string) []string {
 	return blocked
 }
 
+// foreignCrewManifestWriteBlockedPaths keeps every other Crew's manifests
+// read-only: its product.json (identity) and workflow.json (schedules,
+// triggers, selections) -- automation there runs as that Crew's owner, so a
+// Crew with write access to another must not be able to plant it.
+func foreignCrewManifestWriteBlockedPaths(ownRoot string, folders []string) []string {
+	var blocked []string
+	for _, builder := range foreignCrewChatBlockedPaths(ownRoot, folders) {
+		root := strings.TrimSuffix(builder, "builder/")
+		blocked = append(blocked, root+"product.json", root+"workflow.json")
+	}
+	return blocked
+}
+
 // foreignCrewChatBlockedPaths returns, for every Crew root in folders other
 // than ownRoot, the part of that Crew holding its chats (builder/: the
 // conversation transcripts, other users' mirrored chats with it, and the
@@ -165,6 +178,12 @@ func foreignCrewChatBlockedPaths(ownRoot string, folders []string) []string {
 		}
 		if own != "" && strings.Trim(normalizeConversationWorkspace(folder), "/") == own && crewPathOwnerMatches(ownRoot, folder) {
 			continue
+		}
+		// The same crew under another spelling (old path vs Crew/<id>).
+		if ownRef, ok := resolveCrewPath(context.Background(), "", ownRoot); ok {
+			if ref, ok := resolveCrewPath(context.Background(), "", folder); ok && ref.Root == ownRef.Root {
+				continue
+			}
 		}
 		blocked = append(blocked, strings.TrimSuffix(folder, "/")+"/builder/")
 	}

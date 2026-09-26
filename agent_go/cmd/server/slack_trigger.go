@@ -123,12 +123,13 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 	sessionID := deliveryID
 	if route.ProfileID != "" {
 		inputPath := strings.Join([]string{route.WorkspacePath, "slack-inputs", deliveryID + ".json"}, "/")
-		if err := writeFileToWorkspace(ctx, filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(route.WorkspaceUserID), normalizeConversationWorkspace(inputPath))), string(payload)); err != nil {
+		physical := func(p string) string { return slackTriggerFilePath(route.WorkspaceUserID, p) }
+		if err := writeFileToWorkspace(ctx, physical(inputPath), string(payload)); err != nil {
 			return err
 		}
 		if history != nil {
 			contextPath := strings.TrimSuffix(inputPath, ".json") + "-context.json"
-			if err := writeFileToWorkspace(ctx, filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(route.WorkspaceUserID), normalizeConversationWorkspace(contextPath))), string(history)); err != nil {
+			if err := writeFileToWorkspace(ctx, physical(contextPath), string(history)); err != nil {
 				return err
 			}
 		}
@@ -277,4 +278,14 @@ func captureSlackTriggerContext(ctx context.Context, reader services.ChannelHist
 	}
 	raw, err := json.Marshal(history)
 	return raw, err
+}
+
+// slackTriggerFilePath is where a Slack trigger's input lands so the agent
+// finds it at the path it is told: a shared crew's own root, or the route
+// owner's private tree for a per-user product folder.
+func slackTriggerFilePath(ownerID, workspacePath string) string {
+	if resolved := productConversationRuntimeWorkspace(ownerID, workspacePath); resolved != "" && !strings.HasPrefix(resolved, "Chats/") {
+		return resolved
+	}
+	return filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(ownerID), normalizeConversationWorkspace(workspacePath)))
 }

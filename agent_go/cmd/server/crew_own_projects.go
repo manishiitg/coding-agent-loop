@@ -154,6 +154,9 @@ func createOwnCrewProject(ctx context.Context, userID string, profile agentprofi
 			return nil, fmt.Errorf("create crew %s: %w", file.name, err)
 		}
 	}
+	if crewOwnerRegistry.claim(ctx, workspacePath, userID) != sanitizeUserIDForPath(userID) {
+		return nil, fmt.Errorf("could not record the new crew's owner")
+	}
 	crewOwners.mu.Lock()
 	delete(crewOwners.entries, workspacePath)
 	crewOwners.mu.Unlock()

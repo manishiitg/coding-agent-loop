@@ -22,6 +22,7 @@ func (api *StreamingAPI) wireBotManager(m *services.BotConversationManager) {
 	// routes need the handler even when WhatsApp is disabled.
 	m.SetProfileTurnFunc(api.botProfileTurn)
 	m.SetWorkflowTurnFunc(api.botWorkflowTurn)
+	m.SetUserWorkflowChatFunc(api.userWorkflowChat)
 	// Progressive text: while a bot turn runs, forward each completed
 	// assistant reply as its own message rather than waiting for the whole
 	// turn to finish — reads the same durable conversation_history the UI's

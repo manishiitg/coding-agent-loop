@@ -21,6 +21,15 @@ func withBotSender(msg *BotIncomingMessage) {
 	}
 }
 
+// botDMUserID is the account a 1:1 Slack DM runs as, or "" for any other
+// message (channels run as their route).
+func botDMUserID(msg BotIncomingMessage, workspaceUserID string) string {
+	if msg.Platform != "slack" || !msg.DirectMessage {
+		return ""
+	}
+	return strings.TrimSpace(workspaceUserID)
+}
+
 func botSenderLine(msg BotIncomingMessage) string {
 	name := strings.TrimSpace(msg.UserName)
 	if name == strings.TrimSpace(msg.UserID) {

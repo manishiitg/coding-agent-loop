@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
@@ -323,8 +324,31 @@ func TestBotDryRunWorkflowDMRunsAsTheSender(t *testing.T) {
 	app := w.createApp(t, "Shared-WF", "Workflow/shared", "")
 	w.dmSenders(t, app, map[string]services.SlackDMSender{"U0OWNER": dmSender(dryRunOwnerEmail), "U0READER": dmSender("reader@example.com"), "U0STRANGER": dmSender("stranger@example.com")})
 
-	requireMode(t, w.dm(t, app.ID, "U0OWNER"), "owner", "full")
-	requireMode(t, w.dm(t, app.ID, "U0READER"), "reader", "run")
+	// One user, one chat: the owner's DM continues the Builder chat their web
+	// UI has open; the reader's continues their latest saved Builder chat.
+	w.api.activeSessionsMux.Lock()
+	if w.api.activeSessions == nil {
+		w.api.activeSessions = map[string]*ActiveSessionInfo{}
+	}
+	w.api.activeSessions["owner-web-builder"] = &ActiveSessionInfo{SessionID: "owner-web-builder", AgentMode: "workflow_phase", UserID: "owner", WorkspacePath: "Workflow/shared", LastActivity: time.Now()}
+	w.api.activeSessionsMux.Unlock()
+	w.mock.mu.Lock()
+	w.mock.files["Workflow/shared/builder/conversation/users/reader/2026-09-26/session-reader-builder-conversation.json"] = `{"session_id":"reader-builder","user_id":"reader","phase_id":"workflow-builder","updated_at":"2026-09-26T08:00:00Z","conversation_history":[{"Role":"user","Parts":[{"Text":"earlier question"}]}]}`
+	w.mock.mu.Unlock()
+
+	owner := w.dm(t, app.ID, "U0OWNER")
+	requireMode(t, owner, "owner", "full")
+	if owner.SessionID != "owner-web-builder" {
+		t.Fatalf("owner's DM ran in %q, want their open web Builder chat", owner.SessionID)
+	}
+	if again := w.dm(t, app.ID, "U0OWNER"); again.SessionID != owner.SessionID {
+		t.Fatalf("a second DM thread opened another chat: %q", again.SessionID)
+	}
+	reader := w.dm(t, app.ID, "U0READER")
+	requireMode(t, reader, "reader", "run")
+	if reader.SessionID != "reader-builder" {
+		t.Fatalf("reader's DM ran in %q, want their own saved Builder chat", reader.SessionID)
+	}
 	if outcome := w.dm(t, app.ID, "U0STRANGER"); outcome.Admitted {
 		t.Fatalf("a user without workflow access got a turn: %+v", outcome)
 	}

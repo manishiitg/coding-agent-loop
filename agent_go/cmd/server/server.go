@@ -3605,6 +3605,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
+	api.clearBotOriginForOwnerTurn(r.Header.Get("X-Session-ID"), GetUserFromContext(r.Context()), req)
 	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
 		req.resolvedResumeTarget = target
 	}

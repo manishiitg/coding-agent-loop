@@ -103,9 +103,18 @@ thread continues that one chat; an owner's is the crew's own chat, a reader's
 is their reader chat. Slack channel threads are different: each is its own
 chat of the crew (a group conversation, run as the route).
 
-Workflows: a DM runs as a Builder or Run chat of that user for the workflow
-(one bot conversation per DM thread); workflows have no single per-user web
-chat to continue yet.
+Workflows the same way: a DM continues the sender's own chat of the workflow,
+the session their web Builder restores (`handleGetWorkflowBuilderSession`:
+their live Builder session, else their latest saved Builder conversation,
+which is private to them). With none yet, the DM starts one, and it becomes
+the chat the web restores. The turn is built as the sender (their LLM
+settings and secrets), not the route's bot principal.
+
+Switching surfaces inside one chat: a bot turn marks the live session as a
+bot session (platform, `bot:` trigger, Slack binding). When the session's own
+owner then sends a plain web turn, `clearBotOriginForOwnerTurn` removes those
+marks, so the web turn runs as an interactive turn with working tools. Anyone
+else, and scheduled, child or bot turns, never clear them.
 
 Attachments are checked as the sender, as in their web chat: a crew with an
 owner-only attachment refuses a reader's DM until the attachment is removed.

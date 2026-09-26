@@ -476,7 +476,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 
 // botWorkflowTurn is the workflow adapter to the application-owned request
 // builder. Connector code supplies only normalized text, target and thread.
-func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, route services.ChannelRoute, thread services.ThreadID) (map[string]interface{}, error) {
+func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, route services.ChannelRoute, thread services.ThreadID, dmUserID string) (map[string]interface{}, error) {
 	manifest, found, err := ReadWorkflowManifest(ctx, route.WorkspacePath)
 	if err != nil {
 		return nil, err
@@ -487,7 +487,12 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	if api.scheduler == nil {
 		return nil, fmt.Errorf("shared conversation builder unavailable")
 	}
+	// A channel turn runs as the route's principal; a 1:1 DM as its sender,
+	// whose LLM settings and secrets the turn then uses.
 	principalID := services.BotPrincipalIDForRoute(thread.Platform, route)
+	if strings.TrimSpace(dmUserID) != "" {
+		principalID = strings.TrimSpace(dmUserID)
+	}
 	req := api.scheduler.buildWorkshopRequest(ctx, &ScheduleContext{WorkspacePath: route.WorkspacePath, WorkflowID: route.WorkflowID, WorkflowLabel: manifest.Label, OwnerUserID: principalID, Capabilities: manifest.Capabilities, Schedule: WorkflowSchedule{Name: manifest.Label}, TriggerSource: "bot:" + thread.Platform})
 	req["query"] = query
 	services.ApplyBotThreadFields(req, thread.Platform, thread)
@@ -497,4 +502,28 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	req["bot_send_full_details"] = route.SendFullDetails
 	delete(req, "disable_live_input_delivery")
 	return req, nil
+}
+
+// userWorkflowChat is the session a user's web Builder restores for the
+// workflow (handleGetWorkflowBuilderSession: their live Builder session,
+// else their latest saved Builder conversation), so a DM continues it.
+func (api *StreamingAPI) userWorkflowChat(ctx context.Context, userID string, route services.ChannelRoute) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ""
+	}
+	userCtx := internalBotRequestContext(ctx, userID)
+	workspacePath := strings.Trim(strings.TrimSpace(route.WorkspacePath), "/")
+	if live := api.findLiveWorkflowBuilderSession(userCtx, route.WorkflowID, workspacePath); live != nil {
+		return live.SessionID
+	}
+	restored, err := api.restoreLatestBuilderConversation(userCtx, route.WorkflowID, workspacePath)
+	if err != nil {
+		log.Printf("[BOT_ACCESS] user %s workflow chat lookup for %s: %v", userID, route.WorkflowID, err)
+		return ""
+	}
+	if restored == nil {
+		return ""
+	}
+	return restored.SessionID
 }

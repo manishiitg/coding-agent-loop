@@ -113,6 +113,7 @@ func (m *BotConversationManager) RunDryRun(ctx context.Context, msg BotIncomingM
 		chatStore:        m.chatStore,
 		profileTurn:      m.profileTurn,
 		workflowTurn:     m.workflowTurn,
+		userWorkflowChat: m.userWorkflowChat,
 		runningWorkflows: m.runningWorkflows,
 		workflowAccess:   m.workflowAccess,
 		resumeTarget:     m.resumeTarget,

@@ -560,10 +560,15 @@ type BotConversationManager struct {
 	eventSubscriber BotEventSubscriber
 
 	// Function references set by server layer (to avoid import cycles)
-	startSession     SessionStartFunc
-	followUpSession  SessionFollowUpFunc
-	profileTurn      ProfileTurnFunc
-	workflowTurn     func(context.Context, string, ChannelRoute, ThreadID) (map[string]interface{}, error)
+	startSession    SessionStartFunc
+	followUpSession SessionFollowUpFunc
+	profileTurn     ProfileTurnFunc
+	// workflowTurn builds a Slack workflow turn; dmUserID is the account a
+	// 1:1 DM runs as ("" for channels, which run as the route).
+	workflowTurn func(ctx context.Context, query string, route ChannelRoute, thread ThreadID, dmUserID string) (map[string]interface{}, error)
+	// userWorkflowChat names a user's own chat of a workflow — the one their
+	// web Builder restores — so a DM continues it ("" when they have none).
+	userWorkflowChat func(ctx context.Context, userID string, route ChannelRoute) string
 	chatHistory      ChatHistoryReaderFunc
 	runningWorkflows RunningWorkflowsFunc
 	workflowAccess   BotWorkflowAccessFunc
@@ -2407,7 +2412,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	if msg.PresetWorkflow == nil {
 		msg.PresetWorkflow = botRouteFromActive(active)
 	}
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, "", threadID)
 	applyBotQueryRequestMetadata(queryReq, botMeta)
 	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
@@ -2521,13 +2526,21 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		}
 		return
 	}
+	if queryReq == nil && msg.DirectMessage && msg.Platform == "slack" && msg.PresetWorkflow != nil && strings.TrimSpace(msg.PresetWorkflow.WorkflowID) != "" && m.userWorkflowChat != nil && (len(resumeSessionID) == 0 || resumeSessionID[0] == "") {
+		// One user, one chat: a DM continues the sender's own chat of the
+		// workflow, the one their web Builder restores.
+		if own := strings.TrimSpace(m.userWorkflowChat(context.Background(), workspaceUserID, *msg.PresetWorkflow)); own != "" {
+			sessionID = own
+			log.Printf("[BOT_MANAGER] DM thread %s continues user %s's workflow chat %s", threadID.Key(), workspaceUserID, sessionID)
+		}
+	}
 	if queryReq == nil {
 		// Load thread history for context continuity (e.g., user replies after hours)
 		queryWithHistory := msg.Text
 		if len(resumeSessionID) == 0 || resumeSessionID[0] == "" {
 			queryWithHistory = m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 		}
-		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
+		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, botDMUserID(msg, workspaceUserID), threadID)
 		addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	}
 	if existing, _ := queryReq["session_title"].(string); strings.TrimSpace(existing) == "" && sessionTitle != "" {
@@ -3251,7 +3264,7 @@ func (m *BotConversationManager) resolveRoute(platform, connectionID, channelID 
 // inject channel-specific formatting rules into the agent's system prompt.
 // Pass "" for non-bot callers. For follow-ups, keep passing the platform and
 // threadID so human tools can notify the same bot conversation.
-func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, threadIDs ...ThreadID) map[string]interface{} {
+func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, dmUserID string, threadIDs ...ThreadID) map[string]interface{} {
 	if platform == "slack" && m.workflowTurn != nil {
 		thread := ThreadID{Platform: platform, ChannelID: channelID}
 		if len(threadIDs) > 0 {
@@ -3262,7 +3275,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 			route = m.resolveRoute(platform, thread.ConnectionID, channelID)
 		}
 		if route != nil && route.WorkflowID != "" {
-			req, err := m.workflowTurn(context.Background(), query, *route, thread)
+			req, err := m.workflowTurn(context.Background(), query, *route, thread, dmUserID)
 			if err != nil {
 				return map[string]interface{}{"_bot_prepare_error": err.Error()}
 			}
@@ -3427,19 +3440,24 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	if platform == "slack" && m.workflowTurn != nil {
 		route := m.resolveRoute(platform, threadID.ConnectionID, threadID.ChannelID)
 		if route != nil && route.WorkflowID != "" {
-			req := m.buildQueryRequest(query, userID, threadID.ChannelID, route, platform, threadID)
+			var meta *chathistory.BotMetadata
 			if active != nil {
 				active.mu.Lock()
-				meta := active.Metadata
+				meta = active.Metadata
 				active.mu.Unlock()
-				applyBotQueryRequestMetadata(req, meta)
 			}
+			dmUserID := ""
+			if meta != nil && meta.DirectMessage {
+				dmUserID = userID
+			}
+			req := m.buildQueryRequest(query, userID, threadID.ChannelID, route, platform, dmUserID, threadID)
+			applyBotQueryRequestMetadata(req, meta)
 			return req
 		}
 		return map[string]interface{}{"_bot_prepare_error": "Slack route was removed or changed"}
 	}
 
-	req := m.buildQueryRequest(query, userID, "", nil, platform, threadID)
+	req := m.buildQueryRequest(query, userID, "", nil, platform, "", threadID)
 	if active == nil {
 		return req
 	}
@@ -3803,6 +3821,11 @@ func (m *BotConversationManager) getThreadOffset(_ ThreadID) int {
 	return 0
 }
 
-func (m *BotConversationManager) SetWorkflowTurnFunc(fn func(context.Context, string, ChannelRoute, ThreadID) (map[string]interface{}, error)) {
+func (m *BotConversationManager) SetWorkflowTurnFunc(fn func(ctx context.Context, query string, route ChannelRoute, thread ThreadID, dmUserID string) (map[string]interface{}, error)) {
 	m.workflowTurn = fn
+}
+
+// SetUserWorkflowChatFunc installs the lookup of a user's own workflow chat.
+func (m *BotConversationManager) SetUserWorkflowChatFunc(fn func(ctx context.Context, userID string, route ChannelRoute) string) {
+	m.userWorkflowChat = fn
 }

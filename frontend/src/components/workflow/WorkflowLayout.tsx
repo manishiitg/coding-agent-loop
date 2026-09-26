@@ -7,7 +7,8 @@ import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { normalizeEventViewMode, useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
-import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { hasSavedWorkflowWorkspaceView, useWorkflowStore } from '../../stores/useWorkflowStore'
+import { loadWorkspaceLandingView } from './workspaceLandingView'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { resolveWorkflowHistoryPath } from '../../utils/workflowHistoryPath'
@@ -855,6 +856,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
+
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow' || !activePresetId || !workspacePath || hasSavedWorkflowWorkspaceView(activePresetId)) return
+    let cancelled = false
+    const presetId = activePresetId
+    void loadWorkspaceLandingView(workspacePath).then(landing => {
+      if (cancelled || useGlobalPresetStore.getState().activePresetIds.workflow !== presetId || hasSavedWorkflowWorkspaceView(presetId)) return
+      const view = landing === 'dashboard' ? 'report' : landing === 'plan' ? 'flow' : 'identity'
+      useAppStore.getState().setWorkspaceMinimized(true)
+      useWorkflowStore.setState({
+        workflowWorkspaceView: view,
+        showWorkspacePane: true,
+        ...(view === 'report' || view === 'flow' ? { lastCanvasView: view } : {}),
+      })
+    })
+    return () => { cancelled = true }
+  }, [activePresetId, selectedModeCategory, workspacePath])
 
   const activeWorkflowChatTabId = useChatStore(state => {
     const tabId = activeWorkflowTabIdForPreset(state.activeTabId, activePresetId, state.chatTabs)

@@ -7,6 +7,7 @@ import {
   Fingerprint,
   LayoutDashboard,
   Monitor,
+  Route,
   Server,
   Zap,
   type LucideIcon,
@@ -33,6 +34,7 @@ import { WorkIdentityPanel } from './WorkIdentityPanel'
 import { WorkIntegrationsPanel } from './WorkIntegrationsPanel'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
 import { WorkMemoryPanel } from './WorkMemoryPanel'
+import { WorkPlanPanel } from './WorkPlanPanel'
 import { SharedCrewFilesPanel } from './SharedCrewFilesPanel'
 import { sharedCrewFileClient } from './sharedCrewFiles'
 
@@ -42,7 +44,7 @@ const ReportView = lazy(() => import('../../components/workflow/ReportViewer').t
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 const FileWorkspacePane = lazy(() => import('../../components/FileWorkspacePane').then(module => ({ default: module.FileWorkspacePane })))
 
-export type WorkWorkspaceView = 'dashboard' | 'memory' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'identity' | 'mcp'
+export type WorkWorkspaceView = 'dashboard' | 'plan' | 'memory' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'identity' | 'mcp'
 
 function sendWorkProjectPaneMessage(projectId: string, message: string) {
   return sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: projectId, message })
@@ -50,6 +52,7 @@ function sendWorkProjectPaneMessage(projectId: string, message: string) {
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'plan', label: 'Plan', icon: Route },
   { id: 'memory', label: 'Memory', icon: Brain },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'schedules', label: 'Automation', icon: Zap },
@@ -314,6 +317,7 @@ export const WorkWorkspacePane = memo(function WorkWorkspacePane({ workspacePath
           onUpdateIdentity={onUpdateIdentity}
           onDeleteRequest={onDeleteRequest}
         />}
+        {view === 'plan' && <WorkPlanPanel workspacePath={workspacePath} onAsk={message => sendWorkProjectPaneMessage(projectId, message)} />}
         {view === 'mcp' && <WorkIntegrationsPanel
           workspacePath={workspacePath}
           projectId={projectId}

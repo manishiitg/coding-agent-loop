@@ -400,3 +400,48 @@ func (w botDryRunWorld) webChatSession(t *testing.T, userID string) string {
 	}
 	return record.SessionID
 }
+
+// WhatsApp reaches other owners' crews read-only (crews are read-only for
+// everyone but their owner): they are listed, admitted, and a message runs
+// in the paired user's own reader chat — the one their web chat opens.
+func TestWhatsAppReachesOtherOwnersCrewsReadOnly(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	ctx := context.Background()
+
+	others := w.api.whatsappOtherCrews(ctx, "reader")
+	found := false
+	for _, crew := range others {
+		if crew.ID == "crew-bbb" {
+			t.Fatalf("the reader's own crew is listed as someone else's: %+v", others)
+		}
+		if crew.ID == "crew-aaa" && crew.WorkspacePath == crewRunModeOwnerRoot {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the owner's crew is not offered to the reader: %+v", others)
+	}
+
+	route := services.ChannelRoute{ProfileID: "work", ConversationKey: "crew-aaa", WorkspacePath: crewRunModeOwnerRoot, BotGrant: "run", WorkshopMode: "run"}
+	if allowed, err := w.api.checkWhatsAppWorkflowAccess(ctx, "reader", route); err != nil || !allowed {
+		t.Fatalf("the reader cannot reach the owner's crew on WhatsApp: allowed=%v err=%v", allowed, err)
+	}
+	moved := route
+	moved.WorkspacePath = "_users/reader/Chats/Work/projects/alpha"
+	if allowed, _ := w.api.checkWhatsAppWorkflowAccess(ctx, "reader", moved); allowed {
+		t.Fatal("a slug whose folder no longer holds the crew still authorizes messages")
+	}
+
+	msg := services.BotIncomingMessage{Platform: "whatsapp", UserID: "phone", WorkspaceUserID: "reader", ChannelID: "dm", Text: "status?", IsMention: true,
+		PresetProfile: &services.ProfileRoute{ProfileID: "work", ConversationKey: "crew-aaa", UploadFolder: crewRunModeOwnerRoot, WorkspaceUserID: "owner"}}
+	req, sessionID, handled, err := w.api.botProfileTurn(ctx, "reader", msg, services.ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"})
+	if err != nil || !handled {
+		t.Fatalf("crew turn failed: handled=%v err=%v", handled, err)
+	}
+	if web := w.webChatSession(t, "reader"); sessionID != web || sessionID == w.webChatSession(t, "owner") {
+		t.Fatalf("WhatsApp crew turn ran in %q, want the reader's own web chat %q", sessionID, web)
+	}
+	if key, _ := req["agent_profile_conversation_key"].(string); key != "crew-aaa" {
+		t.Fatalf("conversation key = %q, want the crew's", key)
+	}
+}

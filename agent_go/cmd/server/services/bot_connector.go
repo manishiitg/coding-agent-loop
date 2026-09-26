@@ -956,9 +956,10 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			return false
 		}
 		// The owner holds the crew's conversations. A channel turn also
-		// runs as the owner (in Run mode); a 1:1 DM runs as its sender,
-		// whom the Slack service already mapped into WorkspaceUserID.
-		if !msg.DirectMessage {
+		// runs as the owner (in Run mode). A 1:1 DM or WhatsApp message runs
+		// as its sender (mapped or paired into WorkspaceUserID) — never as
+		// the owner of someone else's crew.
+		if !msg.runsAsSender() {
 			msg.WorkspaceUserID = workspaceUserID
 		}
 		if msg.PresetWorkflow == nil {
@@ -997,7 +998,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 	}
 	botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
 	userEmail := ""
-	if strings.EqualFold(strings.TrimSpace(msg.Platform), "whatsapp") || msg.DirectMessage {
+	if msg.runsAsSender() {
 		// WhatsApp is paired to a workspace account, and a 1:1 Slack DM is
 		// mapped to its sender's account. The route identifies a
 		// destination, not an independent permission grant.
@@ -2526,12 +2527,15 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		}
 		return
 	}
-	if queryReq == nil && msg.DirectMessage && msg.Platform == "slack" && msg.PresetWorkflow != nil && strings.TrimSpace(msg.PresetWorkflow.WorkflowID) != "" && m.userWorkflowChat != nil && (len(resumeSessionID) == 0 || resumeSessionID[0] == "") {
-		// One user, one chat: a DM continues the sender's own chat of the
-		// workflow, the one their web Builder restores.
-		if own := strings.TrimSpace(m.userWorkflowChat(context.Background(), workspaceUserID, *msg.PresetWorkflow)); own != "" {
+	if queryReq == nil && msg.runsAsSender() && msg.PresetWorkflow != nil && strings.TrimSpace(msg.PresetWorkflow.WorkflowID) != "" && m.userWorkflowChat != nil {
+		// One user, one chat: a DM or WhatsApp message continues the
+		// sender's own chat of the workflow, the one their web Builder
+		// restores — even over a chat this thread used before, since the
+		// web's current chat is the one that counts.
+		if own := strings.TrimSpace(m.userWorkflowChat(context.Background(), workspaceUserID, *msg.PresetWorkflow)); own != "" && own != sessionID {
 			sessionID = own
-			log.Printf("[BOT_MANAGER] DM thread %s continues user %s's workflow chat %s", threadID.Key(), workspaceUserID, sessionID)
+			restoredConversationSessionID = ""
+			log.Printf("[BOT_MANAGER] %s thread %s continues user %s's workflow chat %s", msg.Platform, threadID.Key(), workspaceUserID, sessionID)
 		}
 	}
 	if queryReq == nil {

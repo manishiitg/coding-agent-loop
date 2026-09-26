@@ -21,6 +21,13 @@ func withBotSender(msg *BotIncomingMessage) {
 	}
 }
 
+// runsAsSender: the turn runs as the person who sent it — WhatsApp (the
+// paired user's own number) or a 1:1 Slack DM (the mapped account). Slack
+// channel turns run as their route instead.
+func (msg BotIncomingMessage) runsAsSender() bool {
+	return msg.Platform == "whatsapp" || (msg.Platform == "slack" && msg.DirectMessage)
+}
+
 // botDMUserID is the account a 1:1 Slack DM runs as, or "" for any other
 // message (channels run as their route).
 func botDMUserID(msg BotIncomingMessage, workspaceUserID string) string {

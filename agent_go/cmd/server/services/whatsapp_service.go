@@ -1252,6 +1252,43 @@ type whatsappDestinationCandidate struct {
 	ProfileID       string
 	ConversationKey string
 	ProfileLabel    string
+	// Others: another owner's crew. Crews are read-only for everyone but
+	// their owner, so these run in Run mode as the paired user; they are
+	// listed and reachable by @switch but never auto-routed.
+	Others bool
+	Owner  string
+}
+
+// WhatsAppOtherCrew is a crew owned by someone else, which the paired user
+// may chat with read-only.
+type WhatsAppOtherCrew struct {
+	ID            string
+	Title         string
+	OwnerName     string
+	WorkspacePath string // the owner's physical crew root
+}
+
+var (
+	whatsappOtherCrewsMu sync.RWMutex
+	whatsappOtherCrews   func(ctx context.Context, userID string) []WhatsAppOtherCrew
+)
+
+// SetWhatsAppOtherCrewsFunc installs the lookup of other owners' crews (the
+// server's crew directory, the same list the Crew UI shows).
+func SetWhatsAppOtherCrewsFunc(fn func(ctx context.Context, userID string) []WhatsAppOtherCrew) {
+	whatsappOtherCrewsMu.Lock()
+	defer whatsappOtherCrewsMu.Unlock()
+	whatsappOtherCrews = fn
+}
+
+func listWhatsAppOtherCrews(ctx context.Context, userID string) []WhatsAppOtherCrew {
+	whatsappOtherCrewsMu.RLock()
+	fn := whatsappOtherCrews
+	whatsappOtherCrewsMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx, userID)
 }
 
 type whatsappWorkflowManifest struct {
@@ -1652,6 +1689,33 @@ func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, own
 		}
 	}
 
+	ownCrews := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate.Kind == "crew" {
+			ownCrews[strings.ToLower(candidate.ID)] = true
+		}
+	}
+	for _, crew := range listWhatsAppOtherCrews(ctx, owner.UserID) {
+		id, title := strings.TrimSpace(crew.ID), strings.TrimSpace(crew.Title)
+		if id == "" || title == "" || ownCrews[strings.ToLower(id)] {
+			continue
+		}
+		ownCrews[strings.ToLower(id)] = true
+		candidates = append(candidates, whatsappDestinationCandidate{
+			Kind:            "crew",
+			ID:              id,
+			Label:           title,
+			WorkspacePath:   strings.TrimSpace(crew.WorkspacePath),
+			Slug:            slugifyWhatsAppWorkflow(title),
+			WorkshopMode:    "run",
+			ProfileID:       "work",
+			ConversationKey: id,
+			ProfileLabel:    title,
+			Others:          true,
+			Owner:           strings.TrimSpace(crew.OwnerName),
+		})
+	}
+
 	allowed := candidates[:0]
 	hidden := 0
 	for _, candidate := range candidates {
@@ -1666,7 +1730,11 @@ func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, own
 	}
 	candidates = allowed
 
+	// Your own workflows and crews first, then other owners' crews.
 	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Others != candidates[j].Others {
+			return !candidates[i].Others
+		}
 		left := strings.ToLower(candidates[i].Label + "\x00" + candidates[i].Kind)
 		right := strings.ToLower(candidates[j].Label + "\x00" + candidates[j].Kind)
 		return left < right
@@ -1684,16 +1752,25 @@ func formatWhatsAppDestinationList(candidates []whatsappDestinationCandidate) st
 	const maxList = 25
 	var sb strings.Builder
 	sb.WriteString("Workflows and Crews:\n")
+	othersHeader := false
 	for i, c := range candidates {
 		if i >= maxList {
 			sb.WriteString(fmt.Sprintf("\n...and %d more. Use @switch <name> for destinations not shown.", len(candidates)-maxList))
 			break
 		}
+		if c.Others && !othersHeader {
+			othersHeader = true
+			sb.WriteString("\nOther crews (read-only):\n")
+		}
 		kind := "Workflow"
 		if c.Kind == "crew" {
 			kind = "Crew"
 		}
-		sb.WriteString(fmt.Sprintf("%d. %s: %s\n", c.Number, kind, c.Label))
+		label := c.Label
+		if c.Others && c.Owner != "" {
+			label += " (" + c.Owner + ")"
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s: %s\n", c.Number, kind, label))
 	}
 	sb.WriteString("\n@switch 3 [run|workshop]\n@status | @full | @concise | @off")
 	return strings.TrimSpace(sb.String())
@@ -1908,7 +1985,9 @@ func (w *WhatsAppService) EnsureDefaultWhatsAppRoutes(ctx context.Context) {
 	changed := false
 	for _, candidate := range candidates {
 		key := candidate.autoRouteKey()
-		if key == "" || w.autoRoutedWorkflows[key] {
+		// Other owners' crews are reachable by @switch, never auto-routed:
+		// a busy server would give every paired number a slug per crew.
+		if key == "" || candidate.Others || w.autoRoutedWorkflows[key] {
 			continue
 		}
 		// A destination routed by hand counts as provisioned too, so removing

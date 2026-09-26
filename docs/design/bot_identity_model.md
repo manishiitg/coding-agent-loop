@@ -27,9 +27,17 @@ only their self-chat and chats they bound with a link code are accepted
 (`applyBotRouteClaims`), and `conversationTargetAccess` answers from that
 user's access, so a workflow reader gets Run and an owner gets full.
 
-- Gap: a crew someone shared with the user (reader) is not offered on WhatsApp.
-  `checkWhatsAppWorkflowAccess` resolves crews only under the paired user's
-  own tree. Under this rule it should run in Run mode.
+- Other owners' crews (fixed 2026-09-26): crews are read-only for everyone
+  but their owner, so WhatsApp's `@list` shows them in an "Other crews
+  (read-only)" section (from the crew directory, never auto-routed) and
+  `@switch` reaches them. A message runs as the paired user, in Run mode, in
+  their own reader chat of that crew. The bot manager keeps the paired user
+  as the session user for WhatsApp, like a DM: a crew route never swaps in
+  its owner (which would have run someone else's crew as its owner).
+- One user, one chat on WhatsApp too: a crew message continues the user's own
+  crew chat (resolved as the web does, `senderProfileTurn`), and a workflow
+  message continues the Builder chat the web restores for them, instead of
+  WhatsApp's separate per-chat conversation.
 - Extra phones (`phone-2`, …) run as the paired user. They are that user's
   devices by pairing, so this is correct.
 

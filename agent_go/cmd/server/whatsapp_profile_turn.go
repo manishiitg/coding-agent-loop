@@ -201,8 +201,10 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
-	if msg.Platform == "slack" && msg.DirectMessage {
-		return api.slackDMProfileTurn(ctx, userID, profile, conversationKey, msg, threadID)
+	// A crew reached by a 1:1 Slack DM or by WhatsApp runs in the sender's
+	// own chat of it (their reader chat when someone else owns it).
+	if msg.PresetProfile != nil && strings.EqualFold(profile.ID, "work") && ((msg.Platform == "slack" && msg.DirectMessage) || msg.Platform == "whatsapp") {
+		return api.senderProfileTurn(ctx, userID, profile, conversationKey, msg, threadID)
 	}
 	// In a multi-chat project (a crew) a Slack thread is its own chat (a
 	// separate native session and history), not the project's main
@@ -232,18 +234,19 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	return productBotTurnRequest(ctx, workspaceUserID, profile, conversation, msg, threadID)
 }
 
-// slackDMProfileTurn runs a 1:1 Slack DM in the sender's own chat of the
-// crew: the same conversation their web chat (and WhatsApp) continues, found
-// exactly as the web resolves it (resolveAgentProfileConversation). One user,
-// one chat: every DM thread continues it; an owner's is the crew's own chat,
-// a reader's is their reader chat in their own registry.
-func (api *StreamingAPI) slackDMProfileTurn(ctx context.Context, senderID string, profile agentprofiles.Profile, conversationKey string, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
+// senderProfileTurn runs a crew turn from a 1:1 Slack DM or WhatsApp in the
+// sender's own chat of the crew: the conversation their web chat continues,
+// found exactly as the web resolves it (resolveAgentProfileConversation).
+// One user, one chat: every DM thread or WhatsApp message continues it; an
+// owner's is the crew's own chat, a reader's is their reader chat in their
+// own registry.
+func (api *StreamingAPI) senderProfileTurn(ctx context.Context, senderID string, profile agentprofiles.Profile, conversationKey string, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
 	userID := strings.TrimSpace(senderID)
 	if !IsMultiUserMode() {
 		userID = GetDefaultUserID()
 	}
 	if userID == "" {
-		return nil, "", false, fmt.Errorf("the DM sender has no AgentWorks account")
+		return nil, "", false, fmt.Errorf("the sender has no AgentWorks account")
 	}
 	binding, owned, err := resolveConversationBindingForUser(ctx, userID, profile, conversationKey)
 	if err != nil {

@@ -32,6 +32,8 @@ func (api *StreamingAPI) wireBotManager(m *services.BotConversationManager) {
 	// A 1:1 Slack DM runs as the one enabled account its sender's email
 	// maps to (slack_dm.go).
 	services.SetSlackDMUserResolver(slackDMUserForEmail)
+	// WhatsApp lists other owners' crews (read-only) beside the user's own.
+	services.SetWhatsAppOtherCrewsFunc(api.whatsappOtherCrews)
 }
 
 // botRunningWorkflows lists a user's running workflows for bot status replies.

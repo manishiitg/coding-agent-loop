@@ -177,9 +177,8 @@ func botWorkflowAccessClaims(userID, userEmail string, route services.ChannelRou
 func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID string, route services.ChannelRoute) (bool, error) {
 	if strings.TrimSpace(route.ProfileID) != "" {
 		// Crew slugs are product-conversation routes, not workflow manifests.
-		// Resolve the project under the paired owner's workspace on every use
-		// so a deleted project or a slug pointing at another user's folder
-		// cannot continue to authorize WhatsApp messages.
+		// Resolve the project on every use so a deleted project, or a slug
+		// whose folder no longer holds that crew, stops authorizing messages.
 		if !strings.EqualFold(strings.TrimSpace(route.ProfileID), "work") ||
 			strings.TrimSpace(route.WorkflowID) != "" ||
 			strings.TrimSpace(route.ConversationKey) == "" ||
@@ -190,7 +189,12 @@ func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID
 		if err != nil {
 			return false, err
 		}
-		binding, err := resolveProductConversationBinding(ctx, strings.TrimSpace(userID), profile, route.ConversationKey)
+		if !userAllowedProduct(botWorkflowAccessClaims(strings.TrimSpace(userID), "", route), profile.Product) {
+			return false, nil
+		}
+		// Crews are read-only for everyone but their owner: resolve the
+		// project under whichever owner holds it, as the web chat does.
+		binding, _, err := resolveConversationBindingForUser(ctx, strings.TrimSpace(userID), profile, route.ConversationKey)
 		if err != nil {
 			return false, nil
 		}

@@ -261,6 +261,10 @@ not proof of end-to-end delivery.
 
 ## Who a Slack turn runs as
 
+- **WhatsApp** runs as the paired user, in their own mode, and continues
+  their own chat: their crew chat, or the Builder chat the web restores for a
+  workflow. `@list` also shows other owners' crews under "Other crews
+  (read-only)"; those run in Run mode in the user's own reader chat.
 - **Channels, private channels and group DMs** are groups: the turn runs as
   the route (the workflow or crew), always in Run mode. The sender is named in
   the prompt (`From: <name> <email> (Slack)`) and kept as the audit actor.

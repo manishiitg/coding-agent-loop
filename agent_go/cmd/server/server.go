@@ -7375,7 +7375,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						codingFallbackConversationPath,
 						codingFallbackWorkspace,
-						historyForAgent...,
 					)
 					historyToReplay = nil
 					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for conversation archive %s (in-memory history: %d messages)", codingFallbackConversationPath, len(historyForAgent))

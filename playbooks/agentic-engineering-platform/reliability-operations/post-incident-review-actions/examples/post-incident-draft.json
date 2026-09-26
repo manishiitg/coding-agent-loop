@@ -1,8 +1,8 @@
 {
   "artifact_type": "post-incident-review/v1",
-  "artifact_id": "pir-INC-1042-rev1",
+  "artifact_id": "pir-INC-1042-draft",
   "review_id": "PIR-1042",
-  "review_revision": "rev1",
+  "review_revision": "draft1",
   "incident_id": "INC-1042",
   "service_id": "checkout-api",
   "environment": "production",
@@ -10,7 +10,7 @@
   "timezone": "UTC",
   "incident_window_start": "2026-09-24T10:00:00Z",
   "incident_window_end": "2026-09-24T10:30:00Z",
-  "as_of": "2026-10-03T12:00:00Z",
+  "as_of": "2026-10-02T12:00:00Z",
   "source_refs": [
     {
       "id": "incident",
@@ -41,11 +41,6 @@
       "id": "recovery",
       "uri": "incident:REC-1042@rev1",
       "observed_at": "2026-09-24T10:30:00Z"
-    },
-    {
-      "id": "review-approval",
-      "uri": "approval:DEC-PIR-1042",
-      "observed_at": "2026-10-03T11:00:00Z"
     }
   ],
   "recovery": {
@@ -132,15 +127,10 @@
       "verification_criterion": "A new timeout drill retains a query/DB saturation trace linked to the service."
     }
   ],
-  "review_state": "approved",
-  "approval": {
-    "id": "DEC-PIR-1042",
-    "state": "approved",
-    "approved_at": "2026-10-03T11:00:00Z",
-    "source_ref": "review-approval"
-  },
+  "review_state": "pending_owner_review",
+  "approval": null,
   "publication_state": "not_published",
-  "next_check": "Review each proposed action separately and record accepted, deferred or rejected owner decisions before issue writes.",
+  "next_check": "Reliability owner reviews impact, factor labels, privacy and proposed actions.",
   "detection_delay_seconds": 240,
   "detection_alert_ref": "alert"
 }

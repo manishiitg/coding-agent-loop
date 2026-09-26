@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/engine
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { engineeringSpecialists } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 
-if (engineeringSpecialists.length !== 4) throw new Error(`Expected four Engineering Crew templates, found ${engineeringSpecialists.length}`)
+if (engineeringSpecialists.length !== 6) throw new Error(`Expected six Engineering Crew templates, found ${engineeringSpecialists.length}`)
 const ids = new Set()
 const catalog = engineeringSpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error(`Duplicate Engineering Crew template ${id}`)

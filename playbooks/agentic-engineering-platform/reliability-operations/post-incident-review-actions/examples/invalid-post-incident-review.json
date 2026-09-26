@@ -1,6 +1,6 @@
 {
   "artifact_type": "post-incident-review/v1",
-  "artifact_id": "pir-INC-1042-rev1",
+  "artifact_id": "pir-INC-1042-invalid",
   "review_id": "PIR-1042",
   "review_revision": "rev1",
   "incident_id": "INC-1042",
@@ -101,11 +101,10 @@
     },
     {
       "id": "factor-deploy",
-      "classification": "hypothesis",
-      "statement": "D-89 preceded error rise; its causal role is unproved.",
+      "classification": "confirmed",
+      "statement": "D-89 caused the outage.",
       "evidence_refs": [
-        "deploy",
-        "monitor"
+        "deploy"
       ],
       "limitation": "Database saturation and query-plan traces are unavailable."
     }

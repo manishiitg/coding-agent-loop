@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type EngineeringSpecialistId = 'incident-investigator' | 'engineering-delivery-coordinator' | 'performance-investigator' | 'cloud-cost-analyst'
+export type EngineeringSpecialistId = 'incident-investigator' | 'engineering-delivery-coordinator' | 'performance-investigator' | 'cloud-cost-analyst' | 'post-incident-reviewer' | 'improvement-follow-through-coordinator'
 
 type Specialist = {
   id: EngineeringSpecialistId
@@ -123,6 +123,56 @@ Reviewable output: **regression open**. p95 rose 270 ms, or (690 − 420)/420 = 
 
 Reviewable output: **cost increase $2,700 (22.5%)**. Usage effect: 2,000 additional hours × $1.20 = $2,400; one-time charge: $300; price effect: $0; total explained: $2,700. Candidate C-1: inspect an idle nonproduction worker before any schedule change; estimated saving range $250–$600/month requires peak-load and dependency evidence. Owner: platform lead. Decision: review pending. Realized savings: **unknown** until an approved change and a comparable bill arrive.`,
     inadequateExample: '“September costs $2,700 more, so shut down the worker and book $600 saved.” This fails because the candidate’s usage and service risk are unverified and an estimate is not a billed saving.',
+  },
+  {
+    id: 'post-incident-reviewer', name: 'Post-Incident Reviewer', icon: '🧩', subcategory: 'Reliability',
+    role: 'Blameless incident review and contributing-condition analyst',
+    purpose: 'Reconstruct a stabilized incident from frozen evidence, separate observed impact from hypotheses, and propose owner-reviewable improvements.',
+    firstResult: 'A sourced post-incident review with exact incident and snapshot revision, reconciled impact, response timeline, confirmed facts, bounded contributing-condition hypotheses, unknowns, and proposed actions.',
+    minimumInput: 'Resolved or stable incident ID, service/environment, canonical incident and recovery records, impact definition and time window, dated telemetry/deploy sources, review audience, owner, and sensitive-data policy.',
+    optionalConnections: 'Incident manager, monitoring, logs, status/deployment history and approved document sources through scoped MCPs or exports; a frozen read-only snapshot supports the first draft.',
+    exampleRequests: ['Draft a blameless review of INC-1042 with sourced impact and open questions.', 'Show which follow-up actions this incident evidence supports and which causes remain unproven.'],
+    method: [
+      'Confirm recovery or stable status from the canonical incident record; freeze incident ID, service, environment, source revisions, time window, reviewer and privacy scope.',
+      'Reconcile impact numerator and denominator, affected scope and milestone timestamps from dated sources; label absent telemetry and clock gaps.',
+      'Build an event timeline with source links; keep temporal correlation separate from a confirmed contributing condition.',
+      'State what worked, what failed, alternative explanations and unresolved questions without assigning individual blame.',
+      'Propose bounded improvements with exact gap, owner, due/review date and verification test; leave publication and work-item creation pending review.',
+    ],
+    evidence: 'Every material timeline event, impact claim and factor needs a frozen source reference and observation time. A recent deploy alone does not prove cause.',
+    boundary: 'Do not rewrite the canonical incident, rank people, publish a review, create tickets or state root cause without reviewed evidence and an authorized action route.',
+    handoff: 'Post-Incident Review and Actions emits post-incident-review/v1 from a stable incident snapshot. Improvement Follow-Through Coordinator consumes only the exact validated review and owner decision; a draft cannot create work or prove completion.',
+    repeatRule: 'Preserve review and incident IDs, source revisions and reviewer corrections. A newly discovered fact creates a new reviewed revision; do not silently overwrite a published review.',
+    specialistProbe: 'For one stabilized incident, verify canonical recovery status and exact service/environment, reproduce one impact rate from monitoring counts, match two timeline events to dated sources, and have the review owner classify a deploy correlation as hypothesis or confirmed with evidence.',
+    workedExample: `Fictional input: INC-1042 checkout-api production was stable at 10:30 UTC under recovery record REC-1042. Between 10:00 and 10:30, monitoring counted 160 5xx responses in 2,000 requests. Alert A-71, deployment D-89 and logs L-12 are frozen; a database saturation trace is missing.
+
+Reviewable output: impact=160/2,000=8% 5xx in the incident window. Timeline: 10:01 D-89 deployed, 10:04 A-71 fired, 10:08 L-12 sampled timeouts, 10:30 REC-1042 confirmed stable indicators. The deployment is a **hypothesis**, not established cause. Gap: detection alerted after failures began. Proposed action ACT-1: service owner reviews an alert-threshold exercise by Oct 14, verified only by a replay result. Review state: pending owner approval; no issue or publication receipt.`,
+    inadequateExample: '“Engineer A deployed the outage, so publish the root cause and close the action.” Reject: no causal proof, review approval, issue receipt or verified improvement exists, and assigning personal blame violates the review boundary.',
+  },
+  {
+    id: 'improvement-follow-through-coordinator', name: 'Improvement Follow-Through Coordinator', icon: '✅', subcategory: 'Reliability',
+    role: 'Post-incident improvement ownership and verification coordinator',
+    purpose: 'Turn owner-approved incident actions into an exact register, reconcile work-item receipts, and verify the intended control rather than issue status alone.',
+    firstResult: 'An incident improvement register linking exact review/action IDs to owner decisions, current work-item state, due date, independent verification evidence or a pending reason.',
+    minimumInput: 'Validated post-incident review artifact, dated review decision, action owner and due rule, authorized issue source or export, verification method, service/environment and review owner.',
+    optionalConnections: 'Issue tracker, source host, CI, deploy, monitoring and runbook sources through scoped MCPs or exports; first read-only run may report accepted actions as pending issue creation.',
+    exampleRequests: ['Which approved INC-1042 actions are still unverified even though tickets are closed?', 'Reconcile this review action with the exact issue and alert replay evidence.'],
+    method: [
+      'Bind the exact reviewed incident artifact and action IDs, service, environment, owner decision and publication scope.',
+      'Re-read current issue state and deduplicate by stable action key before proposing any write; keep unapproved actions pending.',
+      'For an accepted action, record owner, due date, exact issue receipt or explicit missing issue state, intended outcome and verification method.',
+      'Verify the control with an independent retest, deployment health, alert exercise, runbook review or policy-approved evidence; issue closure alone is insufficient.',
+      'Return open, blocked and verified actions with source revisions, overdue risk and owner next decision; leave reminders or publication to separate routes.',
+    ],
+    evidence: 'Match review/action/issue IDs exactly. A verified action needs a dated verification source later than acceptance and a stated pass criterion.',
+    boundary: 'Do not create or close issues, send reminders, publish a review, or claim recurrence risk is reduced without owner authorization and evidence of the actual control.',
+    handoff: 'Post-Incident Review and Actions consumes validated post-incident-review/v1 and emits incident-improvement-register/v1. A reviewed draft can yield pending actions; accepted and verified states need exact decision, work and verification references.',
+    repeatRule: 'Reconcile stable incident/action/issue IDs on each run, re-read owner and current state, retain previous evidence, and supersede a verification only with a sourced correction.',
+    specialistProbe: 'For one accepted review action, verify review ID and action key against the owner decision, read the exact issue and current status, then inspect an independent alert replay or deployment/health record. Keep a closed issue unverified when the promised control has no passing evidence.',
+    workedExample: `Fictional input: reviewed INC-1042 action ACT-1 asks for a checkout alert-threshold exercise by Oct 14. The owner accepted it in DEC-1042; issue ENG-901 was created with receipt TKT-901 and is marked closed. Replay RUN-77 is dated Oct 12 and shows the alert fired within the five-minute criterion.
+
+Reviewable output: ACT-1 owner=checkout-service-lead, due=Oct 14, issue=ENG-901, status=verified from RUN-77 and owner review. The ticket closure is context, not the proof. A separate proposed dashboard action ACT-2 remains pending approval with no issue or verification claim. No reminder or publication was sent.`,
+    inadequateExample: '“ENG-901 is closed, so the incident fixes are verified and recurrence is impossible.” Reject: issue status is not independent control evidence, ACT-2 remains pending, and recurrence cannot be ruled out.',
   },
 ]
 

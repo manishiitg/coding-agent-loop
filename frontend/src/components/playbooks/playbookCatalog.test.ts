@@ -212,6 +212,16 @@ describe('small-team catalog', () => {
     expect(experiment?.setupChecks).toHaveLength(10)
   })
 
+  it('exposes post-incident review and independent improvement verification', () => {
+    const incident = PLAYBOOK_CATALOG.find(item => item.id === 'post-incident-review-actions')
+    expect(incident?.version).toBe('0.5.0')
+    expect(incident?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'post-incident-reviewer', 'improvement-follow-through-coordinator',
+    ])
+    expect(incident?.handoffs?.[0].artifact_type).toBe('post-incident-review/v1')
+    expect(incident?.setupChecks).toHaveLength(10)
+  })
+
   it('exposes the Customer Support case route with optional escalation', () => {
     const support = PLAYBOOK_CATALOG.find(item => item.id === 'support-case-to-reviewed-resolution')
     expect(support?.category).toBe('Customer Support')

@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 67 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-one multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -366,7 +366,7 @@ The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineeri
 
 ## Engineering
 
-All four Engineering skill packs now include a fictional source-to-result example, a failed result to reject, and a role-specific source or calculation probe in the existing nine-check setup. These examples define expected output quality; a customer setup still needs one real authorized case and owner review.
+All six Engineering skill packs now include a fictional source-to-result example, a failed result to reject, and a role-specific source or calculation probe in the existing nine-check setup. These examples define expected output quality; a customer setup still needs one real authorized case and owner review.
 
 ### Incident Investigator (`incident-investigator`)
 
@@ -381,6 +381,20 @@ All four Engineering skill packs now include a fictional source-to-result exampl
 - **First result:** blocker ledger with exact issue and change IDs, commit SHA, CI and deployment states, environment, owner, due time, and the next evidence needed. Its worked example keeps a merged, CI-green PR blocked when production still runs a different SHA.
 - **Setup proof:** join one actual issue to a PR, build, and deployment record using stable identifiers; verify release policy, owner, and whether a green build reached the intended environment.
 - **Later run:** update the same blocker IDs, distinguish merged from deployed and verified, and avoid duplicate reminders. Merge, CI rerun, ticket write, and deployment need separate authorization.
+
+### Post-Incident Reviewer (`post-incident-reviewer`)
+
+- **Use case:** reconstruct a stabilized production incident for a blameless owner review, distinct from active mitigation.
+- **First result:** [sourced review](../../playbooks/agentic-engineering-platform/reliability-operations/post-incident-review-actions/examples/post-incident-review.json) with impact arithmetic, dated timeline, classified factors, unknowns and actions; a [draft](../../playbooks/agentic-engineering-platform/reliability-operations/post-incident-review-actions/examples/post-incident-draft.json) remains pending.
+- **Setup proof:** verify canonical stability, service/environment, impact counts and two timeline sources from one authorized incident. Have the reviewer decide whether a deploy correlation is a hypothesis or supported factor.
+- **Later run:** preserve incident and review revision, source corrections and sensitive-data scope. New facts require a reviewed revision, not a silent rewrite or publication.
+
+### Improvement Follow-Through Coordinator (`improvement-follow-through-coordinator`)
+
+- **Use case:** track exact post-incident actions from owner acceptance through independent control verification.
+- **First result:** [improvement register](../../playbooks/agentic-engineering-platform/reliability-operations/post-incident-review-actions/examples/incident-improvement-register.json) linking the accepted action to its issue receipt and passing alert replay while another action stays pending.
+- **Setup proof:** bind the exact review/action IDs and owner decision; probe current issue state and an independent verification source. A closed issue without the promised control evidence is [rejected](../../playbooks/agentic-engineering-platform/reliability-operations/post-incident-review-actions/examples/invalid-improvement-register.json).
+- **Later run:** re-read issue and control state under stable IDs; retain previous decisions and source revisions. Writes and reminders remain separate authorized routes.
 
 ### Performance Investigator (`performance-investigator`)
 
@@ -515,4 +529,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-five Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-six Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

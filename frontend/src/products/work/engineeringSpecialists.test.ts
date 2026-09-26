@@ -9,6 +9,8 @@ describe('Engineering Crew templates', () => {
       'engineering-delivery-coordinator',
       'performance-investigator',
       'cloud-cost-analyst',
+      'post-incident-reviewer',
+      'improvement-follow-through-coordinator',
     ])
     for (const template of engineering) {
       expect(getCrewTemplate(template.id)).toBe(template)

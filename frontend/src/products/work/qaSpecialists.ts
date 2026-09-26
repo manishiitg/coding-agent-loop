@@ -18,6 +18,8 @@ type Specialist = {
   boundary: string
   handoff: string
   repeatRule: string
+  sourceProbe: string
+  acceptanceCheck: string
   workflowPlaybook: string
   exampleInput: string
   workedExample: string
@@ -45,6 +47,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not change production data, weaken assertions, approve a release, or create a ticket or message without the authorized action route and owner review.',
     handoff: 'The Critical Journey Validation Workflow can consume a journey-result/v1 record keyed by journey revision, build, environment, attempt ID, observed outcome, evidence links, classification, and owner. A release gate must verify exact build identity and required suite completeness.',
     repeatRule: 'On a later run, retain earlier attempts, compare the same journey and build identity rule, and record changed test or environment revisions before claiming a regression was fixed.',
+    sourceProbe: 'Run one approved journey against a pinned build and environment using an authorized test account. Save the attempt ID, required assertion results, recording and console/network artifact IDs, and one failed or blocked step. A successful retry must remain a separate attempt.',
+    acceptanceCheck: 'Reproduce one observed failure from the saved attempt on the same build, or mark it unresolved with the missing evidence. Check that a skipped assertion, absent required recording, or blocked account cannot yield pass.',
     workflowPlaybook: 'browser-qa/critical-journey-validation',
     exampleInput: 'Fictional input: journey=signup-to-project@v3; build=sha:abc123; environment=preview-17; expected=new user creates a project; account=test-user-17; required evidence=video and console/network log.',
     workedExample: 'Fictional output: attempt=qa-17-01; journey=signup-to-project@v3; build=sha:abc123; environment=preview-17; observed=project creation returned HTTP 403 after signup; verdict=fail; video=asset:qa-17-01.mp4; console/network=asset:qa-17-01.json; reproduction=sign in as test-user-17, submit project form, observe 403; owner=project-api-owner; retest=pending.',
@@ -70,6 +74,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not silently quarantine or skip a test, weaken an assertion, inflate waits, or change canonical test source without owner review and an authorized route.',
     handoff: 'The Flaky-Test Detection and Stabilization Workflow can consume flake-investigation/v1 with stable test and build IDs, attempt IDs, evidence, classification, confidence, candidate change, approval state, and later stability check.',
     repeatRule: 'Use the same test and build keys to compare new attempts; reopen a prior classification when product or environment evidence contradicts it.',
+    sourceProbe: 'Fetch the canonical test revision and at least one original failed attempt plus its retry for the same build, environment, browser profile, and fixtures. Save each CI run and trace ID; a green summary without the original failure is insufficient.',
+    acceptanceCheck: 'Run or inspect a bounded set of isolated attempts under fixed inputs, retain the result distribution, and classify product, test, environment, or unresolved. Reject a proposed wait, quarantine, or assertion change when the cause is still unresolved.',
     workflowPlaybook: 'browser-qa/flaky-test-detection-stabilization',
     exampleInput: 'Fictional input: test=login-refresh@v4; build=sha:def456; environment=staging-eu; fixtures=account-22; allowed attempts=5 isolated; prior result=pass after CI retry.',
     workedExample: 'Fictional output: attempts=flake-22-01..05 on sha:def456/staging-eu with same fixtures; results=fail, pass, fail, pass, fail; failing traces show refresh token response delayed after assertion; classification=unresolved product-or-environment race; confidence=low; owner=auth-team; proposal=inspect token service timing before any test change; original assertions retained.',
@@ -95,6 +101,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not merge, deploy, waive a required suite, auto-approve needs-review, or post an external status without the release owner and authorized action route.',
     handoff: 'The Release and PR Quality Gate Workflow can consume release-quality-brief/v1 with release, SHA, build, environment, policy revision, required-suite matrix, verdict, reviewer, and delivery receipt. Engineering may consume a separate blocker ledger for fixes.',
     repeatRule: 'Re-evaluate each new build independently; retain prior failures and waivers, and never reuse a passing result from a different SHA or environment.',
+    sourceProbe: 'Read the release policy revision and enumerate its required suites before fetching CI results. Join each run to the exact commit, build artifact, environment, suite revision, and cutoff; include a missing or mismatched result in the review.',
+    acceptanceCheck: 'Recompute the gate verdict from the complete required-suite matrix. Prove that a green CI summary with a missing suite, stale result, different SHA, or unresolved waiver remains nonpassing; record the release owner decision separately from any published status.',
     workflowPlaybook: 'browser-qa/release-pr-quality-gate',
     exampleInput: 'Fictional input: release=rc-28; SHA=987fed; build=artifact:rc-28-987fed; environment=preview-28; policy=gate-v5 requiring auth and critical-journey suites; owner=release-lead.',
     workedExample: 'Fictional output: release=rc-28; SHA=987fed; build=artifact:rc-28-987fed; environment=preview-28; policy=gate-v5; auth=pass run:auth-19 on same build; critical-journey=missing; verdict=needs_review; owner=release-lead; published_status=none; next=run required journey suite on exact artifact.',
@@ -103,19 +111,21 @@ const specialists: readonly Specialist[] = [
   },
 ]
 
+const qaTemplateVersion = 2
+
 function checklist(spec: Specialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm the QA role and owner', instructions: 'Confirm whether ' + spec.name + ' is the primary Crew role or an added capability. Preserve an existing identity and name the QA owner.' },
     { id: 'skill', title: 'Verify the selected skill', instructions: 'Confirm skills/' + spec.id + '/SKILL.md exists and ' + spec.id + ' is selected for this Crew.' },
     { id: 'scope', title: 'Set the job and exact test scope', instructions: 'Record the first job, authorized account and data, expected outcome, build and environment identity, owner, and cutoff time. Minimum input: ' + spec.minimumInput },
-    { id: 'access', title: 'Test source and runner access', instructions: 'Read or run one representative authorized record or case. Record exact source and attempt IDs, freshness, evidence coverage, and account scope. ' + spec.optionalConnections },
-    { id: 'policy', title: 'Verify verdict and evidence rules', instructions: 'Record required assertions or suites, pass/fail/blocked and needs-review rules, recording policy, retry limits, retention, and release approval owner. Missing evidence is not a pass.' },
+    { id: 'access', title: 'Prove the source and runner join', instructions: spec.sourceProbe + ' Record access scope, freshness, and artifact paths. ' + spec.optionalConnections },
+    { id: 'policy', title: 'Verify the role-specific acceptance rule', instructions: spec.acceptanceCheck + ' Record the customer policy, retention, and approval owner. Missing evidence is not a pass.' },
     { id: 'first_result', title: 'Produce a first QA result', instructions: 'Use actual authorized evidence to produce ' + spec.firstResult + ' ' + spec.evidence + ' A fictional example does not complete this check.' },
     { id: 'review', title: 'Review result and next action', instructions: 'Show source-linked facts, unknowns, exact proposed action, owner, and approval boundary. Record the owner decision and corrections.' },
     { id: 'delivery', title: 'Choose action and delivery route', optional: true, instructions: 'Choose read-only chat or separately authorized issue/status updates. Read-only chat completes this choice. ' + spec.boundary },
     { id: 'recurrence', title: 'Choose repeat and Automation route', optional: true, instructions: 'Choose manual-only or a reviewed trigger or schedule. Manual-only completes this choice. ' + spec.repeatRule + ' Test any configured route before activation.' },
   ]
-  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2) + '\n'
+  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: qaTemplateVersion, checks, completed_steps: [] }, null, 2) + '\n'
 }
 
 function skill(spec: Specialist): string {
@@ -128,6 +138,7 @@ function skill(spec: Specialist): string {
     '## First useful result', '',
     ...spec.method.map((step, index) => String(index + 1) + '. ' + step), '',
     'Deliver **' + spec.firstResult + '** ' + spec.evidence, '',
+    '## Source probe and acceptance', '', spec.sourceProbe, '', spec.acceptanceCheck, '',
     '## Follow-through', '', spec.repeatRule, '',
     '## Fictional worked example', '',
     spec.exampleInput, '',
@@ -143,7 +154,7 @@ function skill(spec: Specialist): string {
 function guide(spec: Specialist): string {
   return [
     '# ' + spec.name + ' setup', '',
-    'Template ' + spec.id + ' version 1. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
+    'Template ' + spec.id + ' version ' + qaTemplateVersion + '. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
     '## First result', '',
     'Provide ' + spec.minimumInput + ' Ask: “' + spec.exampleRequests[0] + '”', '',
     'Expected output: **' + spec.firstResult + '** ' + spec.evidence, '',
@@ -152,7 +163,8 @@ function guide(spec: Specialist): string {
     spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
     '## Source and connection choice', '',
-    spec.optionalConnections + ' Start with one representative authorized record or test. Record exact build, test, account, source IDs, and evidence coverage.', '',
+    spec.optionalConnections + ' ' + spec.sourceProbe, '',
+    '## Setup acceptance', '', spec.acceptanceCheck, '',
     '## Workflow and recurring work', '',
     'Existing Workflow Playbook: ' + spec.workflowPlaybook + '. A separate Automation can coordinate Crews only after Builder verifies bindings, handoffs, a manual route, and the owner-approved run policy. ' + spec.repeatRule + ' ' + spec.boundary, '',
   ].join('\n')
@@ -164,7 +176,7 @@ export const qaSpecialists: readonly CrewTemplate[] = specialists.map(spec => {
   const setupGuidePath = base + '/SETUP.md'
   const setupPath = base + '/TEMPLATE_SETUP.json'
   return {
-    id: spec.id, version: 1, category: 'QA', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: qaTemplateVersion, category: 'QA', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

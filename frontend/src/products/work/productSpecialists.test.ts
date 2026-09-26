@@ -4,7 +4,13 @@ import { crewTemplates, getCrewTemplate, matchesCrewTemplateSearch, parseCrewTem
 describe('Product Feedback Coordinator', () => {
   it('installs a scoped Product role with independent pending chat setup', () => {
     const template = getCrewTemplate('product-feedback-coordinator')
-    expect(crewTemplates.filter(item => item.category === 'Product')).toEqual([template])
+    expect(crewTemplates.filter(item => item.category === 'Product').map(item => item.id)).toEqual([
+      'product-feedback-coordinator',
+      'product-discovery-researcher',
+      'roadmap-prioritization-analyst',
+      'product-requirements-coordinator',
+      'product-release-coordinator',
+    ])
     expect(template.version).toBe(3)
     const setup = parseCrewTemplateSetupState(template.files[template.setupPath], template)
     expect(setup?.checks.map(check => check.id)).toEqual([

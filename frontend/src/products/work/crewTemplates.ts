@@ -30,8 +30,9 @@ import { qaSpecialists, type QASpecialistId } from './qaSpecialists'
 import { securitySpecialists, type SecuritySpecialistId } from './securitySpecialists'
 import { gtmSpecialists, type GTMSpecialistId } from './gtmSpecialists'
 import { shopifySpecialists, type ShopifySpecialistId } from './shopifySpecialists'
+import { categoryExpansionSpecialists, type CategoryExpansionId } from './categoryExpansionSpecialists'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | BillingPackId | 'website-growth-starter' | WebsiteGrowthSpecialistId | MarketingSpecialistId | SalesSpecialistId | SalesExpansionId | CustomerSuccessSpecialistId | SupportSpecialistId | ProductSpecialistId | OperationsSpecialistId | EngineeringSpecialistId | QASpecialistId | SecuritySpecialistId | GTMSpecialistId | ShopifySpecialistId
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | BillingPackId | 'website-growth-starter' | WebsiteGrowthSpecialistId | MarketingSpecialistId | SalesSpecialistId | SalesExpansionId | CustomerSuccessSpecialistId | SupportSpecialistId | ProductSpecialistId | OperationsSpecialistId | EngineeringSpecialistId | QASpecialistId | SecuritySpecialistId | GTMSpecialistId | ShopifySpecialistId | CategoryExpansionId
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -229,7 +230,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'templates/website-growth-starter/SETUP.md': websiteGrowthSetup,
     'templates/website-growth-starter/TEMPLATE_SETUP.json': websiteGrowthSetupState,
   },
-}, ...billingPacks, ...websiteGrowthSpecialists, ...marketingSpecialists, ...salesSpecialists, ...salesExpansion, ...customerSuccessSpecialists, ...supportSpecialists, ...productSpecialists, ...operationsSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...securitySpecialists, ...gtmSpecialists, ...shopifySpecialists]
+}, ...billingPacks, ...websiteGrowthSpecialists, ...marketingSpecialists, ...salesSpecialists, ...salesExpansion, ...customerSuccessSpecialists, ...supportSpecialists, ...productSpecialists, ...operationsSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...securitySpecialists, ...gtmSpecialists, ...shopifySpecialists, ...categoryExpansionSpecialists]
 
 export function parseCrewTemplateSetupState(content: string, template: CrewTemplate): CrewTemplateSetupState | null {
   try {

@@ -1,6 +1,6 @@
 # Engineering and Shopify template expansion
 
-Date: 2026-09-26. This is an authoring queue, not a list of installed templates. The library currently has **13 Engineering Crew capabilities** when QA (3) and Security (3) are browsed under Engineering's 7 core roles, and **7 Shopify Crews**. The existing 71 Crew IDs and 55 Playbook packages do not change with browse grouping.
+Date: 2026-09-26. This is an authoring queue, not a list of installed templates. The library currently has **13 Engineering Crew capabilities** when QA (3) and Security (3) are browsed under Engineering's 7 core roles, and **7 Shopify Crews**. The current 79 Crew IDs and 55 Playbook packages do not change with browse grouping.
 
 ## Selection rule
 

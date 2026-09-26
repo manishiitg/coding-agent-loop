@@ -8,10 +8,15 @@ const repoRoot = path.resolve(frontendRoot, '..')
 const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/gtmSpecialists.ts'), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { gtmSpecialists } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'))
+const expansionSource = fs.readFileSync(path.join(frontendRoot, 'src/products/work/categoryExpansionSpecialists.ts'), 'utf8')
+const expansionCompiled = ts.transpileModule(expansionSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
+const { categoryExpansionSpecialists } = await import('data:text/javascript;base64,' + Buffer.from(expansionCompiled).toString('base64'))
 
 if (gtmSpecialists.length !== 2) throw new Error('Expected two GTM Crew templates, found ' + gtmSpecialists.length)
+const templates = [...gtmSpecialists, ...categoryExpansionSpecialists.filter(item => item.category === 'GTM')]
+if (templates.length !== 5) throw new Error('Expected five GTM Crew templates, found ' + templates.length)
 const ids = new Set()
-const catalog = gtmSpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
+const catalog = templates.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error('Duplicate GTM Crew template ' + id)
   ids.add(id)
   const setup = JSON.parse(files[setupPath])

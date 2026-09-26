@@ -316,6 +316,13 @@ The five installed Customer Success skills include a fictional input and reviewa
 - **Setup proof:** verify one authorized feedback export, source scope, review policy, owner, and a theme against representative and counterexample records.
 - **Later run:** compare the same source and window rules, retain prior theme IDs and owner decisions, and avoid counting duplicate reviews as new signals.
 
+### Support Knowledge Curator (`support-knowledge-curator`)
+
+- **Use case:** find repeated unresolved support questions and stale or missing help instructions.
+- **First result:** a linked case and article-gap brief with current article revision, approved product source, unsent update draft, reviewer and later publication check.
+- **Setup proof:** deduplicate two real cases, exclude a contrary case, compare the exact article with current product behavior, then have the support owner review a privacy-safe draft. Draft or approval is not publication.
+- **Later run:** re-read the same article revision and new cases; verify an approved publication from the provider and assess outcomes only with comparable coverage.
+
 ## Product
 
 ### Product Feedback Coordinator (`product-feedback-coordinator`)
@@ -324,6 +331,34 @@ The five installed Customer Success skills include a fictional input and reviewa
 - **First result:** a sourced `product-feedback-decision/v1` for a bounded theme or `feature-adoption-decision/v1` for a released feature. Each keeps the exact upstream artifact and scope, denominator and coverage, current issue match, evidence gaps, owner options and action state. See the [feedback decision](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/product-feedback-decision.json) and [feature decision](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-decision.json).
 - **Setup proof:** validate a [bounded theme brief](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/feedback-theme-brief.json), read the authorized current issue source, verify match policy and product owner, and review one real theme with counterexamples. For feature adoption, also validate [the bounded observation](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-observation.json) and prepare [a pending decision](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-decision.json). An issue write, flag change or customer promise needs a separate exact approval and receipt.
 - **Later run:** re-read the issue state and a comparable feedback window, retain the theme and issue IDs, distinguish a new signal from repeated records, and reopen the decision only for changed evidence or owner policy.
+
+### Product Discovery Researcher (`product-discovery-researcher`)
+
+- **Use case:** investigate one customer problem across authorized interviews, cases and product observations before choosing a solution.
+- **First result:** an opportunity brief with exact source IDs, affected sample, contrary evidence, privacy limits and next research question.
+- **Setup proof:** deduplicate linked cases and participants, check consent, cite two dated observations and a counterexample, and reject unsupported prevalence.
+- **Later run:** retain opportunity and participant IDs, add new authorized evidence and record how the hypothesis changed.
+
+### Roadmap Prioritization Analyst (`roadmap-prioritization-analyst`)
+
+- **Use case:** compare candidate opportunities against a product goal, agreed rule, current roadmap and capacity.
+- **First result:** a decision table with comparable evidence, uncertainty, dependencies, deferred option and separate owner decision.
+- **Setup proof:** read current candidate and roadmap revisions, recompute one score or explain why it is unrankable, and verify the owner has not already committed the work.
+- **Later run:** preserve candidate and rule versions and reopen only when evidence, capacity or strategy materially changes.
+
+### Product Requirements Coordinator (`product-requirements-coordinator`)
+
+- **Use case:** turn an accepted product problem into scoped, observable acceptance criteria for Design, Engineering and QA.
+- **First result:** a requirements brief with source decision, behaviors, edge case, exclusions, open policy questions and signoff states.
+- **Setup proof:** trace criteria to the accepted decision and current journey/design, test an edge case, then obtain owner review before any delivery write.
+- **Later run:** compare source, design and issue revisions, retain superseded criteria and alert owners to changed scope.
+
+### Product Release Coordinator (`product-release-coordinator`)
+
+- **Use case:** decide whether one exact feature release is ready from the Product side, alongside an independent QA gate.
+- **First result:** a go/no-go brief with build and flag, gate, help content, claims, measurement rule, blockers and rollout owner.
+- **Setup proof:** read exact build, flag, QA artifact and article revisions; show a non-QA blocker and keep approval, deployment, exposure and adoption distinct.
+- **Later run:** re-read each revision before a decision and hand a verified rollout identity to Product Adoption Analyst for separate usage measurement.
 
 ## Operations
 
@@ -424,50 +459,50 @@ All seven Engineering skill packs now include a fictional source-to-result examp
 - **Setup proof:** read an authorized bill or export, reconcile one change against usage or allocation evidence, confirm discounts and owner map, and review a candidate with the service owner.
 - **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The [FinOps Automation Playbook](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) connects this role to Engineering Delivery Coordinator and Finance Analyst with exact change and billed-outcome checks.
 
-## QA
+### QA
 
 The [Release Candidate to Reviewed Gate](../../playbooks/agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/SKILL.md) Automation Playbook composes the Journey and Gate roles with optional Flaky Test investigation. Its fictional [journey attempt](../../playbooks/agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/examples/journey-result.json), [required-suite matrix](../../playbooks/agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/examples/release-quality-brief.json), and [blocked flake review](../../playbooks/agentic-engineering-platform/qa/release-candidate-to-reviewed-gate/examples/flake-needs-review-gate.json) demonstrate the contract. A real setup still needs an authorized candidate and owner decision.
 
-### Browser Journey QA Analyst
+#### Browser Journey QA Analyst
 
 - **Use case:** run an approved user journey against an exact build and investigate a failure.
 - **First result:** an attempt-level pass, fail, or blocked result with build and environment, expected and observed behavior, reproduction steps, and durable video, screenshot, and console/network evidence.
 - **Setup proof:** verify a representative authorized test account, canonical journey revision, runner, evidence policy, and real attempt. Review a failure or pass against the expected outcome with the QA owner.
 - **Later run:** preserve prior attempts, record changed build or test revisions, and verify the same journey on the named later artifact. A retry never erases a failure.
 
-### Flaky Test Investigator
+#### Flaky Test Investigator
 
 - **Use case:** investigate intermittent outcomes for the same canonical test and build.
 - **First result:** a controlled attempt comparison with passing and failing evidence, classification with confidence limits, and a reviewable experiment or fix.
 - **Setup proof:** bind test, source revision, build, environment, fixtures, concurrency and retry policy; inspect one real history or bounded repeat and review the diagnosis.
 - **Later run:** retain earlier attempts, recheck the classification when product or environment evidence changes, and verify any approved stabilization without weakening assertions.
 
-### Release Quality Assistant
+#### Release Quality Assistant
 
 - **Use case:** determine whether a release candidate has complete QA evidence under an agreed gate policy.
 - **First result:** a required suite matrix for the exact SHA, build, and environment; a pass, fail, or needs-review proposal; and missing evidence or owner decisions.
 - **Setup proof:** verify one real release identity, required suite policy, result source, owner, and status destination. Reproduce a gate decision from the source records before enabling any publication route.
 - **Later run:** evaluate each new build independently, preserve previous failures and waivers, and count a published gate only from the destination receipt.
 
-## Security
+### Security
 
 The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/SKILL.md) Automation Playbook composes Findings Analyst and Remediation Coordinator. Its fictional [finding](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/security-finding.json), [open ledger](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/security-remediation-ledger.json), and [verified closure](../../playbooks/agentic-engineering-platform/security/finding-to-verified-remediation/examples/verified-security-remediation-ledger.json) show the contract. They do not establish a real customer's scope authorization, deployed state, or retest.
 
-### Security Findings Analyst
+#### Security Findings Analyst
 
 - **Use case:** triage an authorized application, dependency, code, or configuration finding against a named asset and build.
 - **First result:** a sourced finding queue with applicability, confidence, customer severity rule, owner, remediation options, and a verification criterion. Scanner output alone remains unconfirmed.
 - **Setup proof:** record written scope, allowed methods, stop conditions, source and evidence restrictions; inspect one real finding and affected build with the asset owner.
 - **Later run:** reconcile stable finding and asset IDs, check the deployed version and prior decision, and avoid duplicate tickets or unsupported closure.
 
-### Access Review Analyst
+#### Access Review Analyst
 
 - **Use case:** compare approved role, ownership, and tenant policy with observed application behavior.
 - **First result:** an actor-by-resource-by-action matrix with expected and observed UI and server results, exact build, evidence, and exceptions.
 - **Setup proof:** verify the policy revision, authorized test actors and isolated fixtures, target build, direct-route rules, and one safe matrix cell with the decision owner.
 - **Later run:** repeat the same denied cells after a reviewed fix, preserve older attempts, and distinguish a changed policy from a changed application.
 
-### Security Remediation Coordinator
+#### Security Remediation Coordinator
 
 - **Use case:** follow a validated finding through approved change, deployment, independent retest, and closure.
 - **First result:** an action ledger joining finding, issue, change SHA, deployment, approval, retest, owner, and disposition. A merged fix without deployed retest remains open.
@@ -489,6 +524,27 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 - **First result:** an action ledger with asset and campaign IDs, approval versus publication or send state, provider receipt, event and lead IDs, deduplication, attribution confidence, and next owner action.
 - **Setup proof:** inspect real asset revisions, approved channels, budget, contact policy, lead and CRM sources, and one provider or public observation. Review exact launch and lead joins with owners.
 - **Later run:** reconcile stable asset, campaign, event, and lead IDs; preserve approvals and receipts, recheck contact state, and avoid duplicate distribution or follow-up.
+
+### Revenue Operations Analyst (`revenue-operations-analyst`)
+
+- **Use case:** reconcile campaign, form, CRM lead, account and opportunity records for a shared GTM measurement decision.
+- **First result:** a stage-count and attribution brief with deduplicated IDs, join coverage, model version, source limits and data-quality actions.
+- **Setup proof:** read real source and CRM revisions, show one duplicate and unmatched event, recompute a transition and reject false opportunity or revenue claims.
+- **Later run:** reprocess stable IDs idempotently, allow documented lag and compare only like attribution and stage rules.
+
+### Sales Enablement Coordinator (`sales-enablement-coordinator`)
+
+- **Use case:** keep persona-specific seller guidance aligned with approved offer, proof, product behavior and current price.
+- **First result:** an enablement brief with claim versions, objection evidence, prohibited claims, owner approval and expiry check.
+- **Setup proof:** compare a real deck with current offer and price revisions, two dated objection records and one consented proof artifact; keep distribution pending review.
+- **Later run:** revalidate claims and pricing, retire stale assets and preserve the approved version.
+
+### Pricing & Packaging Analyst (`pricing-packaging-analyst`)
+
+- **Use case:** compare SaaS plan entitlements, buyer fit, unit economics and contract exceptions before an offer decision.
+- **First result:** a decision memo with exact price and entitlement revisions, cost assumptions, protected terms, owner options and unresolved mismatches.
+- **Setup proof:** reconcile public, billing and entitlement sources for a real plan, recompute one economic assumption, identify one contract exception and ask the pricing owner to review.
+- **Later run:** preserve plan, contract and policy revisions; a proposed package never changes a price or customer term automatically.
 
 ## Shopify
 
@@ -543,4 +599,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-six Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing Playbook contract suites cover selected packaged handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

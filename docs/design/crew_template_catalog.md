@@ -274,7 +274,7 @@ The locally installable **Product Feedback Coordinator** prepares a decision fro
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Product Feedback Coordinator** — available v2 | Compare validated feedback or feature-adoption evidence with current issues and prepare a traceable owner decision. | Validated theme or feature observation, product/segment scope, current issue source, owner and decision criteria. | Feedback Theme to Product Decision; Released Feature to Adoption Decision |
+| **Product Feedback Coordinator** — available v3 | Compare validated feedback or feature-adoption evidence with current issues and prepare a traceable owner decision; setup certifies the selected evidence route. | Validated theme or feature observation, product/segment scope, current issue source, owner and decision criteria. | Feedback Theme to Product Decision; Released Feature to Adoption Decision |
 
 ## Sales
 

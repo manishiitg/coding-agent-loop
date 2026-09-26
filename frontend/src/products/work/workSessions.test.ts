@@ -244,6 +244,22 @@ describe('createWorkSession', () => {
     expect(setup.checks).toHaveLength(9)
   })
 
+  it('creates Product Feedback Coordinator with route-scoped pending setup and no issue action', async () => {
+    updatePlannerFile.mockClear()
+    const id = 'product-feedback-coordinator'
+    const session = await createWorkSession('Product Feedback Coordinator', 'Review one product decision.', undefined, id)
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
+    const setup = JSON.parse(writes.get(`${session.workspacePath}/templates/${id}/TEMPLATE_SETUP.json`)!)
+    expect(session.templates).toEqual([{ id, version: 3 }])
+    expect(runtime.capabilities.selected_skills).toEqual([id])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(setup).toMatchObject({ template_id: id, template_version: 3, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+  })
+
   it.each([
     ['browser-journey-qa-analyst', 'Browser Journey QA Analyst'],
     ['flaky-test-investigator', 'Flaky Test Investigator'],

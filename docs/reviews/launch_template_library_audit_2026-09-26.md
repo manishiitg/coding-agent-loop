@@ -26,7 +26,7 @@ These are prioritized content gaps, not proof that the remaining skills are comp
 
 ## Legacy Playbooks still in the catalog
 
-The other **22 of 47** installable Playbook packages have no `agent_slots`, `SETUP.json`, or executable handoff suite. They remain Workflow guides in the same catalog; they are not yet equivalent to the 25 chat-led multi-Crew proposals. This count excludes the example package under `playbooks/templates/`.
+The other **22 of 47** installable Playbook packages have no `agent_slots`, `SETUP.json`, or executable handoff suite. They remain Workflow guides in the same catalog; they are not yet equivalent to the 25 chat-led multi-Crew proposals. The Playbook picker now labels the two kinds separately and states that Workflow guides have no predefined Crew team or tracked setup checklist. This count excludes the example package under `playbooks/templates/`.
 
 | Area | Packages needing a launch decision or deeper route |
 | --- | --- |

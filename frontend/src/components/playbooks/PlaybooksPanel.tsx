@@ -64,6 +64,8 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   const visibleGroups = useMemo(() => categories
     .map(groupCategory => ({ category: groupCategory, playbooks: visible.filter(playbook => playbook.category === groupCategory) }))
     .filter(group => group.playbooks.length > 0), [categories, visible])
+  const visibleProposalCount = visible.filter(item => item.agentSlots?.length).length
+  const visibleGuideCount = visible.length - visibleProposalCount
 
   const toggleCategory = (groupCategory: string) => {
     setExpandedCategories(current => {
@@ -137,6 +139,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
     const agentSlots = selected.agentSlots || []
     const handoffs = selected.handoffs || []
     const setupChecks = selected.setupChecks || []
+    const isCrewProposal = agentSlots.length > 0
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <Button type="button" variant="link" size="sm" onClick={() => setSelected(null)} className="mb-4">
@@ -148,6 +151,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium text-primary">AgentWorks / Agentic Engineering Platform / {selected.category}</div>
               <h3 className="mt-1 text-lg font-semibold text-foreground">{selected.title}</h3>
+              <span className="mt-2 inline-flex rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{isCrewProposal ? 'Crew automation proposal' : 'Workflow guide'}</span>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">{selected.description}</p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1"><span className="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">v{selected.version}</span>{selected.teamScope === 'small_team' && <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">Small team</span>}</div>
@@ -241,11 +245,11 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           {error && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</p>}
           <div className="mt-5 rounded-lg border border-dashed border-border p-4">
             <div className="flex items-center gap-2 text-sm font-medium"><CheckCircle2 className="h-4 w-4 text-muted-foreground" /> Setup with Builder</div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{agentSlots.length > 0 ? 'Using this proposal saves its guidance in the workflow. Continue in Builder chat to inspect existing Crews, review a concrete team and plan, and create or bind agents. Choosing the proposal starts no Crew, schedule, or run.' : 'Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record. Builder first inspects the current workflow, shows what can be reused and what is missing, then asks focused questions before proposing changes. Installing guidance is not approval to edit or run the workflow.'}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{isCrewProposal ? 'Using this proposal saves its guidance in the workflow. Continue in Builder chat to inspect existing Crews, review a concrete team and plan, and create or bind agents. Choosing the proposal starts no Crew, schedule, or run.' : 'Using this guide saves its instructions in the workflow for Builder chat. This package has no predefined Crew team or tracked setup checklist. Builder first inspects the current workflow, shows what can be reused and what is missing, then asks focused questions before proposing changes. Installing guidance is not approval to edit or run the workflow.'}</p>
             {installedSelection ? (
               <>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> {agentSlots.length > 0 ? 'Proposal saved' : 'Installed'} v{installedSelection.version} · {installedSelection.status}</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> {isCrewProposal ? 'Proposal saved' : 'Workflow guide saved'} v{installedSelection.version} · {installedSelection.status}</span>
                   <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. First inspect the existing workflow and summarize what can be reused and what is missing. Ask focused questions for unresolved customer choices before changing the workflow, record the answers as customer direction, and treat installation as guidance rather than approval. ${selected.setupPrompt || ''}`.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
                 </div>
                 {updateAvailable && (
@@ -265,7 +269,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                 )}
               </>
             ) : (
-              <Button type="button" size="sm" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : agentSlots.length > 0 ? 'Use proposal' : 'Use playbook'}</Button>
+              <Button type="button" size="sm" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : isCrewProposal ? 'Use proposal' : 'Use workflow guide'}</Button>
             )}
           </div>
         </div>
@@ -304,7 +308,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
             </div>
             <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5" aria-label="Playbook catalog hierarchy">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><FolderTree className="h-4 w-4" /> AgentWorks</div>
-              <div className="ml-2 mt-2 border-l border-border pl-4 text-xs font-semibold text-foreground">Agentic Engineering Platform <span className="ml-1 font-normal text-muted-foreground">{visible.length} small-team playbooks</span></div>
+              <div className="ml-2 mt-2 border-l border-border pl-4 text-xs font-semibold text-foreground">Agentic Engineering Platform <span className="ml-1 font-normal text-muted-foreground">{visible.length} small-team {visible.length === 1 ? 'playbook' : 'playbooks'} · {visibleProposalCount} Crew {visibleProposalCount === 1 ? 'proposal' : 'proposals'} · {visibleGuideCount} Workflow {visibleGuideCount === 1 ? 'guide' : 'guides'}</span></div>
             </div>
           </div>
           <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
@@ -327,6 +331,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div>
                                 <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p>
+                                <span className="mt-2 inline-flex rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{playbook.agentSlots?.length ? 'Crew automation proposal' : 'Workflow guide'}</span>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                   <AskAIButton workspacePath={workspacePath} label="Ask about this playbook" message={`Explain the ${JSON.stringify(playbook.title)} playbook (catalog id ${JSON.stringify(playbook.id)}, v${playbook.version}): what it sets up, what inputs it needs, and whether it fits this workflow. If I confirm I want it, walk me through installing it from its detail view and the setup that follows.`} />
                                   <Button type="button" variant="ghost" size="sm" aria-label={`Open ${playbook.title} details`} onClick={() => setSelected(playbook)}>

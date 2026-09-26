@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(33)
+    expect(PLAYBOOK_CATALOG).toHaveLength(34)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -55,6 +55,19 @@ describe('small-team catalog', () => {
     expect(sales?.agentSlots?.find(slot => slot.id === 'research')?.required).toBe(false)
     expect(sales?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('lead-qualification-brief/v1')
     expect(sales?.setupChecks).toContain('action_ledger')
+  })
+
+  it('exposes the GTM launch route and reuses the Sales qualification handoff', () => {
+    const gtm = PLAYBOOK_CATALOG.find(item => item.id === 'launch-to-qualified-pipeline')
+    expect(gtm?.category).toBe('GTM')
+    expect(gtm?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'gtm-strategy-analyst', 'launch-coordinator', 'lead-intake-qualifier', 'sales-followup-coordinator',
+    ])
+    expect(gtm?.agentSlots?.find(slot => slot.id === 'website')?.required).toBe(false)
+    expect(gtm?.handoffs?.map(handoff => handoff.artifact_type)).toEqual([
+      'gtm-launch-brief/v1', 'launch-signal-register/v1', 'lead-qualification-brief/v1',
+    ])
+    expect(gtm?.setupChecks).toContain('test_run')
   })
 
   it('exposes Customer Success with onboarding and adoption handoffs', () => {

@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 36 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 38 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The ten multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The eleven multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -234,6 +234,22 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **First result:** an action ledger joining finding, issue, change SHA, deployment, approval, retest, owner, and disposition. A merged fix without deployed retest remains open.
 - **Setup proof:** verify the finding source, approved fix or risk-acceptance policy, owner, deployment source, sensitive evidence handling, and one real remediation state.
 - **Later run:** re-read exact finding, change, deployment, and retest state; preserve failed checks and risk expiry; close only with owner decision and evidence from the affected environment.
+
+## GTM
+
+### GTM Strategy Analyst
+
+- **Use case:** choose an evidence-backed first audience, message, channel hypothesis, and pipeline measurement rule for a B2B offer.
+- **First result:** a reviewed launch brief with offer version, approved claims, buyer problem and sources, channels and budget, owner, qualified lead definition, and open decisions.
+- **Setup proof:** verify offer claims, representative customer or market evidence, audience and market, measurement source, baseline or baseline-first decision, and owner approval of one real brief.
+- **Later run:** compare new evidence with the recorded hypothesis and metric rule; retain prior decisions and avoid claiming lift from a single campaign result.
+
+### Launch Coordinator
+
+- **Use case:** carry an approved brief through channel assets, owner decisions, provider observations, and inbound lead signals.
+- **First result:** an action ledger with asset and campaign IDs, approval versus publication or send state, provider receipt, event and lead IDs, deduplication, attribution confidence, and next owner action.
+- **Setup proof:** inspect real asset revisions, approved channels, budget, contact policy, lead and CRM sources, and one provider or public observation. Review exact launch and lead joins with owners.
+- **Later run:** reconcile stable asset, campaign, event, and lead IDs; preserve approvals and receipts, recheck contact state, and avoid duplicate distribution or follow-up.
 
 ## Shopify
 

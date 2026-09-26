@@ -48,8 +48,14 @@ AgentWorks
     │   └── Inbound Lead-to-Meeting Review
     ├── Customer Success
     │   └── New Customer to First Value
+    ├── GTM
+    │   └── Launch to Qualified Pipeline
     └── Shopify
-        └── Order Exception to Resolution
+        ├── Order Exception to Resolution
+        ├── Storefront Opportunity to Verified Change
+        ├── Inventory Availability to Owner Action
+        ├── Payment Exception to Order Decision
+        └── Product Launch Readiness to Go/No-Go
 ```
 
 ## Browse categories and package locations
@@ -61,7 +67,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles are locally installable with pending setup; existing packages remain under `browser-qa/`. |
 | Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
-| GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | The end-to-end launch-to-qualified-pipeline Playbook is planned. Existing Website Growth and Sales Crews are cross-listed, not duplicated. |
+| GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
@@ -69,6 +75,12 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Playbook | Outcome |
 | --- | --- |
 | [Incident to Verified Recovery](agentic-engineering-platform/engineering/incident-to-verified-recovery/SKILL.md) | Propose an Incident Investigator → Engineering Delivery Coordinator route, validate the incident/change handoff, review any production action, and check service recovery from telemetry before closure. |
+
+### GTM Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Launch to Qualified Pipeline](agentic-engineering-platform/gtm/launch-to-qualified-pipeline/SKILL.md) | Propose a GTM Strategy Analyst → Launch Coordinator → Lead Intake & Qualifier → Sales Follow-up Coordinator route, validate launch and source joins, reuse the Sales qualification contract, and verify actual delivery and meeting outcomes separately. |
 
 ### Shopify Automation
 

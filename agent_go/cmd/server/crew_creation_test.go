@@ -487,6 +487,41 @@ func TestCreateCrewProjectAppliesSecurityTemplateOnBuilderAction(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesGTMTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"gtm-strategy-analyst", "launch-coordinator"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "GTM Operator",
+				Role: "GTM operator", Purpose: "Review a sourced launch plan",
+				TemplateID: templateID, StepInstruction: "Return a reviewable launch decision.",
+				IdempotencyKey: "gtm-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("GTM Crew lacks %s", relative)
+				}
+			}
+			var setup map[string]interface{}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			completed, ok := setup["completed_steps"].([]interface{})
+			if !ok || len(completed) != 0 {
+				t.Fatalf("GTM setup unexpectedly completed: %+v", setup)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
 	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator"} {
 		t.Run(templateID, func(t *testing.T) {

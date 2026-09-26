@@ -190,6 +190,40 @@ func TestEngineeringPlaybookInstallationCopiesContractAndPendingSetup(t *testing
 	}
 }
 
+func TestGTMPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("launch-to-qualified-pipeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/gtm"
+	const skill = "agentworks-playbook-launch-to-qualified-pipeline"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{
+		"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md",
+		"scripts/validate_handoff.py", "examples/gtm-launch-brief.json",
+		"examples/launch-signal-register.json", "examples/lead-qualification-brief.json",
+	} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("GTM playbook installation lacks %s", relative)
+		}
+	}
+	var setup map[string]interface{}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	completed, ok := setup["completed_steps"].([]interface{})
+	if setup["playbook_id"] != item.ID || !ok || len(completed) != 0 {
+		t.Fatalf("GTM setup was pre-completed: %+v", setup)
+	}
+}
+
 func TestShopifyPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	item, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {
@@ -295,8 +329,8 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 33 {
-		t.Fatalf("catalog has %d playbooks, want 33", len(items))
+	if len(items) != 34 {
+		t.Fatalf("catalog has %d playbooks, want 34", len(items))
 	}
 	shopify, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {
@@ -327,6 +361,13 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	}
 	if engineering.Category != "Engineering" || len(engineering.AgentSlots) != 2 || len(engineering.Handoffs) != 1 || len(engineering.SetupChecks) != 10 {
 		t.Fatalf("incident to verified recovery = %+v", engineering)
+	}
+	gtm, err := findPlaybook("launch-to-qualified-pipeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gtm.Category != "GTM" || len(gtm.AgentSlots) != 5 || len(gtm.Handoffs) != 3 || len(gtm.SetupChecks) != 10 {
+		t.Fatalf("launch to qualified pipeline = %+v", gtm)
 	}
 	success, err := findPlaybook("new-customer-to-first-value")
 	if err != nil {

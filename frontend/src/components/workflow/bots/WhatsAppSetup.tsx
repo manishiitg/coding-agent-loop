@@ -2,7 +2,6 @@ import { AlertCircle, AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-r
 import { useEffect, useState } from 'react'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
-import { Input } from '../../ui/Input'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 
@@ -12,10 +11,7 @@ type WhatsAppSetupBots = Pick<WorkflowBots,
   | 'canManageOwnWhatsAppDevices'
   | 'waStatus' | 'waError'
   | 'qrImageURL' | 'qrLoading' | 'qrError'
-  | 'waAddDeviceOpen' | 'openAddWhatsAppDevice' | 'closeAddWhatsAppDevice'
   | 'waUnpairConfirmSlot' | 'waUnpairingSlot' | 'handleUnpairWhatsAppDevice'
-  | 'waDeviceLabelDrafts' | 'setWaDeviceLabelDraft' | 'waDeviceLabelSavingSlot' | 'handleSaveWhatsAppDeviceLabel'
-  | 'waPairDeviceLabel' | 'setWaPairDeviceLabel' | 'waPairDeviceLabelSaving' | 'waPairingDeviceSlot' | 'handleSaveWhatsAppPairDeviceLabel'
   | 'refreshWaQR'
 >
 
@@ -32,44 +28,22 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
   const {
     canManageOwnWhatsAppDevices,
     waStatus, waError, qrImageURL, qrLoading, qrError,
-    waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,
     waUnpairConfirmSlot, waUnpairingSlot, handleUnpairWhatsAppDevice,
-    waDeviceLabelDrafts, setWaDeviceLabelDraft, waDeviceLabelSavingSlot, handleSaveWhatsAppDeviceLabel,
-    waPairDeviceLabel, setWaPairDeviceLabel, waPairDeviceLabelSaving, waPairingDeviceSlot, handleSaveWhatsAppPairDeviceLabel,
     refreshWaQR,
   } = bots
   const [linkCopyState, setLinkCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const [editingLabelSlot, setEditingLabelSlot] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
 
-  const devices = waStatus?.devices && waStatus.devices.length > 0
-    ? waStatus.devices
-    : (waStatus ? [{
-      slot: '',
-      paired: waStatus.paired,
-      connected: waStatus.connected,
-      own_jid: waStatus.own_jid,
-      qr_available: waStatus.qr_available,
-    }] : [])
-  // Only show fully linked numbers in the list; an unpaired "next" slot can
-  // exist while the user is adding one and shouldn't look like a broken
-  // connection.
-  const linkedDevices = devices.filter(device => device.paired)
-  const mainDevice = devices.find(device => device.slot === '')
-  const mainDevicePaired = mainDevice?.paired ?? !!waStatus?.paired
-  const hasLinkedDevice = linkedDevices.length > 0
-  const hasConnectedDevice = linkedDevices.some(device => device.connected)
-
-  const showPrimaryPair = !!waStatus?.enabled && !mainDevicePaired && (!hasLinkedDevice || waAddDeviceOpen)
-  const showNextPair = !!waStatus?.enabled && mainDevicePaired && waAddDeviceOpen
-  const showPairCard = showPrimaryPair || showNextPair
-  const nextPairDeviceActive = showNextPair
-    && (!waPairingDeviceSlot || waStatus?.next_device?.slot === waPairingDeviceSlot)
-  const qrAvailable = showNextPair ? nextPairDeviceActive && !!waStatus?.next_device?.qr_available : !!waStatus?.qr_available
-  const qrExpiresAt = showNextPair && nextPairDeviceActive ? waStatus?.next_device?.qr_expires_at : waStatus?.qr_expires_at
+  // One person, one WhatsApp: the account links a single phone.
+  const phone = waStatus
+    ? (waStatus.devices?.[0] ?? { slot: '', paired: waStatus.paired, connected: waStatus.connected, own_jid: waStatus.own_jid, qr_available: waStatus.qr_available })
+    : null
+  const hasLinkedDevice = !!phone?.paired
+  const hasConnectedDevice = hasLinkedDevice && !!phone?.connected
+  const showPairCard = !!waStatus?.enabled && !hasLinkedDevice
+  const qrAvailable = !!waStatus?.qr_available
+  const qrExpiresAt = waStatus?.qr_expires_at
   const qrExpiryLabel = formatQRExpiry(qrExpiresAt, nowMs)
-  const pairTitle = showNextPair ? 'Add another number' : 'Pair device'
-  const pairNameSaveReady = !showNextPair || waPairingDeviceSlot !== null || waStatus?.next_device !== undefined
 
   useEffect(() => {
     if (!qrExpiresAt) return
@@ -132,7 +106,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                 </span>
               </span>
               <span className="text-[11px] text-muted-foreground">
-                {waStatus.enabled ? 'Enabled' : 'Disabled'} · {hasLinkedDevice ? `${linkedDevices.length} linked` : 'Unpaired'}
+                {waStatus.enabled ? 'Enabled' : 'Disabled'} · {hasLinkedDevice ? 'Linked' : 'Unpaired'}
               </span>
             </div>
           </div>
@@ -144,121 +118,57 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
         </Card>
       )}
 
-      {/* Linked numbers/devices */}
-      {waStatus && waStatus.enabled && hasLinkedDevice && (
-        <Card className="p-4">
-          <div className="flex items-center justify-between gap-3">
+      {/* The linked number */}
+      {waStatus && waStatus.enabled && phone && hasLinkedDevice && (() => {
+        const statusDot = phone.connected ? 'bg-green-500' : 'bg-amber-500'
+        const statusText = phone.connected ? 'Connected' : 'Paired, offline'
+        const confirming = waUnpairConfirmSlot === phone.slot
+        const busy = waUnpairingSlot === phone.slot
+        return (
+          <Card className="p-4">
             <div>
-              <h3 className="text-sm font-medium text-foreground">Linked numbers</h3>
+              <h3 className="text-sm font-medium text-foreground">Linked number</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                You can link multiple WhatsApp accounts and each will have its own chat history.
+                One WhatsApp per account. To use another number, unpair this one first.
               </p>
             </div>
-            <Button
-              onClick={waAddDeviceOpen ? closeAddWhatsAppDevice : openAddWhatsAppDevice}
-              disabled={!canManageOwnWhatsAppDevices}
-              variant="outline"
-              size="sm"
-              className="flex-shrink-0 whitespace-nowrap"
-            >
-              {waAddDeviceOpen ? 'Close' : 'Add number'}
-            </Button>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {linkedDevices.map(device => {
-              const displayName = device.label?.trim() || 'Unnamed WhatsApp number'
-              const draftLabel = waDeviceLabelDrafts[device.slot] ?? device.label ?? ''
-              const labelDirty = draftLabel.trim() !== (device.label || '')
-              const statusDot = device.connected ? 'bg-green-500' : device.paired ? 'bg-amber-500' : 'bg-gray-400'
-              const statusText = device.connected ? 'Connected' : device.paired ? 'Paired, offline' : 'Not paired'
-              const confirming = waUnpairConfirmSlot === device.slot
-              const busy = waUnpairingSlot === device.slot
-              const labelSaving = waDeviceLabelSavingSlot === device.slot
-              const showLabelEditor = !device.label || editingLabelSlot === device.slot || labelSaving
-              return (
-                <div key={device.slot || 'primary'} className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${statusDot}`} />
-                        <div className="text-xs text-foreground font-medium">{displayName}</div>
-                        <div className="text-[11px] text-muted-foreground">{statusText}</div>
-                      </div>
-                      {device.own_jid && (
-                        <div className="mt-1 text-[11px] text-muted-foreground font-mono truncate">{device.own_jid}</div>
-                      )}
-                    </div>
-                    <div className="flex flex-shrink-0 items-center gap-2">
-                      {device.label && !showLabelEditor && (
-                        <Button
-                          onClick={() => setEditingLabelSlot(device.slot)}
-                          disabled={!canManageOwnWhatsAppDevices}
-                          variant="outline"
-                          size="sm"
-                          className="whitespace-nowrap"
-                        >
-                          Edit name
-                        </Button>
-                      )}
-                      <Button
-                        onClick={() => handleUnpairWhatsAppDevice(device.slot)}
-                        disabled={!canManageOwnWhatsAppDevices || !!waUnpairingSlot}
-                        variant={confirming ? 'destructive' : 'outline'}
-                        size="sm"
-                        className="whitespace-nowrap"
-                      >
-                        {busy ? (
-                          <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Unpairing…</>
-                        ) : confirming ? (
-                          <><Trash2 className="w-3.5 h-3.5 mr-1.5" /> Confirm</>
-                        ) : (
-                          'Unpair'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  {showLabelEditor && (
-                    <div className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <Input
-                          value={draftLabel}
-                          onChange={event => setWaDeviceLabelDraft(device.slot, event.target.value)}
-                          disabled={!canManageOwnWhatsAppDevices || labelSaving}
-                          placeholder="Person name"
-                          maxLength={60}
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                      <Button
-                        onClick={() => {
-                          void handleSaveWhatsAppDeviceLabel(device.slot, draftLabel).then(saved => {
-                            if (saved && draftLabel.trim()) setEditingLabelSlot(null)
-                          })
-                        }}
-                        disabled={!canManageOwnWhatsAppDevices || labelSaving || !labelDirty}
-                        variant="outline"
-                        size="sm"
-                        className="flex-shrink-0 whitespace-nowrap"
-                      >
-                        {labelSaving ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Saving</> : 'Save name'}
-                      </Button>
-                    </div>
-                  )}
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-3 py-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${statusDot}`} />
+                  <div className="text-[11px] text-muted-foreground">{statusText}</div>
                 </div>
-              )
-            })}
-          </div>
-        </Card>
-      )}
+                {phone.own_jid && (
+                  <div className="mt-1 text-[11px] text-muted-foreground font-mono truncate">{phone.own_jid}</div>
+                )}
+              </div>
+              <Button
+                onClick={() => handleUnpairWhatsAppDevice(phone.slot)}
+                disabled={!canManageOwnWhatsAppDevices || !!waUnpairingSlot}
+                variant={confirming ? 'destructive' : 'outline'}
+                size="sm"
+                className="flex-shrink-0 whitespace-nowrap"
+              >
+                {busy ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Unpairing…</>
+                ) : confirming ? (
+                  <><Trash2 className="w-3.5 h-3.5 mr-1.5" /> Confirm</>
+                ) : (
+                  'Unpair'
+                )}
+              </Button>
+            </div>
+          </Card>
+        )
+      })()}
 
-      {/* QR pairing card — shown while pairing (primary or "next") */}
+      {/* QR pairing card — shown while the account's phone is unpaired */}
       {waStatus && waStatus.enabled && showPairCard && (
         <Card className="p-4">
           <div className="flex flex-col items-center gap-3">
             <div className="flex w-full items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-medium text-foreground">{pairTitle}</h3>
+                <h3 className="text-sm font-medium text-foreground">Pair device</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">Scan this QR from WhatsApp → Linked Devices.</p>
               </div>
               <Button
@@ -271,25 +181,6 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 Refresh
-              </Button>
-            </div>
-            <div className="flex w-full items-center gap-2">
-              <Input
-                value={waPairDeviceLabel}
-                onChange={event => setWaPairDeviceLabel(event.target.value)}
-                disabled={!canManageOwnWhatsAppDevices || waPairDeviceLabelSaving}
-                placeholder="Person name for this WhatsApp number"
-                maxLength={60}
-                className="h-8 text-xs"
-              />
-              <Button
-                onClick={handleSaveWhatsAppPairDeviceLabel}
-                disabled={!canManageOwnWhatsAppDevices || waPairDeviceLabelSaving || !pairNameSaveReady || waPairDeviceLabel.trim().length === 0}
-                variant="outline"
-                size="sm"
-                className="flex-shrink-0 whitespace-nowrap"
-              >
-                {waPairDeviceLabelSaving ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Saving</> : 'Save name'}
               </Button>
             </div>
             {qrAvailable ? (

@@ -1004,10 +1004,8 @@ export interface WhatsAppStatus {
   own_jid: string
   qr_available: boolean
   qr_expires_at?: string
-  /** Linked phones/numbers for this Runloop account. slot "" is the primary. */
+  /** The account's linked phone (one WhatsApp per account). */
   devices?: WhatsAppDevice[]
-  /** Which device a scan would pair right now (primary until paired, else the next extra). */
-  next_device?: WhatsAppNextDevice
   pairing_active?: boolean
   pairing_started_at?: string
   pairing_error?: string
@@ -1025,22 +1023,13 @@ export interface WhatsAppStatus {
 }
 
 export interface WhatsAppDevice {
-  /** Device slot; "" is the primary. */
+  /** Always "": an account links one phone. */
   slot: string
-  /** User-visible name for this WhatsApp person/number. */
   label?: string
   paired: boolean
   connected: boolean
   own_jid?: string
   qr_available: boolean
-}
-
-export interface WhatsAppNextDevice {
-  /** Slot name for the device that will be paired next. */
-  slot: string
-  label?: string
-  qr_available: boolean
-  qr_expires_at?: string
 }
 
 export interface SlackConfig {

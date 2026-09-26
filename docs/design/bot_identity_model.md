@@ -38,8 +38,9 @@ user's access, so a workflow reader gets Run and an owner gets full.
   crew chat (resolved as the web does, `senderProfileTurn`), and a workflow
   message continues the Builder chat the web restores for them, instead of
   WhatsApp's separate per-chat conversation.
-- Extra phones (`phone-2`, …) run as the paired user. They are that user's
-  devices by pairing, so this is correct.
+- One person, one WhatsApp (user, 2026-09-26): an account links a single
+  phone. Extra phones (`phone-2`, …, built for a second SparkQuill parent)
+  were removed; startup logs any left over out of WhatsApp.
 
 **Slack channels already run in Run mode.** `revalidateExecutionPrincipal`
 forces `BotGrant = "run"` and `Access = read`. A crew route runs in its owner's

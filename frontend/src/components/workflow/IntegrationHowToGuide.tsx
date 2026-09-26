@@ -100,12 +100,8 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
     ]
     case 'WhatsApp': return [
       {
-        title: 'How do I pair the first WhatsApp number?',
-        answer: <>Click <b>Open</b> on the WhatsApp row. Scan the <b>Pair device</b> QR in WhatsApp under <b>Linked Devices → Link a device</b>. Wait for the status to become <b>Connected</b>. Pairing is account-wide and shared across projects and workflows.</>,
-      },
-      {
-        title: 'How do I add or rename another number?',
-        answer: <>Under <b>Linked numbers</b>, click <b>Add number</b>, scan the new QR, enter a person name, and click <b>Save name</b>. Use <b>Edit name</b> on an existing number to change its label.</>,
+        title: 'How do I pair WhatsApp?',
+        answer: <>Click <b>Open</b> on the WhatsApp row. Scan the <b>Pair device</b> QR in WhatsApp under <b>Linked Devices → Link a device</b>. Wait for the status to become <b>Connected</b>. Pairing is account-wide and shared across projects and workflows. Each account links one WhatsApp; to use another number, unpair this one first.</>,
       },
       {
         title: 'What if the pairing QR expires?',
@@ -125,7 +121,7 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
       },
       {
         title: 'How do I stop routing or unpair a number?',
-        answer: <>Remove a route with its trash button if only this {scopeNoun} should stop answering. To disconnect a paired number for the account, open <b>Linked numbers</b>, click <b>Unpair</b>, then <b>Confirm</b>.</>,
+        answer: <>Remove a route with its trash button if only this {scopeNoun} should stop answering. To disconnect the account's WhatsApp, open <b>Linked number</b>, click <b>Unpair</b>, then <b>Confirm</b>.</>,
       },
     ]
     case 'Connect': return [

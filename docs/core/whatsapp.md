@@ -1,7 +1,7 @@
 # WhatsApp Connector
 
-WhatsApp is the thread-less, owner-paired channel: each owner links their
-own phone number(s), and workflow selection happens in-chat via slugs
+WhatsApp is the thread-less, owner-paired channel: each account links one
+phone number, and workflow selection happens in-chat via slugs
 (`@list`, `@switch`, `@<slug>`, `@off`). There is no platform-level token
 to share, so WhatsApp never needed the per-workflow connection registry
 that Slack has — account scope is per owner, route scope is per message.
@@ -10,25 +10,26 @@ that Slack has — account scope is per owner, route scope is per message.
 
 ```text
 WhatsAppServiceManager ("whatsapp")
-  services[userKey]            primary phone (slot "")
-  services[userKey␟phone-2]    extra devices (slot "phone-2", "phone-3", …)
-        |  one WhatsAppService per linked phone
+  services[userKey]            the account's phone
+        |  one WhatsAppService per account
         v
 BotConversationManager (BotConnector; Capabilities: WorkflowProgress only)
 ```
 
-- Account key is `whatsappUserKey(userID)`; each linked phone is a service
-  with its own multi-device pairing state in a per-device SQLite file:
-  `<baseDir>/<userKey>/whatsapp.db`, extras under
-  `devices/<slot>/whatsapp.db`. Restart reconnects from disk — no re-pair.
-- `NextPairingDevice` fills the primary slot first, then reuses an unpaired
-  extra slot, then mints `phone-2`, `phone-3`, … Pairing is QR-based
-  (`EnsurePairingQR` / `GetQR`); `IsPaired` gates readiness.
-- `UnpairDevice` forgets one phone: the primary resets to a fresh pairing
-  (its slot stays), an extra device is removed entirely with its owner data.
-- Devices carry labels (`SetDeviceLabel`, persisted offline without a
-  WhatsApp handshake) and are listed via `Devices` / found via `DeviceByJID`.
-- Per-device access state (`whatsapp_meta` row) holds a 6-digit link code
+- One person, one WhatsApp (2026-09-26): the account key is
+  `whatsappUserKey(userID)` and its one phone's pairing state lives in
+  `<baseDir>/<userKey>/session.db`. Restart reconnects from disk — no re-pair.
+  Pairing is QR-based (`EnsurePairingQR` / `GetQR`); `IsPaired` gates
+  readiness. Asking to pair another phone (`?device=next` once paired, or a
+  named slot) is refused: unpair the linked phone first.
+- Accounts could once link extra phones (`devices/<slot>/`, for a second
+  parent in SparkQuill). Startup logs each one out of WhatsApp and deletes it
+  (`retireExtraWhatsAppDevices`); one that cannot be logged out right then
+  keeps its files and is retried at the next start. A managed channel id
+  minted for an extra phone (`<user>~<slot>|…`) names no service.
+- `UnpairDevice` resets the account's pairing to a fresh one. The phone's
+  label (`SetDeviceLabel`) is stored without a WhatsApp handshake.
+- Access state (`whatsapp_meta` row) holds a 6-digit link code
   (auto-rotated, 24h expiry) and the bound-DM-chat list with last-seen times.
 
 ## Ingress
@@ -61,7 +62,7 @@ sees it:
 - Thread-less: the chat JID is the thread. Replies continue the bound
   conversation within the 1-hour idle window; past it, a new conversation
   starts with a short preamble from the old one.
-- The chat → session pointer persists in the device's own store
+- The chat → session pointer persists in the account's store
   (`botSessionBindingStore`), filtered by route key on load, so a restart
   restores the conversation but never a different workflow's.
   Route-change isolation (P1) and the full lifecycle live in
@@ -77,7 +78,7 @@ sees it:
 
 | Area | File |
 |---|---|
-| Manager, device slots, pairing, unpair | `agent_go/cmd/server/services/whatsapp_manager.go` |
+| Manager, pairing, unpair, extra-phone retirement | `agent_go/cmd/server/services/whatsapp_manager.go` |
 | Service, QR, slugs, ingress, bindings, link codes | `agent_go/cmd/server/services/whatsapp_service.go` |
 | Voice wiring, access func, profile router | `agent_go/cmd/server/server.go` |
 | Lifecycle, route isolation, mention policy | `agent_go/cmd/server/services/bot_connector.go` |

@@ -179,8 +179,8 @@ it("says ask an admin only for the platform shared bot", async () => {
   expect(host.textContent).not.toContain("ask an admin");
   expect(host.textContent).toContain("You have no other bots yet");
   expect(host.textContent).toContain("Give another workflow or crew its own bot first");
-  await act(async () => { radio(host, /Shared bot/).click(); });
-  expect(host.textContent).toContain("Not set up · ask an admin (Access → Slack)");
+  // No shared bot is configured, so it is not offered at all.
+  expect(radio(host, /Shared bot/)).toBeUndefined();
 });
 
 it("adds a channel for this workflow on one of my bots", async () => {
@@ -214,4 +214,23 @@ it("shows a save error once, beside Save bot, while the bot form is open", async
   const saveButton = Array.from(host.querySelectorAll("button")).find(b => /Save bot/.test(b.textContent || ""));
   const formText = saveButton?.closest("section, div.space-y-4, form")?.textContent || "";
   expect(formText).toContain(message);
+});
+
+it("offers the shared bot only when an admin has configured one", async () => {
+  const none = await render(makeBots({ shared: null }));
+  expect(none.textContent).not.toContain("Shared bot");
+  document.body.innerHTML = "";
+
+  const unconfigured = await render(makeBots({ shared: { ...sharedBot, configured: false } }));
+  expect(unconfigured.textContent).not.toContain("Shared bot");
+  document.body.innerHTML = "";
+
+  const configured = await render(makeBots());
+  expect(configured.textContent).toContain("Shared bot");
+});
+
+it("keeps the shared bot visible while this target has shared-bot channels", async () => {
+  const routes = [{ kind: "slack", channel_id: "C0123456789", workspace_path: "Workflow/support" }] as unknown as WorkflowRoute[];
+  const host = await render(makeBots({ shared: null, routes }));
+  expect(host.textContent).toContain("Shared bot");
 });

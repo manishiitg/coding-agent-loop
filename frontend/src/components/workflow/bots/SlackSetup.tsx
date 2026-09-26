@@ -94,6 +94,10 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
 
   // Other bots of mine that already answer here in some channels.
   const sharingBots = myOtherBots.filter(bot => myBotRoutesHere(bot).length > 0)
+  // Offer the shared bot only when an admin has set one up (Access → Slack or
+  // the server's env), or when this target already has shared-bot channels
+  // that must stay visible to manage or remove.
+  const showShared = !!shared?.configured || slackRoutes.length > 0
 
   // The own bot is the source of truth: it answers whenever it exists. The
   // radio only chooses what to show while nothing is set up yet.
@@ -137,20 +141,22 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
             label={`One of my bots${sharingBots.length === 1 ? ` · ${sharingBots[0].display_name}` : ''}`}
             hint={`A bot you set up for another workflow or crew. Answers here in the channels you pick.`}
           />
-          <ModeOption
-            checked={mode === 'shared'}
-            disabled={false}
-            onSelect={() => setMode('shared')}
-            icon={<Users className="h-3.5 w-3.5" />}
-            label={`Shared bot${shared ? ` · ${shared.display_name}` : ''}`}
-            hint="The platform bot an admin manages. Answers here in the channels you pick."
-          />
+          {showShared && (
+            <ModeOption
+              checked={mode === 'shared'}
+              disabled={false}
+              onSelect={() => setMode('shared')}
+              icon={<Users className="h-3.5 w-3.5" />}
+              label={`Shared bot${shared ? ` · ${shared.display_name}` : ''}`}
+              hint="The platform bot an admin manages. Answers here in the channels you pick."
+            />
+          )}
         </div>
       </FormSection>
 
       {mode === 'own' && <OwnBotSection bots={bots} noun={noun} ownTitle={ownTitle} editing={editing || !own} onEdit={setEditing} />}
       {mode === 'mine' && <MyBotsSection bots={bots} noun={noun} />}
-      {mode === 'shared' && <SharedBotSection bots={bots} noun={noun} ownTitle={ownTitle} shared={shared} />}
+      {mode === 'shared' && showShared && <SharedBotSection bots={bots} noun={noun} ownTitle={ownTitle} shared={shared} />}
 
       {mode === 'own' && sharingBots.length > 0 && (
         <section className="space-y-2">

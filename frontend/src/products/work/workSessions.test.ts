@@ -169,6 +169,26 @@ describe('createWorkSession', () => {
   })
 
   it.each([
+    ['competitor-intelligence-analyst', 'Competitor Intelligence Analyst'],
+    ['campaign-performance-analyst', 'Campaign Performance Analyst'],
+    ['growth-experiment-planner', 'Growth Experiment Planner'],
+  ] as const)('creates the %s Marketing Crew with pending setup and no campaign action', async (id, name) => {
+    updatePlannerFile.mockClear()
+    const session = await createWorkSession(name, 'Review a source-linked marketing result.', undefined, id)
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
+    const setup = JSON.parse(writes.get(`${session.workspacePath}/templates/${id}/TEMPLATE_SETUP.json`)!)
+    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(runtime.capabilities.selected_skills).toEqual([id])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(setup).toMatchObject({ template_id: id, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+    expect(writes.get(`${session.workspacePath}/skills/${id}/SKILL.md`)).toContain('## Setup through chat')
+  })
+
+  it.each([
     ['lead-intake-qualifier', 'Lead Intake & Qualifier', 1],
     ['account-researcher', 'Account Researcher', 1],
     ['sales-followup-coordinator', 'Sales Follow-up Coordinator', 2],

@@ -54,6 +54,14 @@ export type PlaybookPulseFocus = {
 // Read-only catalog projection of the first-party playbook manifests. The API
 // slice will replace this projection when installation records are introduced.
 export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
+  { id: 'campaign-signal-to-reviewed-experiment', title: 'Campaign Signal to Reviewed Experiment', description: 'Explain a campaign conversion change from matched spend and CRM evidence, then prepare one bounded experiment plan with an optional sourced competitor context.', version: '0.1.0', category: 'Marketing', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'performance', agent_playbook_id: 'campaign-performance-analyst', required: true, output: 'campaign-performance-brief/v1' },
+    { id: 'competitor', agent_playbook_id: 'competitor-intelligence-analyst', required: false, output: 'competitor-context/v1' },
+    { id: 'experiment', agent_playbook_id: 'growth-experiment-planner', required: true, output: 'growth-experiment-plan/v1' },
+  ], handoffs: [
+    { id: 'performance-to-experiment', from: 'performance', to: 'experiment', artifact_type: 'campaign-performance-brief/v1', required: true },
+    { id: 'competitor-to-experiment', from: 'competitor', to: 'experiment', artifact_type: 'competitor-context/v1', required: false },
+  ], setupChecks: ['goal_owner', 'campaign_scope', 'metric_policy', 'baseline_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'meeting-decision-to-owned-follow-through', title: 'Meeting Decision to Owned Follow-through', description: 'Turn authorized meeting notes into confirmed, deduplicated actions and a source-observed project status report, with optional leadership review.', version: '0.1.0', category: 'Operations', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'meeting', agent_playbook_id: 'meeting-actions-coordinator', required: true, output: 'meeting-action-register/v1' },
     { id: 'status', agent_playbook_id: 'project-status-reporter', required: true, output: 'project-action-status/v1' },

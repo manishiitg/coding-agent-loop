@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(39)
+    expect(PLAYBOOK_CATALOG).toHaveLength(40)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -45,6 +45,17 @@ describe('small-team catalog', () => {
     expect(invoice?.handoffs?.[0].artifact_type).toBe('document-intake-record/v1')
     expect(invoice?.setupChecks).toContain('duplicate_policy')
     expect(invoice?.setupChecks).toContain('test_run')
+  })
+
+  it('exposes campaign measurement to a reviewed experiment with optional competitor context', () => {
+    const marketing = PLAYBOOK_CATALOG.find(item => item.id === 'campaign-signal-to-reviewed-experiment')
+    expect(marketing?.category).toBe('Marketing')
+    expect(marketing?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'campaign-performance-analyst', 'growth-experiment-planner',
+    ])
+    expect(marketing?.agentSlots?.find(slot => slot.id === 'competitor')?.required).toBe(false)
+    expect(marketing?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('campaign-performance-brief/v1')
+    expect(marketing?.setupChecks).toContain('baseline_rule')
   })
 
   it('exposes five Shopify routes with distinct two-Crew handoffs', () => {

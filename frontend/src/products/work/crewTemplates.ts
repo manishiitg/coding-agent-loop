@@ -17,6 +17,7 @@ import websiteGrowthSkill from './templates/website-growth-starter/SKILL.md?raw'
 import websiteGrowthSetup from './templates/website-growth-starter/SETUP.md?raw'
 import websiteGrowthSetupState from './templates/website-growth-starter/TEMPLATE_SETUP.json?raw'
 import { websiteGrowthSpecialists, type WebsiteGrowthSpecialistId } from './websiteGrowthSpecialists'
+import { marketingSpecialists, type MarketingSpecialistId } from './marketingSpecialists'
 import { salesSpecialists, type SalesSpecialistId } from './salesSpecialists'
 import { customerSuccessSpecialists, type CustomerSuccessSpecialistId } from './customerSuccessSpecialists'
 import { supportSpecialists, type SupportSpecialistId } from './supportSpecialists'
@@ -27,7 +28,7 @@ import { securitySpecialists, type SecuritySpecialistId } from './securitySpecia
 import { gtmSpecialists, type GTMSpecialistId } from './gtmSpecialists'
 import { shopifySpecialists, type ShopifySpecialistId } from './shopifySpecialists'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId | SalesSpecialistId | CustomerSuccessSpecialistId | SupportSpecialistId | OperationsSpecialistId | EngineeringSpecialistId | QASpecialistId | SecuritySpecialistId | GTMSpecialistId | ShopifySpecialistId
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId | MarketingSpecialistId | SalesSpecialistId | CustomerSuccessSpecialistId | SupportSpecialistId | OperationsSpecialistId | EngineeringSpecialistId | QASpecialistId | SecuritySpecialistId | GTMSpecialistId | ShopifySpecialistId
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -213,7 +214,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'templates/website-growth-starter/SETUP.md': websiteGrowthSetup,
     'templates/website-growth-starter/TEMPLATE_SETUP.json': websiteGrowthSetupState,
   },
-}, ...websiteGrowthSpecialists, ...salesSpecialists, ...customerSuccessSpecialists, ...supportSpecialists, ...operationsSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...securitySpecialists, ...gtmSpecialists, ...shopifySpecialists]
+}, ...websiteGrowthSpecialists, ...marketingSpecialists, ...salesSpecialists, ...customerSuccessSpecialists, ...supportSpecialists, ...operationsSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...securitySpecialists, ...gtmSpecialists, ...shopifySpecialists]
 
 export function parseCrewTemplateSetupState(content: string, template: CrewTemplate): CrewTemplateSetupState | null {
   try {

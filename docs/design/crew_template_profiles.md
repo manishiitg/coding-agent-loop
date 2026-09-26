@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 48 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 51 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The sixteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The seventeen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -112,6 +112,29 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **First result:** channel-by-channel audience fit, asset URL, drafts, approval points, tracking plan, and owner action.
 - **Setup proof:** verify the live asset and an allowed channel, review one complete channel-specific draft and the contact policy. A social, email, or CRM connection is optional for planning and required for its actual route.
 - **Later run:** retain campaign/action IDs and delivery receipts, avoid duplicate posts or outreach, and compare observed results without inventing attribution.
+
+## Marketing → Other Growth
+
+### Competitor Intelligence Analyst (`competitor-intelligence-analyst`)
+
+- **Use case:** monitor a bounded competitor/product set for changes relevant to the owner's offer and buyer.
+- **First result:** dated prior/current source comparison, exact product/plan and market, relevance to the offer, uncertainties, and an owner question. The optional [fictional context](../../playbooks/agentic-engineering-platform/marketing/campaign-signal-to-reviewed-experiment/examples/competitor-context.json) remains separate from campaign measurement.
+- **Setup proof:** read one current primary source and a dated baseline capture, confirm competitor and product IDs, scope, buyer, threshold and allowed source access, then review one finding with the owner.
+- **Later run:** compare stable product and URL keys, suppress unchanged alerts, recheck expiring prices and terms, and avoid treating a vendor claim as customer preference.
+
+### Campaign Performance Analyst (`campaign-performance-analyst`)
+
+- **Use case:** explain a bounded campaign change using platform and downstream qualified-event records.
+- **First result:** campaign and account IDs, current and comparable baseline spend, clicks, deduplicated qualified events, rates, attribution window, source coverage and one owner question. See the [fictional brief](../../playbooks/agentic-engineering-platform/marketing/campaign-signal-to-reviewed-experiment/examples/campaign-performance-brief.json).
+- **Setup proof:** read one real current and baseline campaign record plus CRM or analytics events, agree on denominator, qualification, currency, period and data lag, reproduce one rate, then review uncertainty with the owner.
+- **Later run:** preserve metric policy and campaign/event IDs, wait for the agreed attribution lag, compare like periods, and deduplicate alerts before proposing a new experiment.
+
+### Growth Experiment Planner (`growth-experiment-planner`)
+
+- **Use case:** turn one evidence-backed growth question into a bounded, reviewable experiment.
+- **First result:** falsifiable hypothesis, eligible unit, one treatment, primary and guardrail metrics, baseline, sample or duration rule, stop condition, owner and next decision. The [fictional plan](../../playbooks/agentic-engineering-platform/marketing/campaign-signal-to-reviewed-experiment/examples/growth-experiment-plan.json) remains unlaunched.
+- **Setup proof:** review a real source brief, baseline or baseline-first decision, metric definitions, target population, change authority and safety guardrail with the owner before proposing a test.
+- **Later run:** retain experiment ID and predeclared rule, re-read comparable outcome and guardrail records, report null or incomplete results, and require a separate approved route for any launch.
 
 ## Sales
 

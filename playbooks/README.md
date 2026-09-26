@@ -46,6 +46,8 @@ AgentWorks
     │   └── AI Visibility Intelligence
     ├── Website Growth
     │   └── Website Growth Loop
+    ├── Marketing
+    │   └── Campaign Signal to Reviewed Experiment
     ├── Finance
     │   ├── Finance Operations Review
     │   └── Invoice Intake to Reviewed Payable
@@ -73,6 +75,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
+| Marketing | Campaign Signal to Reviewed Experiment; Growth Analytics Workflows and Website Growth Loop are adjacent | Three Marketing Crews are locally installable with pending setup. Campaign Performance and Growth Experiment are required; Competitor context is optional. |
 | Finance | Finance Operations Review; Invoice Intake to Reviewed Payable | Five Finance Crews are locally installable. The invoice route reuses Operations Document Intake Assistant and keeps bill creation and payment behind separate review. |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
@@ -211,6 +214,12 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | [Finance Operations Review](agentic-engineering-platform/finance/finance-operations-review/SKILL.md) | Propose a Billing Operations Coordinator → Finance Analyst review of subscription billing exceptions and source-linked financial impact. Close and payables specialists are optional; their handoffs are not part of the first packaged route. |
 | [Invoice Intake to Reviewed Payable](agentic-engineering-platform/finance/invoice-intake-to-reviewed-payable/SKILL.md) | Propose a Document Intake Assistant → Spend & Payables Coordinator route. Validate invoice fields and page spans, re-read current AP records for duplicates and payment state, and stop at an owner-reviewed payable decision. Bill writes and payment need separate authorization and receipts. |
 
+### Marketing
+
+| Playbook | Outcome |
+| --- | --- |
+| [Campaign Signal to Reviewed Experiment](agentic-engineering-platform/marketing/campaign-signal-to-reviewed-experiment/SKILL.md) | Propose Campaign Performance Analyst → Growth Experiment Planner, with optional sourced competitor context. Validate matched campaign and CRM metrics, baseline arithmetic, and a bounded plan; a launched variant requires a separate approved route. |
+
 ### Sales
 
 | Playbook | Outcome |
@@ -262,7 +271,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 20 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 21 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

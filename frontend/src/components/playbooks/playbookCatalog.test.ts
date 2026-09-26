@@ -29,6 +29,15 @@ describe('small-team catalog', () => {
     expect(growth?.setupChecks).toContain('action_ledger')
   })
 
+  it('offers a focused SEO proposal with two Crew roles and pending setup', () => {
+    const seo = PLAYBOOK_CATALOG.find(item => item.id === 'seo-intelligence')
+    expect(seo?.version).toBe('0.2.0')
+    expect(seo?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['seo-analyst', 'search-opportunity-mapper'])
+    expect(seo?.handoffs?.[0].artifact_type).toBe('seo-issue-list/v1')
+    expect(seo?.setupChecks).toContain('manual_test')
+    expect(seo?.setupChecks).toContain('activation_choice')
+  })
+
   it('exposes the Finance Operations Review team and validated billing handoff', () => {
     const finance = PLAYBOOK_CATALOG.find(item => item.id === 'finance-operations-review')
     expect(finance?.category).toBe('Finance')

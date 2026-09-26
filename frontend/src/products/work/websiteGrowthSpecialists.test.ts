@@ -42,4 +42,12 @@ describe('Website Growth Crew templates', () => {
       expect(template.files[template.setupGuidePath]).toContain('Fictional')
     }
   })
+
+  it('gives SEO Intelligence distinct issue and opportunity artifact instructions', () => {
+    const technical = getCrewTemplate('seo-analyst')
+    const search = getCrewTemplate('search-opportunity-mapper')
+    expect(technical.files['skills/seo-analyst/SKILL.md']).toContain('seo-issue-list/v1')
+    expect(search.files['skills/search-opportunity-mapper/SKILL.md']).toContain('seo-opportunity-list/v1')
+    expect(search.files['skills/search-opportunity-mapper/SKILL.md']).toContain('source_issue_artifact_id')
+  })
 })

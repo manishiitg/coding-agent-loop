@@ -904,6 +904,12 @@ func resolveProductProjectBindingInRoot(
 			matched.ManifestPath = ""
 			matched.AuthoritativeSessionID = ""
 		}
+		// product.json's session is the creator's chat. A co-owner has full
+		// access but a chat of their own (one user, one chat).
+		if runtimeRoot == crewSharedRootName && !crewRootCreatedBy(ctx, workspacePath, userID) {
+			matched.ManifestPath = ""
+			matched.AuthoritativeSessionID = ""
+		}
 	}
 	if matched == nil {
 		return productConversationBinding{}, fmt.Errorf("project %q was not found", resourceProjectID)

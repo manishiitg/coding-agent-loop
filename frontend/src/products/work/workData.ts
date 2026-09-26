@@ -4,7 +4,9 @@ import { getApiBaseUrl, getAuthToken } from '../../services/api'
 
 export const WORK_PROFILE_ID = 'work'
 export const WORK_PROFILE_VERSION = 3
-export const WORK_PROJECTS_ROOT = 'Chats/Work/projects'
+// Crews live at the shared root (docs/design/crew_shared_root.md); the UI lists
+// and creates them through /api/agent-profiles/work/my-projects.
+export const WORK_PROJECTS_ROOT = 'Crew'
 
 export type WorkProductCommand = {
   name: string

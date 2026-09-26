@@ -192,9 +192,36 @@ func workflowAccessForBotRouteClaims(claims *UserClaims, m *WorkflowManifest) (W
 func workflowAccessForWorkspacePath(ctx context.Context, claims *UserClaims, workspacePath string) (WorkflowAccessLevel, *WorkflowManifest) {
 	manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
 	if err != nil || !exists {
-		return workflowAccessForManifest(claims, nil), nil
+		manifest = nil
+	}
+	// A crew's workflow.json carries no owners list, so the workflow rules
+	// would read it as an ownerless legacy workflow and hand every account
+	// Owner. A crew answers with its own rules: owners (creator and
+	// co-owners) own it, others read it unless it is private.
+	if level, isCrew := crewWorkflowAccess(ctx, claims, workspacePath); isCrew {
+		return level, manifest
 	}
 	return workflowAccessForManifest(claims, manifest), manifest
+}
+
+func crewWorkflowAccess(ctx context.Context, claims *UserClaims, workspacePath string) (WorkflowAccessLevel, bool) {
+	if claims == nil || claims.Provider == "bot_route" {
+		return "", false // bot routes keep their own route-bound rules
+	}
+	ref, ok := resolveCrewPath(ctx, claims.UserID, workspacePath)
+	if !ok {
+		return "", false
+	}
+	if userAccessForClaims(claims).Admin {
+		return WorkflowAccessOwner, true
+	}
+	switch crewAccessFor(claims, ref) {
+	case crewAccessOwner:
+		return WorkflowAccessOwner, true
+	case crewAccessReader:
+		return WorkflowAccessRead, true
+	}
+	return WorkflowAccessNone, true
 }
 
 func currentUserWorkflowAccess(r *http.Request, workspacePath string) WorkflowAccessLevel {

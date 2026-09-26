@@ -262,7 +262,9 @@ func secretWorkspacePathForRequest(r *http.Request, raw string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return agentProfileRuntimeWorkspace(userID, clean), nil
+	// A crew (any spelling, following its move to Crew/<id>) has one path,
+	// the key its secrets are stored under.
+	return productConversationRuntimeWorkspace(userID, clean), nil
 }
 
 // storeSecretRequest is the request body for storing a workflow secret server-side

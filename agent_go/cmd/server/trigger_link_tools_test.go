@@ -220,12 +220,12 @@ func TestTriggerLinkReachesAnotherUsersCrew(t *testing.T) {
 	}
 	var sawGamma bool
 	for _, crew := range crews {
-		if crew["workspace_path"] == linkGammaPath && crew["access"] == "write" && crew["owner"] == "other" {
+		if crew["workspace_path"] == linkGammaPath && crew["access"] == "read" && crew["owner"] == "other" {
 			sawGamma = true
 		}
 	}
 	if !sawGamma {
-		t.Fatalf("list must include another user's crew with write access: %+v", crews)
+		t.Fatalf("list must include another user's crew as read-only: %+v", crews)
 	}
 }
 

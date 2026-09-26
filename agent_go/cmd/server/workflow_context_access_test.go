@@ -61,7 +61,7 @@ func TestWorkflowContextAccess(t *testing.T) {
 // physical path; missing Crews and sub-folders are still rejected.
 func TestCrewContextAccessIsServerWide(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
-	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","products":[]},{"id":"bob","username":"bob","products":[]}]}`)
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","role":"editor","products":["work"]},{"id":"bob","username":"bob","role":"editor","products":["work"]}]}`)
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		"_users/alice/Chats/Work/projects/research/product.json": `{"schema_version":1,"product":"work","id":"research","title":"Research"}`,
 		"_users/bob/Chats/Work/projects/private/product.json":    `{"schema_version":1,"product":"work","id":"private","title":"Private"}`,
@@ -84,9 +84,9 @@ func TestCrewContextAccessIsServerWide(t *testing.T) {
 	if got, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{"_users/bob/Chats/Work/projects/private"}); err != nil || !reflect.DeepEqual(readRoots, []string{"_users/bob/Chats/Work/projects/private"}) {
 		t.Fatalf("another owner's Crew must be reachable: %v %v %v", got, readRoots, err)
 	}
-	crewWrite, readOnly := splitCrewReferenceFolders([]string{"_users/bob/Chats/Work/projects/private", "Workflow/reports"})
-	if !reflect.DeepEqual(crewWrite, []string{"_users/bob/Chats/Work/projects/private/"}) || !reflect.DeepEqual(readOnly, []string{"Workflow/reports"}) {
-		t.Fatalf("crew roots must be writable and workflows read-only: write=%v read=%v", crewWrite, readOnly)
+	crewWrite, readOnly := splitCrewReferenceFolders("alice", []string{"_users/bob/Chats/Work/projects/private", "_users/alice/Chats/Work/projects/research", "Workflow/reports"})
+	if !reflect.DeepEqual(crewWrite, []string{"_users/alice/Chats/Work/projects/research/"}) || !reflect.DeepEqual(readOnly, []string{"_users/bob/Chats/Work/projects/private", "Workflow/reports"}) {
+		t.Fatalf("only the caller's own crews are writable: write=%v read=%v", crewWrite, readOnly)
 	}
 	for _, path := range []string{"Chats/Work/projects/private", "_users/bob/Chats/Work/projects/missing", "Chats/Work/projects/research/code"} {
 		if got, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{path}); err == nil || got != nil || readRoots != nil {

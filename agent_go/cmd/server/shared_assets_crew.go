@@ -79,7 +79,7 @@ func (api *StreamingAPI) crewReaderSharedAsset(w http.ResponseWriter, r *http.Re
 	}
 	crewRoot := path.Join("_users", owner, "Chats/Work/projects", parts[3])
 	// A link made before the crew moved to Crew/<id> follows it there.
-	if moved := crewPathAliases.lookup(r.Context(), crewRoot); moved != "" {
+	if moved := crewPathAliases.lookup(crewRoot); moved != "" {
 		ref, _ := resolveCrewPath(r.Context(), caller, moved+"/"+strings.Join(parts[4:], "/"))
 		ref.Rest = strings.Trim(ref.Rest, "/")
 		access := crewAccessFor(claims, ref)

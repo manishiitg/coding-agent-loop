@@ -14,7 +14,8 @@ func TestWorkflowContextPromptUsesCompactReadOnlyReferences(t *testing.T) {
 
 	for _, want := range []string{
 		"## Workflow Context",
-		"Crew folders (any owner) are shared read-write",
+		"Crew folders you own (as creator or co-owner) are read-write",
+		"Another owner's Crew folder is read-only",
 		"(workflow) `Workflow/HDFC-Personal-Accounts/`",
 		"(workflow) `Workflow/ICICI-BANK-PARSING-v2/`",
 		"(Crew) `Chats/Work/projects/company-ca-a1b2c3d4/`",

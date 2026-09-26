@@ -419,6 +419,9 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 					return "The Crew description must be at most 1000 characters.", nil
 				}
 
+				if strings.TrimSpace(runtime.UserID) == "" {
+					return "A Crew can only be created by a signed-in user.", nil
+				}
 				id := uuid.NewString()
 				// The shared crew root (product.yaml projects_root); the
 				// manifest's owner_id, not the location, names the owner.
@@ -472,6 +475,13 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 				if err := writeJSON(path.Join(workspacePath, "product.json"), productManifest); err != nil {
 					return "", fmt.Errorf("create Crew project configuration: %w", err)
 				}
+				// The server records who owns the crew; product.json alone
+				// never decides it.
+				if RecordCrewCreator != nil {
+					if err := RecordCrewCreator(ctx, workspacePath, runtime.UserID); err != nil {
+						return "", fmt.Errorf("record the new Crew's owner: %w", err)
+					}
+				}
 
 				if runtime.Emit != nil {
 					kind := "project_created"
@@ -497,6 +507,10 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 		}, nil
 	}
 }
+
+// RecordCrewCreator records the creator of a newly created crew in the
+// server's crew access record. The server sets it at startup.
+var RecordCrewCreator func(ctx context.Context, workspacePath, userID string) error
 
 // RegisterAgentProfileRuntime connects Crew's durable project tools and
 // chat-configurable identity to the provider runtime.

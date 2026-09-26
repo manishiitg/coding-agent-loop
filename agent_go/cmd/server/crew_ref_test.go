@@ -2,43 +2,62 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/livefeed"
 )
 
+// stubCrewLookups points the crew access records and aliases at a temp
+// state directory holding owners (root -> creator, the only owner).
 func stubCrewLookups(t *testing.T, owners map[string]string, aliases map[string]string) {
 	t.Helper()
-	prevOwners, prevAliases := crewOwners.read, crewPathAliases.read
-	crewOwners.read = func(_ context.Context, root string) string { return owners[root] }
-	crewPathAliases.read = func(context.Context) map[string]string { return aliases }
-	crewOwners.mu.Lock()
-	crewOwners.entries = map[string]crewOwnerEntry{}
-	crewOwners.mu.Unlock()
-	crewPathAliases.mu.Lock()
-	crewPathAliases.aliases = nil
-	crewPathAliases.mu.Unlock()
+	records := map[string]crewAccess{}
+	for root, owner := range owners {
+		records[root] = crewAccess{Creator: owner, Owners: []string{owner}}
+	}
+	stubCrewAccess(t, records, aliases)
+}
+
+// stubCrewAccess is stubCrewLookups with full access records (co-owners,
+// private).
+func stubCrewAccess(t *testing.T, records map[string]crewAccess, aliases map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if len(records) > 0 {
+		if _, err := updateCrewAccessFile(dir, func(existing map[string]crewAccess) error {
+			for root, acl := range records {
+				existing[root] = acl
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prevDir, prevSeed, prevAliases := crewAccessRecords.dir, crewAccessRecords.seedFromDisk, crewPathAliases.read
+	crewAccessRecords.dir = func() string { return dir }
+	crewAccessRecords.seedFromDisk = func(context.Context, string) string { return "" }
+	crewPathAliases.read = func() map[string]string { return aliases }
+	crewAccessRecords.invalidate()
+	crewPathAliases.invalidate()
 	t.Cleanup(func() {
-		crewOwners.read, crewPathAliases.read = prevOwners, prevAliases
-		crewOwners.mu.Lock()
-		crewOwners.entries = map[string]crewOwnerEntry{}
-		crewOwners.mu.Unlock()
-		crewPathAliases.mu.Lock()
-		crewPathAliases.aliases = nil
-		crewPathAliases.mu.Unlock()
+		crewAccessRecords.dir, crewAccessRecords.seedFromDisk, crewPathAliases.read = prevDir, prevSeed, prevAliases
+		crewAccessRecords.invalidate()
+		crewPathAliases.invalidate()
 	})
+	return dir
 }
 
 // All three spellings of one crew parse to the same root; nothing else is a crew.
 func TestParseCrewPathSpellings(t *testing.T) {
 	for raw, want := range map[string]crewPathRef{
-		"Chats/Work/projects/sde-1a2b":                     {Root: "_users/alice/Chats/Work/projects/sde-1a2b", OwnerID: "alice"},
-		"/Chats/Work/projects/sde-1a2b/db/reports/x.html/": {Root: "_users/alice/Chats/Work/projects/sde-1a2b", Rest: "db/reports/x.html", OwnerID: "alice"},
-		"_users/bob/Chats/Work/projects/ops-9f":            {Root: "_users/bob/Chats/Work/projects/ops-9f", OwnerID: "bob"},
+		"Chats/Work/projects/sde-1a2b":                     {Root: "_users/alice/Chats/Work/projects/sde-1a2b", OwnerID: "alice", Owners: []string{"alice"}},
+		"/Chats/Work/projects/sde-1a2b/db/reports/x.html/": {Root: "_users/alice/Chats/Work/projects/sde-1a2b", Rest: "db/reports/x.html", OwnerID: "alice", Owners: []string{"alice"}},
+		"_users/bob/Chats/Work/projects/ops-9f":            {Root: "_users/bob/Chats/Work/projects/ops-9f", OwnerID: "bob", Owners: []string{"bob"}},
 		"Crew/sde-1a2b/code/reports/x.py":                  {Root: "Crew/sde-1a2b", Rest: "code/reports/x.py", Shared: true},
 	} {
 		got, ok := parseCrewPath("alice", raw)
-		if !ok || got != want {
+		if !ok || got.Root != want.Root || got.Rest != want.Rest || got.OwnerID != want.OwnerID || got.Shared != want.Shared || strings.Join(got.Owners, ",") != strings.Join(want.Owners, ",") {
 			t.Fatalf("%q: got %+v %v, want %+v", raw, got, ok, want)
 		}
 	}
@@ -76,8 +95,8 @@ func TestResolveCrewPathAliasAndOwner(t *testing.T) {
 }
 
 func TestCrewAccessFor(t *testing.T) {
-	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","products":["work"]},{"id":"bob","username":"bob","products":["work"]},{"id":"carol","username":"carol","products":["agentworks"]}]}`)
-	ref := crewPathRef{Root: "Crew/sde", OwnerID: "alice", Shared: true}
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","role":"editor","products":["work"]},{"id":"bob","username":"bob","products":["work"]},{"id":"carol","username":"carol","products":["agentworks"]}]}`)
+	ref := crewPathRef{Root: "Crew/sde", OwnerID: "alice", Owners: []string{"alice"}, Shared: true}
 	for user, want := range map[string]crewAccessLevel{"alice": crewAccessOwner, "bob": crewAccessReader, "carol": crewAccessNone} {
 		if got := crewAccessFor(&UserClaims{UserID: user, Username: user}, ref); got != want {
 			t.Fatalf("%s: %v, want %v", user, got, want)

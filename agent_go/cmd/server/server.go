@@ -2312,6 +2312,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/agent-profiles/{id}/projects/{project_id}", api.handleDeleteAgentProfileProject).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/my-projects", api.handleListOwnCrewProjects).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/my-projects", api.handleCreateOwnCrewProject).Methods("POST")
+	apiRouter.HandleFunc("/agent-profiles/{id}/my-projects/{project_id}/access", api.handleCrewAccess).Methods("GET", "PUT", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects", api.handleListSharedProjects).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/files", api.handleListSharedProjectFiles).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/file", api.handleGetSharedProjectFile).Methods("GET", "OPTIONS")
@@ -5738,10 +5739,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					profileRoot := agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder)
 					profileWrite := strings.TrimSuffix(profileRoot, "/") + "/"
 					sandbox := resolvedProfile.Definition.Runtime.Sandbox
-					// Crew references (# tags and attached Crews, any owner) are
-					// shared read-write like the Crew itself; workflow references
-					// stay read-only. A Crew Run-mode reader keeps them read-only.
-					crewRefWrite, nonCrewReadOnly := splitCrewReferenceFolders(workflowReadOnlyFolders)
+					// Crew references (# tags and attached Crews) the caller owns
+					// are read-write like the Crew itself; other owners' crews and
+					// workflow references stay read-only. A Crew Run-mode reader
+					// keeps them all read-only.
+					crewRefWrite, nonCrewReadOnly := splitCrewReferenceFolders(currentUserID, workflowReadOnlyFolders)
 					if currentUserIsReadOnly && resolvedProfile.Definition.ID == "work" {
 						crewRefWrite, nonCrewReadOnly = nil, workflowReadOnlyFolders
 					}

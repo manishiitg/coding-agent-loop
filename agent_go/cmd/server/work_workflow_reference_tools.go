@@ -28,14 +28,16 @@ func accessibleProjectIcon(icon, name string) string {
 
 func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]map[string]interface{}, error) {
 	// Crews are shared server-wide: the caller's own and every other owner's,
-	// all read-write for Crew-to-Crew work.
+	// read-write only for crews the caller owns (private crews hidden).
 	catalog, err := listCrewCatalog(ctx, defaultProductProjectStore())
 	if err != nil {
 		return nil, fmt.Errorf("list Crew projects: %w", err)
 	}
 	items := make([]map[string]interface{}, 0, len(catalog))
-	self := sanitizeUserIDForPath(userID)
 	for _, entry := range catalog {
+		if !entry.VisibleTo(userID) {
+			continue // private: its owners' alone
+		}
 		manifest := entry.Manifest
 		id := strings.TrimSpace(manifest.ID)
 		name := strings.TrimSpace(manifest.Title)
@@ -47,8 +49,9 @@ func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]ma
 			identityName = name
 		}
 		access, ownerLabel := "owner", "you"
-		if entry.OwnerID != self {
-			access, ownerLabel = "write", entry.OwnerID
+		if !entry.IsOwner(userID) {
+			// Another owner's crew is read-only for this crew.
+			access, ownerLabel = "read", entry.OwnerID
 			if record := directoryUserFor(entry.OwnerID, "", ""); record != nil && strings.TrimSpace(record.Username) != "" {
 				ownerLabel = record.Username
 			}
@@ -84,7 +87,7 @@ func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]ma
 	return items, nil
 }
 
-func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...string) {
+func updateWorkSessionWorkflowGuard(sessionID, userID string, add []string, remove ...string) {
 	cfg := common.GetSessionShellConfig(sessionID)
 	if cfg == nil {
 		return
@@ -100,14 +103,14 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 		}
 	}
 	reads = appendUniqueStrings(reads, add...)
-	// Crew references are read-write; workflow references stay read-only.
+	// The caller's own crews are read-write; others' crews and workflows stay read-only.
 	writes := make([]string, 0, len(cfg.WritePaths)+len(add))
 	for _, path := range cfg.WritePaths {
 		if !removeSet[strings.TrimSuffix(strings.TrimSpace(path), "/")] {
 			writes = append(writes, path)
 		}
 	}
-	crewWrites, _ := splitCrewReferenceFolders(add)
+	crewWrites, _ := splitCrewReferenceFolders(userID, add)
 	writes = appendUniqueStrings(writes, crewWrites...)
 	common.SetSessionFolderGuard(sessionID, reads, writes)
 	// Another Crew's files are shared, its chats are not.
@@ -202,12 +205,14 @@ func crewPathOwnerMatches(a, b string) bool {
 	return true
 }
 
-// splitCrewReferenceFolders separates Crew project roots (any owner) from
-// other reference folders. Crews are shared read-write between Crews, so
-// their roots join the write set; workflow roots stay read-only.
-func splitCrewReferenceFolders(folders []string) (crewWrite, readOnly []string) {
+// splitCrewReferenceFolders separates the crews userID owns (creator or
+// co-owner) from every other reference folder. The user's own crews are
+// read-write for each other; another owner's crew is read-only -- its code,
+// hooks and manifests run as that owner, so a crew must never be able to
+// plant anything there -- and workflow roots stay read-only.
+func splitCrewReferenceFolders(userID string, folders []string) (crewWrite, readOnly []string) {
 	for _, folder := range folders {
-		if isCrewProjectPath(folder) {
+		if isCrewProjectPath(folder) && strings.TrimSpace(userID) != "" && crewRootOwnedBy(context.Background(), strings.TrimSuffix(strings.TrimSpace(folder), "/"), userID) {
 			crewWrite = append(crewWrite, strings.TrimSuffix(strings.TrimSpace(folder), "/")+"/")
 			continue
 		}
@@ -325,7 +330,7 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow or any Crew project on the server to this Crew as durable context: Crew references are read-write, workflow references read-only. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
+	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow or Crew project to this Crew as durable context: Crews you own are read-write, other owners' Crews and workflows are read-only. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact workflow or Crew workspace_path returned by list_accessible_workflows."},
@@ -351,11 +356,11 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
-		updateWorkSessionWorkflowGuard(sessionID, readRoots)
+		updateWorkSessionWorkflowGuard(sessionID, userID, readRoots)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
 		encoded, err := json.MarshalIndent(map[string]interface{}{
 			"workflow_context_paths": paths,
-			"note":                   "The project is saved as durable context and file access is active now (Crew references are read-write, workflow references read-only).",
+			"note":                   "The project is saved as durable context and file access is active now (Crews you own are read-write; other owners' Crews and workflows are read-only).",
 		}, "", "  ")
 		return string(encoded), err
 	}); err != nil {
@@ -394,7 +399,7 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
-		updateWorkSessionWorkflowGuard(sessionID, nil, removedReadRoot)
+		updateWorkSessionWorkflowGuard(sessionID, userID, nil, removedReadRoot)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
 		return "Project reference detached. Access is revoked now.", nil
 	})

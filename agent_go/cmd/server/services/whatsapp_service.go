@@ -1667,8 +1667,11 @@ func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, own
 					if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
 						continue
 					}
-					if sharedRoot && strings.TrimSpace(manifest.OwnerID) != strings.TrimSpace(owner.UserID) {
-						continue // someone else's crew: listed below as read-only
+					if sharedRoot {
+						crewRoot := strings.TrimSuffix(manifestPath, "/product.json")
+						if SharedCrewOwnedBy == nil || !SharedCrewOwnedBy(crewRoot, owner.UserID) {
+							continue // someone else's crew: listed below as read-only
+						}
 					}
 					id := strings.TrimSpace(manifest.ID)
 					if id == "" || seenCrewIDs[strings.ToLower(id)] {

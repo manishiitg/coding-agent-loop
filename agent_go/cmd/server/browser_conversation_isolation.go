@@ -40,7 +40,7 @@ func browserProjectKey(userID, workspace string) string {
 	// Crew/<id> keeps the key of the root it came from, so its saved browser
 	// profile (logins, cookies) carries over; a new crew uses its Crew root.
 	if ref, ok := resolveCrewPath(context.Background(), userID, clean); ok && ref.Shared {
-		if legacy := crewPathAliases.legacyRoot(context.Background(), ref.Root); legacy != "" {
+		if legacy := crewPathAliases.legacyRoot(ref.Root); legacy != "" {
 			return legacy
 		}
 		return ref.Root

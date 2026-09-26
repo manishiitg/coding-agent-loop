@@ -36,6 +36,10 @@ func ValidateBotScope(workspacePath, profileID string) error {
 // manifests themselves.
 var SharedCrewOwner func(workspacePath string) string
 
+// SharedCrewOwnedBy reports whether userID is an owner (creator or co-owner)
+// of the shared crew at workspacePath, by the server's crew access record.
+var SharedCrewOwnedBy func(workspacePath, userID string) bool
+
 // isSharedCrewScope reports a shared crew root, Crew/<id>, or a path in one.
 func isSharedCrewScope(workspacePath string) bool {
 	clean := strings.Trim(filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspacePath))), "/")

@@ -77,7 +77,7 @@ func isCrewProjectPath(workspacePath string) bool {
 // caller's own tree; physical paths name their owner explicitly.
 func crewProjectOwnedByCaller(callerID, workspacePath string) bool {
 	if ref, ok := resolveCrewPath(context.Background(), callerID, workspacePath); ok && ref.Shared {
-		return ref.OwnerID != "" && ref.OwnerID == sanitizeUserIDForPath(callerID)
+		return ref.IsOwner(callerID) // creator or co-owner
 	}
 	trimmed := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/")
 	if !strings.HasPrefix(trimmed, "_users/") {
@@ -154,10 +154,16 @@ func resolveCrewProjectBinding(ctx context.Context, callerID string, profile age
 		if err != nil {
 			return denied()
 		}
+		if crewIsPrivate(ctx, binding.WorkspacePath) {
+			return denied()
+		}
 		return readerCrewProjectBinding(ownerID, binding), nil
 	}
 	ownerID, binding, err := scanCrewProjectOwners(ctx, callerID, profile, projectID, store)
 	if err != nil {
+		return denied()
+	}
+	if crewIsPrivate(ctx, binding.WorkspacePath) {
 		return denied()
 	}
 	return readerCrewProjectBinding(ownerID, binding), nil
@@ -327,4 +333,12 @@ func crewReaderDeniedTools() []string {
 		"create_crew",
 		"perform_ui_action",
 	}
+}
+
+// crewIsPrivate reports a private crew: its owners' alone, never bound for a
+// reader whatever the way in (chat, Slack/WhatsApp, crew functions, MCP/CLI,
+// shared files).
+func crewIsPrivate(ctx context.Context, workspacePath string) bool {
+	ref, ok := resolveCrewPath(ctx, "", workspacePath)
+	return ok && ref.Private
 }

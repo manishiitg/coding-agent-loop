@@ -52,12 +52,12 @@ func TestUpdateWorkSessionWorkflowGuardBlocksAttachedCrewChats(t *testing.T) {
 	common.SetSessionFolderGuardBlockedPaths(session, nil)
 	defer common.ClearSessionShellConfig(session)
 
-	updateWorkSessionWorkflowGuard(session, []string{"_users/bob/Chats/Work/projects/qa", "Workflow/reports"})
+	updateWorkSessionWorkflowGuard(session, "alice", []string{"_users/bob/Chats/Work/projects/qa", "Workflow/reports"})
 	cfg := common.GetSessionShellConfig(session)
 	if len(cfg.BlockedPaths) != 1 || cfg.BlockedPaths[0] != "_users/bob/Chats/Work/projects/qa/builder/" {
 		t.Fatalf("blocked after attach = %v", cfg.BlockedPaths)
 	}
-	updateWorkSessionWorkflowGuard(session, nil, "_users/bob/Chats/Work/projects/qa")
+	updateWorkSessionWorkflowGuard(session, "alice", nil, "_users/bob/Chats/Work/projects/qa")
 	if cfg := common.GetSessionShellConfig(session); len(cfg.BlockedPaths) != 0 {
 		t.Fatalf("blocked after detach = %v", cfg.BlockedPaths)
 	}
@@ -73,7 +73,7 @@ func TestAttachedCrewDatabaseIsReadOnly(t *testing.T) {
 	common.SetSessionFolderGuardBlockedWritePaths(session, []string{"_users/alice/Chats/Work/projects/sde/db/db.sqlite"})
 	defer common.ClearSessionShellConfig(session)
 
-	updateWorkSessionWorkflowGuard(session, []string{"_users/bob/Chats/Work/projects/qa"})
+	updateWorkSessionWorkflowGuard(session, "alice", []string{"_users/bob/Chats/Work/projects/qa"})
 	cfg := common.GetSessionShellConfig(session)
 	if !stringSliceContains(cfg.BlockedWritePaths, "_users/bob/Chats/Work/projects/qa/db/") || !stringSliceContains(cfg.BlockedWritePaths, "_users/alice/Chats/Work/projects/sde/db/db.sqlite") {
 		t.Fatalf("write blocks after attach = %v", cfg.BlockedWritePaths)
@@ -81,7 +81,7 @@ func TestAttachedCrewDatabaseIsReadOnly(t *testing.T) {
 	if stringSliceContains(cfg.BlockedPaths, "_users/bob/Chats/Work/projects/qa/db/") {
 		t.Fatal("another Crew's database must stay readable")
 	}
-	updateWorkSessionWorkflowGuard(session, nil, "_users/bob/Chats/Work/projects/qa")
+	updateWorkSessionWorkflowGuard(session, "alice", nil, "_users/bob/Chats/Work/projects/qa")
 	if cfg := common.GetSessionShellConfig(session); stringSliceContains(cfg.BlockedWritePaths, "_users/bob/Chats/Work/projects/qa/db/") || !stringSliceContains(cfg.BlockedWritePaths, "_users/alice/Chats/Work/projects/sde/db/db.sqlite") {
 		t.Fatalf("write blocks after detach = %v", cfg.BlockedWritePaths)
 	}

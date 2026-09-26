@@ -111,6 +111,12 @@ func authorizeWorkflowContextPathsWithReadRoots(ctx context.Context, paths []str
 				logContextDenial(claims, folder, "crew product.json is not a Work crew")
 				return nil, nil, denied
 			}
+			// The same rule as every other way into a crew: a private crew
+			// is its owners' alone, and a crew without owners is nobody's.
+			if ref, ok := resolveCrewPath(ctx, claims.UserID, folder); !ok || crewAccessFor(claims, ref) == crewAccessNone {
+				logContextDenial(claims, folder, "crew not accessible to this user")
+				return nil, nil, denied
+			}
 		default:
 			logContextDenial(claims, folder, "unsupported attachment path")
 			return nil, nil, denied

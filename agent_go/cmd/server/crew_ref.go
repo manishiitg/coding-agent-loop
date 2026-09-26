@@ -3,35 +3,49 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
 )
 
 // Crew paths: one parser, one resolver, one access rule.
 //
-// A crew is moving from its owner's private tree to a shared root, the way
-// workflows live at Workflow/<name> (docs/design/crew_shared_root.md):
+// Crews live at a shared root, the way workflows live at Workflow/<name>
+// (docs/design/crew_shared_root.md):
 //
-//	Crew/<id>                               shared root; owner from product.json owner_id
+//	Crew/<id>                               shared root; access from the server's crew access record
 //	Chats/Work/projects/<id>                legacy, user-relative: the caller's own crew
 //	_users/<owner>/Chats/Work/projects/<id> legacy, physical: any owner's crew
 //
 // Every API edge that receives a crew path goes through resolveCrewPath, so a
-// new endpoint cannot accept one spelling and reject another (the report-run
-// owner 400 on 2026-09-26). After migration, the legacy spellings resolve to
-// the crew's Crew/<id> root through the alias map written by the migration.
+// new endpoint cannot accept one spelling and reject another. After the
+// migration, the legacy spellings resolve to the crew's Crew/<id> root through
+// the alias map it recorded.
+//
+// Who may do what with a shared crew is the server's crew access record
+// (<state>/crew-root/owners.json): a creator, a list of owners (co-owners have
+// full access), and a private flag (hidden from everyone but its owners). It
+// lives in the agent's own state directory, never in the documents root, so no
+// browser request, agent tool, or shell command can edit it. product.json
+// owner_id is read exactly once, the first time the server sees a crew it has
+// no record for, to seed the record with its creator.
 
 const (
 	crewSharedRootName = "Crew"
-	crewPathAliasFile  = "_system/crew-path-aliases.json"
-	crewOwnerCacheTTL  = 30 * time.Second
+	crewStateDirName   = "crew-root"
+	crewAccessFileName = "owners.json"
+	crewAliasFileName  = "aliases.json"
+	crewCacheTTL       = 30 * time.Second
 )
 
 func init() {
@@ -42,6 +56,19 @@ func init() {
 		}
 		return ref.OwnerID
 	}
+	services.SharedCrewOwnedBy = func(workspacePath, userID string) bool {
+		return crewRootOwnedBy(context.Background(), workspacePath, userID)
+	}
+	workproduct.RecordCrewCreator = func(_ context.Context, workspacePath, userID string) error {
+		acl, err := crewAccessRecords.claim(workspacePath, userID)
+		if err != nil {
+			return err
+		}
+		if acl.Creator != sanitizeUserIDForPath(userID) {
+			return fmt.Errorf("crew %s is already recorded for another owner", workspacePath)
+		}
+		return nil
+	}
 }
 
 // crewPathRef is one crew path split into the crew's root and the part below it.
@@ -51,9 +78,13 @@ type crewPathRef struct {
 	Root string
 	// Rest is the path below Root ("" for the root itself).
 	Rest string
-	// OwnerID is the owning user's path segment. Legacy paths carry it;
-	// a shared root takes it from the manifest (empty when unknown).
+	// OwnerID is the crew's creator: its schedules, webhooks and bot routes
+	// run as this account. Empty when unknown.
 	OwnerID string
+	// Owners are every account with full owner access (creator included).
+	Owners []string
+	// Private hides the crew from everyone but its owners.
+	Private bool
 	// Shared reports a Crew/<id> root.
 	Shared bool
 }
@@ -64,6 +95,20 @@ func (r crewPathRef) Path() string {
 		return r.Root
 	}
 	return r.Root + "/" + r.Rest
+}
+
+// IsOwner reports whether userID has full owner access to the crew.
+func (r crewPathRef) IsOwner(userID string) bool {
+	if strings.TrimSpace(userID) == "" || !accountMayOwnCrew(userID) {
+		return false
+	}
+	id := sanitizeUserIDForPath(userID)
+	for _, owner := range r.Owners {
+		if owner == id {
+			return true
+		}
+	}
+	return false
 }
 
 // parseCrewPath recognizes the three crew spellings without any I/O. A
@@ -87,9 +132,9 @@ func parseCrewPath(callerID, raw string) (crewPathRef, bool) {
 			return crewPathRef{}, false
 		}
 		owner := sanitizeUserIDForPath(callerID)
-		return crewPathRef{Root: legacyCrewRoot(owner, segments[3]), Rest: rest(4), OwnerID: owner}, true
+		return crewPathRef{Root: legacyCrewRoot(owner, segments[3]), Rest: rest(4), OwnerID: owner, Owners: []string{owner}}, true
 	case len(segments) >= 6 && segments[0] == "_users" && segments[1] != "" && segments[2] == "Chats" && segments[3] == "Work" && segments[4] == "projects" && validID(segments[5]):
-		return crewPathRef{Root: legacyCrewRoot(segments[1], segments[5]), Rest: rest(6), OwnerID: segments[1]}, true
+		return crewPathRef{Root: legacyCrewRoot(segments[1], segments[5]), Rest: rest(6), OwnerID: segments[1], Owners: []string{segments[1]}}, true
 	}
 	return crewPathRef{}, false
 }
@@ -100,29 +145,33 @@ func legacyCrewRoot(owner, id string) string {
 
 // resolveCrewPath is the one entry point for a crew path from a request or a
 // stored reference: it parses any spelling, follows the migration alias to the
-// crew's current root, and fills in the owner. ok=false means not a crew path.
+// crew's current root, and fills in its access record. ok=false means not a
+// crew path. A shared crew without a record has no owners: it is nobody's.
 func resolveCrewPath(ctx context.Context, callerID, raw string) (crewPathRef, bool) {
 	ref, ok := parseCrewPath(callerID, raw)
 	if !ok {
 		return crewPathRef{}, false
 	}
 	if !ref.Shared {
-		if moved := crewPathAliases.lookup(ctx, ref.Root); moved != "" {
+		if moved := crewPathAliases.lookup(ref.Root); moved != "" {
 			ref.Root, ref.Shared = moved, true
 		}
 	}
-	if ref.Shared && ref.OwnerID == "" {
-		ref.OwnerID = crewOwners.owner(ctx, ref.Root)
+	if ref.Shared {
+		ref.OwnerID, ref.Owners, ref.Private = "", nil, false
+		if acl, ok := crewAccessRecords.forRoot(ctx, ref.Root); ok {
+			ref.OwnerID, ref.Owners, ref.Private = acl.Creator, append([]string(nil), acl.Owners...), acl.Private
+		}
 	}
 	return ref, true
 }
 
 // ownedCrewRoot returns the root of the crew at workspacePath when userID
-// owns it (the crew's own folder, where the owner's transcripts live). Any
+// owns it (the crew's own folder, where its owners' transcripts live). Any
 // spelling is accepted; someone else's crew or a non-crew path is false.
 func ownedCrewRoot(userID, workspacePath string) (string, bool) {
 	ref, ok := resolveCrewPath(context.Background(), userID, workspacePath)
-	if !ok || ref.OwnerID == "" || ref.OwnerID != sanitizeUserIDForPath(userID) {
+	if !ok || !ref.IsOwner(userID) {
 		return "", false
 	}
 	return ref.Root, true
@@ -136,15 +185,29 @@ const (
 	crewAccessOwner
 )
 
-// crewAccessFor is Crew Run mode: the owner has full access, any other user
-// with the Crew product reads, everyone else has none. A crew whose owner
-// cannot be established is nobody's.
+// accountMayOwnCrew caps crew ownership by account role: a view-only or
+// disabled account listed as an owner acts as a reader. An identity without
+// a directory record (single-user, legacy) keeps its listed ownership.
+func accountMayOwnCrew(userID string) bool {
+	access := userAccessForClaims(&UserClaims{UserID: strings.TrimSpace(userID)})
+	if !access.Known {
+		return true
+	}
+	return !access.Disabled && (access.Admin || access.CanEdit)
+}
+
+// crewAccessFor is Crew Run mode: owners (creator and co-owners) have full
+// access; any other user with the Crew product reads a crew that is not
+// private; everyone else has none.
 func crewAccessFor(claims *UserClaims, ref crewPathRef) crewAccessLevel {
-	if claims == nil || ref.OwnerID == "" {
+	if claims == nil || len(ref.Owners) == 0 {
 		return crewAccessNone
 	}
-	if ref.OwnerID == sanitizeUserIDForPath(claims.UserID) {
+	if ref.IsOwner(claims.UserID) {
 		return crewAccessOwner
+	}
+	if ref.Private {
+		return crewAccessNone
 	}
 	if userAllowedProduct(claims, "work") {
 		return crewAccessReader
@@ -152,155 +215,17 @@ func crewAccessFor(claims *UserClaims, ref crewPathRef) crewAccessLevel {
 	return crewAccessNone
 }
 
-// crewOwners caches Crew/<id> -> product.json owner_id. Ownership changes
-// only through crew creation/transfer, so a short TTL is enough.
-var crewOwners = &crewOwnerCache{entries: map[string]crewOwnerEntry{}}
-
-type crewOwnerEntry struct {
-	owner   string
-	expires time.Time
+// crewRootOwnedBy reports whether userID is an owner of the crew at root.
+func crewRootOwnedBy(ctx context.Context, root, userID string) bool {
+	ref, ok := resolveCrewPath(ctx, userID, root)
+	return ok && ref.IsOwner(userID)
 }
 
-type crewOwnerCache struct {
-	mu      sync.Mutex
-	entries map[string]crewOwnerEntry
-	// read is replaced in tests.
-	read func(ctx context.Context, root string) string
-}
-
-func (c *crewOwnerCache) owner(ctx context.Context, root string) string {
-	now := time.Now()
-	c.mu.Lock()
-	if entry, ok := c.entries[root]; ok && now.Before(entry.expires) {
-		c.mu.Unlock()
-		return entry.owner
-	}
-	read := c.read
-	c.mu.Unlock()
-	if read == nil {
-		read = readCrewManifestOwner
-	}
-	owner := read(ctx, root)
-	c.mu.Lock()
-	if len(c.entries) >= 4096 { // any caller can probe Crew/<random>; bound it
-		c.entries = map[string]crewOwnerEntry{}
-	}
-	c.entries[root] = crewOwnerEntry{owner: owner, expires: now.Add(crewOwnerCacheTTL)}
-	c.mu.Unlock()
-	return owner
-}
-
-// readCrewManifestOwner returns a shared crew's owner. The authority is the
-// server-only registry (_system/crew-owners.json), which no browser or agent
-// write can reach. product.json owner_id is trusted once, the first time the
-// server sees the crew (creation, migration), and recorded; a later edit of
-// that field -- by the owner, their agent, or a crew with write access to it --
-// changes nothing.
-func readCrewManifestOwner(ctx context.Context, root string) string {
-	if owner, known := crewOwnerRegistry.owner(ctx, root); known {
-		return owner
-	}
-	raw, found, err := readFileFromWorkspace(ctx, root+"/product.json")
-	if err != nil || !found {
-		return ""
-	}
-	var manifest struct {
-		Product string `json:"product"`
-		OwnerID string `json:"owner_id"`
-	}
-	if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
-		return ""
-	}
-	owner := crewManifestOwner(manifest.OwnerID)
-	if owner == "" {
-		return ""
-	}
-	return crewOwnerRegistry.claim(ctx, root, owner)
-}
-
-const crewOwnerRegistryFile = "_system/crew-owners.json"
-
-// crewOwnerRegistry is the server-only record of who owns each shared crew.
-var crewOwnerRegistry = &crewOwnerRegistryStore{}
-
-type crewOwnerRegistryStore struct {
-	mu     sync.Mutex
-	loaded time.Time
-	owners map[string]string
-	// read/write are replaced in tests.
-	read  func(ctx context.Context) (string, bool, error)
-	write func(ctx context.Context, content string) error
-}
-
-func (r *crewOwnerRegistryStore) refreshLocked(ctx context.Context) {
-	if r.owners != nil && time.Since(r.loaded) < crewOwnerCacheTTL {
-		return
-	}
-	read := r.read
-	if read == nil {
-		read = func(ctx context.Context) (string, bool, error) {
-			return readFileFromWorkspace(ctx, crewOwnerRegistryFile)
-		}
-	}
-	owners := map[string]string{}
-	if raw, found, err := read(ctx); err == nil && found {
-		var file struct {
-			Owners map[string]string `json:"owners"`
-		}
-		if json.Unmarshal([]byte(raw), &file) == nil {
-			for root, owner := range file.Owners {
-				if owner = crewManifestOwner(owner); owner != "" {
-					owners[strings.Trim(root, "/")] = owner
-				}
-			}
-		}
-	} else if err != nil && r.owners != nil {
-		return // keep the last good view through a transient read failure
-	}
-	r.owners, r.loaded = owners, time.Now()
-}
-
-func (r *crewOwnerRegistryStore) owner(ctx context.Context, root string) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.refreshLocked(ctx)
-	owner, ok := r.owners[strings.Trim(root, "/")]
-	return owner, ok
-}
-
-// claim records owner for root unless the registry already names one, and
-// returns the owner the registry holds afterwards.
-func (r *crewOwnerRegistryStore) claim(ctx context.Context, root, owner string) string {
-	root = strings.Trim(root, "/")
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.loaded = time.Time{} // re-read: another process may have claimed it
-	r.refreshLocked(ctx)
-	if existing, ok := r.owners[root]; ok {
-		return existing
-	}
-	next := make(map[string]string, len(r.owners)+1)
-	for k, v := range r.owners {
-		next[k] = v
-	}
-	next[root] = owner
-	encoded, err := json.MarshalIndent(map[string]interface{}{"owners": next}, "", "  ")
-	if err != nil {
-		return ""
-	}
-	write := r.write
-	if write == nil {
-		write = func(ctx context.Context, content string) error {
-			return writeRawFileToWorkspace(ctx, crewOwnerRegistryFile, content)
-		}
-	}
-	if err := write(ctx, string(encoded)+"\n"); err != nil {
-		// Unrecorded ownership is not granted: better a crew that cannot
-		// open until the registry is writable than an unpinned owner.
-		return ""
-	}
-	r.owners = next
-	return owner
+// crewRootCreatedBy reports whether userID created the crew at root. A crew's
+// schedules and webhooks run once, as its creator.
+func crewRootCreatedBy(ctx context.Context, root, userID string) bool {
+	ref, ok := resolveCrewPath(ctx, userID, root)
+	return ok && ref.OwnerID != "" && ref.OwnerID == sanitizeUserIDForPath(userID)
 }
 
 // crewManifestOwner is the owner a crew manifest names, or "" when it names
@@ -314,40 +239,308 @@ func crewManifestOwner(ownerID string) string {
 	return ownerID
 }
 
-// crewRootOwnedBy reports whether the shared crew at root belongs to userID,
-// by the server's owner registry (see readCrewManifestOwner).
-func crewRootOwnedBy(ctx context.Context, root, userID string) bool {
-	owner := crewOwners.owner(ctx, strings.Trim(filepath.ToSlash(root), "/"))
-	return owner != "" && owner == sanitizeUserIDForPath(userID)
+// ---- crew access records ----------------------------------------------------
+
+// crewAccess is one shared crew's access record.
+type crewAccess struct {
+	Creator string   `json:"creator"`
+	Owners  []string `json:"owners"`
+	Private bool     `json:"private,omitempty"`
 }
 
-// crewPathAliases maps a migrated legacy crew root to its Crew/<id> root. The
-// migration writes the file once; until then it is absent and nothing maps.
-var crewPathAliases = &crewAliasCache{}
+type crewAccessFile struct {
+	Crews map[string]crewAccess `json:"crews"`
+}
 
-type crewAliasCache struct {
+func normalizeCrewAccess(acl crewAccess) (crewAccess, bool) {
+	creator := crewManifestOwner(acl.Creator)
+	if creator == "" {
+		return crewAccess{}, false
+	}
+	owners := []string{creator}
+	seen := map[string]bool{creator: true}
+	for _, owner := range acl.Owners {
+		if owner = crewManifestOwner(owner); owner != "" && !seen[owner] {
+			seen[owner] = true
+			owners = append(owners, owner)
+		}
+	}
+	return crewAccess{Creator: creator, Owners: owners, Private: acl.Private}, true
+}
+
+func crewStateDir(stateRoot string) string { return filepath.Join(stateRoot, crewStateDirName) }
+
+func serverCrewStateDir() string {
+	root, err := workflowCLIStateRoot()
+	if err != nil {
+		return ""
+	}
+	return crewStateDir(root)
+}
+
+// readCrewAccessFile reads a record file. A missing file is an empty,
+// definite answer; any other failure is an error (never "no owners").
+func readCrewAccessFile(file string) (map[string]crewAccess, error) {
+	raw, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]crewAccess{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var parsed crewAccessFile
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", file, err)
+	}
+	out := make(map[string]crewAccess, len(parsed.Crews))
+	for root, acl := range parsed.Crews {
+		if normalized, ok := normalizeCrewAccess(acl); ok {
+			out[strings.Trim(root, "/")] = normalized
+		}
+	}
+	return out, nil
+}
+
+// updateCrewAccessFile applies change to the record file under an exclusive
+// lock: a fresh read (failures abort), then an atomic write.
+func updateCrewAccessFile(dir string, change func(map[string]crewAccess) error) (map[string]crewAccess, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "owners.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	file := filepath.Join(dir, crewAccessFileName)
+	records, err := readCrewAccessFile(file)
+	if err != nil {
+		return nil, err
+	}
+	if err := change(records); err != nil {
+		return nil, err
+	}
+	encoded, err := json.MarshalIndent(crewAccessFile{Crews: records}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFileAtomic(file, append(encoded, '\n'), 0o600); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+// crewAccessRecords is the server's view of the record file, refreshed on a
+// short TTL. A crew without a record is seeded once from its product.json
+// owner_id (creation paths record it immediately).
+var crewAccessRecords = &crewAccessStore{}
+
+type crewAccessStore struct {
+	mu      sync.Mutex
+	loaded  time.Time
+	records map[string]crewAccess
+	misses  map[string]time.Time
+	// Test hooks.
+	dir          func() string
+	seedFromDisk func(ctx context.Context, root string) string
+}
+
+func (s *crewAccessStore) stateDir() string {
+	if s.dir != nil {
+		return s.dir()
+	}
+	return serverCrewStateDir()
+}
+
+func (s *crewAccessStore) invalidate() {
+	s.mu.Lock()
+	s.loaded, s.records, s.misses = time.Time{}, nil, nil
+	s.mu.Unlock()
+}
+
+// snapshotLocked returns the records, re-reading them when stale. On a read
+// failure the last good view is kept; with none, ok is false.
+func (s *crewAccessStore) snapshotLocked() (map[string]crewAccess, bool) {
+	if s.records != nil && time.Since(s.loaded) < crewCacheTTL {
+		return s.records, true
+	}
+	dir := s.stateDir()
+	if dir == "" {
+		return s.records, s.records != nil
+	}
+	records, err := readCrewAccessFile(filepath.Join(dir, crewAccessFileName))
+	if err != nil {
+		return s.records, s.records != nil
+	}
+	s.records, s.loaded = records, time.Now()
+	return records, true
+}
+
+// forRoot returns a shared crew's access record, seeding a missing one from
+// product.json exactly once. ok=false: no owners (nobody's crew), or the
+// records could not be read.
+func (s *crewAccessStore) forRoot(ctx context.Context, root string) (crewAccess, bool) {
+	root = strings.Trim(filepath.ToSlash(root), "/")
+	s.mu.Lock()
+	records, readable := s.snapshotLocked()
+	if acl, ok := records[root]; ok {
+		s.mu.Unlock()
+		return acl, true
+	}
+	if !readable {
+		s.mu.Unlock()
+		return crewAccess{}, false
+	}
+	if at, missed := s.misses[root]; missed && time.Since(at) < crewCacheTTL {
+		s.mu.Unlock()
+		return crewAccess{}, false
+	}
+	seed := s.seedFromDisk
+	s.mu.Unlock()
+	if seed == nil {
+		seed = readCrewManifestOwner
+	}
+	creator := seed(ctx, root)
+	if creator == "" {
+		s.noteMiss(root)
+		return crewAccess{}, false
+	}
+	acl, err := s.claim(root, creator)
+	if err != nil {
+		return crewAccess{}, false
+	}
+	return acl, true
+}
+
+func (s *crewAccessStore) noteMiss(root string) {
+	s.mu.Lock()
+	if s.misses == nil || len(s.misses) >= 4096 { // any caller can probe Crew/<random>
+		s.misses = map[string]time.Time{}
+	}
+	s.misses[root] = time.Now()
+	s.mu.Unlock()
+}
+
+// claim records creator as the crew's creator and only owner unless a record
+// exists, and returns the record held afterwards.
+func (s *crewAccessStore) claim(root, creator string) (crewAccess, error) {
+	root = strings.Trim(filepath.ToSlash(root), "/")
+	creator = crewManifestOwner(creator)
+	if creator == "" {
+		return crewAccess{}, fmt.Errorf("invalid crew creator")
+	}
+	var held crewAccess
+	records, err := s.update(func(records map[string]crewAccess) error {
+		if existing, ok := records[root]; ok {
+			held = existing
+			return nil
+		}
+		held = crewAccess{Creator: creator, Owners: []string{creator}}
+		records[root] = held
+		return nil
+	})
+	if err != nil {
+		return crewAccess{}, err
+	}
+	_ = records
+	return held, nil
+}
+
+// update applies change to the record file and refreshes the cached view.
+func (s *crewAccessStore) update(change func(map[string]crewAccess) error) (map[string]crewAccess, error) {
+	dir := s.stateDir()
+	if dir == "" {
+		return nil, fmt.Errorf("server state directory unavailable")
+	}
+	records, err := updateCrewAccessFile(dir, change)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.records, s.loaded, s.misses = records, time.Now(), nil
+	s.mu.Unlock()
+	return records, nil
+}
+
+// readCrewManifestOwner seeds a record: the owner_id product.json names, for
+// a crew the server has never recorded (created before records existed, or by
+// a tool that could not record it).
+func readCrewManifestOwner(ctx context.Context, root string) string {
+	raw, found, err := readFileFromWorkspace(ctx, root+"/product.json")
+	if err != nil || !found {
+		return ""
+	}
+	var manifest struct {
+		Product string `json:"product"`
+		OwnerID string `json:"owner_id"`
+	}
+	if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
+		return ""
+	}
+	return crewManifestOwner(manifest.OwnerID)
+}
+
+// crewOwners is kept for callers that need only a crew's creator.
+var crewOwners = crewCreatorLookup{}
+
+type crewCreatorLookup struct{}
+
+func (crewCreatorLookup) owner(ctx context.Context, root string) string {
+	acl, ok := crewAccessRecords.forRoot(ctx, root)
+	if !ok {
+		return ""
+	}
+	return acl.Creator
+}
+
+// ---- migration aliases ------------------------------------------------------
+
+// crewPathAliases maps a migrated legacy crew root to its Crew/<id> root. The
+// migration writes the file in the server state directory; until then it is
+// absent and nothing maps.
+var crewPathAliases = &crewAliasStore{}
+
+type crewAliasStore struct {
 	mu      sync.Mutex
 	loaded  time.Time
 	aliases map[string]string
-	// read is replaced in tests.
-	read func(ctx context.Context) map[string]string
+	// Test hook.
+	read func() map[string]string
 }
 
-func (c *crewAliasCache) lookup(ctx context.Context, legacyRoot string) string {
+func (c *crewAliasStore) snapshot() map[string]string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.refreshLocked(ctx)
-	return c.aliases[legacyRoot]
+	if c.aliases != nil && time.Since(c.loaded) < crewCacheTTL {
+		return c.aliases
+	}
+	read := c.read
+	if read == nil {
+		read = func() map[string]string { return readCrewAliasFile(serverCrewStateDir()) }
+	}
+	c.aliases, c.loaded = read(), time.Now()
+	return c.aliases
+}
+
+func (c *crewAliasStore) invalidate() {
+	c.mu.Lock()
+	c.aliases, c.loaded = nil, time.Time{}
+	c.mu.Unlock()
+}
+
+func (c *crewAliasStore) lookup(legacyRoot string) string {
+	return c.snapshot()[strings.Trim(legacyRoot, "/")]
 }
 
 // legacyRoot is the reverse: the owner-tree root a migrated crew came from
 // ("" for a crew created at Crew/). Keys derived from a crew's path before the
 // move (its browser profile) stay stable through it.
-func (c *crewAliasCache) legacyRoot(ctx context.Context, sharedRoot string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.refreshLocked(ctx)
-	for from, to := range c.aliases {
+func (c *crewAliasStore) legacyRoot(sharedRoot string) string {
+	for from, to := range c.snapshot() {
 		if to == sharedRoot {
 			return from
 		}
@@ -355,26 +548,19 @@ func (c *crewAliasCache) legacyRoot(ctx context.Context, sharedRoot string) stri
 	return ""
 }
 
-func (c *crewAliasCache) refreshLocked(ctx context.Context) {
-	if c.aliases == nil || time.Since(c.loaded) > crewOwnerCacheTTL {
-		read := c.read
-		if read == nil {
-			read = readCrewPathAliases
-		}
-		c.aliases, c.loaded = read(ctx), time.Now()
-	}
-}
-
-func readCrewPathAliases(ctx context.Context) map[string]string {
+func readCrewAliasFile(dir string) map[string]string {
 	aliases := map[string]string{}
-	raw, found, err := readFileFromWorkspace(ctx, crewPathAliasFile)
-	if err != nil || !found {
+	if dir == "" {
+		return aliases
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, crewAliasFileName))
+	if err != nil {
 		return aliases
 	}
 	var file struct {
 		Aliases map[string]string `json:"aliases"`
 	}
-	if json.Unmarshal([]byte(raw), &file) == nil {
+	if json.Unmarshal(raw, &file) == nil {
 		for from, to := range file.Aliases {
 			if ref, ok := parseCrewPath("", to); ok && ref.Shared && ref.Rest == "" {
 				aliases[strings.Trim(from, "/")] = ref.Root
@@ -384,20 +570,34 @@ func readCrewPathAliases(ctx context.Context) map[string]string {
 	return aliases
 }
 
+// ---- catalog ----------------------------------------------------------------
+
 // crewCatalogEntry is one crew found on disk.
 type crewCatalogEntry struct {
 	// Root is the crew's folder: Crew/<id>, or a not-yet-migrated
 	// _users/<owner>/Chats/Work/projects/<id>.
 	Root         string
-	OwnerID      string
+	OwnerID      string // creator
+	Owners       []string
+	Private      bool
 	ManifestPath string
 	Manifest     productProjectManifest
 }
 
-// listCrewCatalog lists every crew: the shared Crew/ root (owner from the
-// manifest) and any crew still in an owner's tree (owner from the path).
-// Callers filter by owner/access. A manifest without an owner is skipped: it
-// is nobody's crew.
+// IsOwner reports whether userID is one of the crew's owners.
+func (e crewCatalogEntry) IsOwner(userID string) bool {
+	return crewPathRef{Owners: e.Owners}.IsOwner(userID)
+}
+
+// VisibleTo reports whether userID may see the crew at all.
+func (e crewCatalogEntry) VisibleTo(userID string) bool {
+	return !e.Private || e.IsOwner(userID)
+}
+
+// listCrewCatalog lists every crew: the shared Crew/ root (access from its
+// record) and any crew still in an owner's tree (owner from the path). Callers
+// filter by ownership and visibility. A crew without owners is nobody's and
+// is skipped, as are crews whose creator's account is disabled.
 func listCrewCatalog(ctx context.Context, store productProjectStore) ([]crewCatalogEntry, error) {
 	var entries []crewCatalogEntry
 	seen := map[string]bool{}
@@ -435,16 +635,20 @@ func listCrewCatalog(ctx context.Context, store productProjectStore) ([]crewCata
 			if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") || strings.TrimSpace(manifest.ID) == "" {
 				continue
 			}
-			owner := pathOwner
-			if owner == "" {
-				if owner = crewOwners.owner(ctx, filepath.ToSlash(filepath.Dir(candidate))); owner == "" {
+			entry := crewCatalogEntry{Root: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: candidate, Manifest: manifest}
+			if pathOwner != "" {
+				entry.OwnerID, entry.Owners = pathOwner, []string{pathOwner}
+			} else {
+				acl, ok := crewAccessRecords.forRoot(ctx, entry.Root)
+				if !ok {
 					continue
 				}
+				entry.OwnerID, entry.Owners, entry.Private = acl.Creator, append([]string(nil), acl.Owners...), acl.Private
 			}
-			if disabled[owner] {
+			if disabled[entry.OwnerID] {
 				continue // a disabled account's crews are not listed
 			}
-			entries = append(entries, crewCatalogEntry{Root: filepath.ToSlash(filepath.Dir(candidate)), OwnerID: owner, ManifestPath: candidate, Manifest: manifest})
+			entries = append(entries, entry)
 		}
 		return nil
 	}

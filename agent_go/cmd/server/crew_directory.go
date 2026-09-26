@@ -465,10 +465,11 @@ func otherOwnersCrewSummaries(ctx context.Context, claims *UserClaims, profile a
 	if err != nil {
 		return nil, err
 	}
-	self := sanitizeUserIDForPath(claims.UserID)
 	rows := []sharedProjectSummary{}
 	for _, entry := range catalog {
-		if entry.OwnerID == self {
+		// Crews the caller owns are listed as theirs; private crews are
+		// their owners' alone.
+		if entry.IsOwner(claims.UserID) || !entry.VisibleTo(claims.UserID) {
 			continue
 		}
 		manifest, err := readCrewProjectManifests(ctx, profile.ID, entry.Root)

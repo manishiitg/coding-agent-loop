@@ -83,6 +83,9 @@ func (api *StreamingAPI) crewBrowserAccess(claims *UserClaims, workspace string)
 	if crewProjectOwnedByCaller(claims.UserID, workspace) {
 		return WorkflowAccessOwner
 	}
+	if crewIsPrivate(context.Background(), workspace) {
+		return WorkflowAccessNone
+	}
 	if api.agentProfiles == nil {
 		return WorkflowAccessNone
 	}

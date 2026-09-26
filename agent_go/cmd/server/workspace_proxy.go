@@ -199,11 +199,17 @@ func workspaceProxyPathIsOtherUser(raw, own string) bool {
 			return true
 		}
 	}
+	// A crew that moved to Crew/<id> is never reached through its old path:
+	// a stale tab or reference writing there would silently recreate the old
+	// folder beside the moved crew.
+	if ref, ok := parseCrewPath(own, clean); ok && !ref.Shared && crewPathAliases.lookup(ref.Root) != "" {
+		return true
+	}
 	if strings.HasPrefix(clean, crewSharedRootName+"/") {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		ref, ok := resolveCrewPath(ctx, own, clean)
-		return !ok || ref.OwnerID == "" || ref.OwnerID != own
+		return !ok || !ref.IsOwner(own)
 	}
 	if !strings.HasPrefix(clean, "_users/") {
 		return false

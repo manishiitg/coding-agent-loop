@@ -463,7 +463,7 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 	}
 	// A shared-root crew's owner is pinned in the server registry at birth.
 	if ref, ok := parseCrewPath("", workspacePath); ok && ref.Shared {
-		if crewOwnerRegistry.claim(ctx, ref.Root, userID) != sanitizeUserIDForPath(userID) {
+		if acl, err := crewAccessRecords.claim(ref.Root, userID); err != nil || acl.Creator != sanitizeUserIDForPath(userID) {
 			return CreatedCrew{}, fmt.Errorf("could not record the owner of crew %s", ref.Root)
 		}
 	}

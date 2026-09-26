@@ -12,7 +12,7 @@ import (
 
 func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
-	withMemoryUserDirectory(t, `{"users":[{"id":"reader","username":"reader","products":[]},{"id":"owner","username":"owner","products":[]}]}`)
+	withMemoryUserDirectory(t, `{"users":[{"id":"reader","username":"reader","role":"editor","products":[]},{"id":"owner","username":"owner","role":"editor","products":[]}]}`)
 	shared, _ := json.Marshal(WorkflowManifest{
 		ID: "hdfc-personal", Label: "HDFC Bank Personal Accounts",
 		Access: &WorkflowAccess{Owners: []string{"owner"}, Readers: []string{"reader"}},
@@ -62,14 +62,14 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		t.Fatal("Crew attached itself")
 	}
 	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/hdfc-personal"})
-	if err != nil || !strings.Contains(out, "workflow references read-only") {
+	if err != nil || !strings.Contains(out, "other owners' Crews and workflows are read-only") {
 		t.Fatalf("attach out=%s err=%v", out, err)
 	}
 	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || !containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") || containsWorkReferencePath(cfg.WritePaths, "Workflow/hdfc-personal") {
 		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
 	}
 	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Chats/Work/projects/research"})
-	if err != nil || !strings.Contains(out, "workflow references read-only") {
+	if err != nil || !strings.Contains(out, "other owners' Crews and workflows are read-only") {
 		t.Fatalf("attach Crew out=%s err=%v", out, err)
 	}
 	crewReadRoot := "_users/reader/Chats/Work/projects/research"
@@ -161,21 +161,25 @@ func containsWorkReferencePath(values []string, want string) bool {
 	return false
 }
 
-// Crews are shared server-wide and read-write: attaching another owner's
-// Crew by its physical path grants it in both the read and write sets,
-// while a workflow reference stays read-only.
-func TestUpdateWorkSessionWorkflowGuardCrewReferencesAreWritable(t *testing.T) {
+// Attaching a Crew grants write only to its owners: another owner's Crew is
+// read-only, the caller's own Crew is read-write, a workflow stays read-only.
+func TestUpdateWorkSessionWorkflowGuardCrewWriteFollowsOwnership(t *testing.T) {
+	stubCrewAccess(t, nil, nil)
 	common.SetSessionFolderGuard("session-crew-rw", []string{"_users/me/Chats/Work/projects/mine/"}, []string{"_users/me/Chats/Work/projects/mine/"})
-	updateWorkSessionWorkflowGuard("session-crew-rw", []string{"_users/other/Chats/Work/projects/theirs", "Workflow/reports"})
+	defer common.ClearSessionShellConfig("session-crew-rw")
+	updateWorkSessionWorkflowGuard("session-crew-rw", "me", []string{"_users/other/Chats/Work/projects/theirs", "_users/me/Chats/Work/projects/second", "Workflow/reports"})
 	cfg := common.GetSessionShellConfig("session-crew-rw")
-	if cfg == nil || !containsWorkReferencePath(cfg.WritePaths, "_users/other/Chats/Work/projects/theirs/") || !containsWorkReferencePath(cfg.ReadPaths, "_users/other/Chats/Work/projects/theirs") {
-		t.Fatalf("another owner's Crew reference must be read-write: %+v", cfg)
+	if cfg == nil || containsWorkReferencePath(cfg.WritePaths, "_users/other/Chats/Work/projects/theirs/") || !containsWorkReferencePath(cfg.ReadPaths, "_users/other/Chats/Work/projects/theirs") {
+		t.Fatalf("another owner's Crew reference must be read-only: %+v", cfg)
+	}
+	if !containsWorkReferencePath(cfg.WritePaths, "_users/me/Chats/Work/projects/second/") {
+		t.Fatalf("the caller's own Crew reference must be read-write: %+v", cfg)
 	}
 	if containsWorkReferencePath(cfg.WritePaths, "Workflow/reports") {
 		t.Fatalf("workflow reference must stay read-only: %+v", cfg)
 	}
-	updateWorkSessionWorkflowGuard("session-crew-rw", nil, "_users/other/Chats/Work/projects/theirs")
-	if cfg = common.GetSessionShellConfig("session-crew-rw"); containsWorkReferencePath(cfg.WritePaths, "_users/other/Chats/Work/projects/theirs/") {
+	updateWorkSessionWorkflowGuard("session-crew-rw", "me", nil, "_users/me/Chats/Work/projects/second")
+	if cfg = common.GetSessionShellConfig("session-crew-rw"); containsWorkReferencePath(cfg.WritePaths, "_users/me/Chats/Work/projects/second/") {
 		t.Fatalf("detached Crew reference kept write access: %+v", cfg)
 	}
 }

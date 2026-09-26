@@ -159,13 +159,14 @@ func TestMigrateCrewRootMovesCrewsAndRewritesReferences(t *testing.T) {
 		t.Fatalf("cost ledger: %v", ids)
 	}
 
-	owners := readMigrationFixture(t, docs, crewOwnerRegistryFile)
-	if !strings.Contains(owners, `"Crew/sde-1a2b3c4d": "alice"`) {
-		t.Fatalf("owner not pinned in the server registry: %s", owners)
+	if records, err := readCrewAccessFile(filepath.Join(crewStateDir(state), crewAccessFileName)); err != nil || records["Crew/sde-1a2b3c4d"].Creator != "alice" {
+		t.Fatalf("owner not pinned in the server state dir: %+v %v", records, err)
 	}
-	aliases := readMigrationFixture(t, docs, crewPathAliasFile)
-	if !strings.Contains(aliases, `"`+oldRoot+`": "Crew/sde-1a2b3c4d"`) {
-		t.Fatalf("aliases: %s", aliases)
+	if got := readCrewAliasFile(crewStateDir(state))[oldRoot]; got != "Crew/sde-1a2b3c4d" {
+		t.Fatalf("alias for %s = %q", oldRoot, got)
+	}
+	if _, err := os.Stat(filepath.Join(docs, "_system", "crew-owners.json")); err == nil {
+		t.Fatal("access records must not live in the agent-readable docs tree")
 	}
 	copied := readMigrationFixture(t, home, ".claude/projects/"+claudeProjectDirName(newAbs)+"/sid-1.jsonl")
 	if !strings.Contains(copied, newAbs) {
@@ -224,7 +225,7 @@ func TestMigrateCrewRootResumesInterruptedPass(t *testing.T) {
 	state := t.TempDir()
 	oldRoot := "_users/alice/Chats/Work/projects/ops-9f8e7d6c"
 	writeMigrationFixture(t, docs, "Crew/ops-9f8e7d6c/product.json", `{"product":"work","id":"x","owner_id":"alice"}`)
-	writeMigrationFixture(t, docs, crewPathAliasFile, `{"aliases":{"`+oldRoot+`":"Crew/ops-9f8e7d6c"}}`)
+	writeMigrationFixture(t, crewStateDir(state), crewAliasFileName, `{"aliases":{"`+oldRoot+`":"Crew/ops-9f8e7d6c"}}`)
 	writeMigrationFixture(t, docs, "Workflow/w/workflow.json", `{"workflow_context_paths":["`+oldRoot+`"]}`)
 	report, err := migrateCrewRoot(crewRootMigrationOptions{DocsRoot: docs, StateRoot: state, Apply: true, CLIHomes: []string{t.TempDir()}})
 	if err != nil || len(report.Moves) != 0 {

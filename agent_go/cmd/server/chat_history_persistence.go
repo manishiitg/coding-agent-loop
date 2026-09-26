@@ -2372,11 +2372,9 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		} else if ref, ok := parseCrewPath("", workspaceRoot); ok && ref.Shared {
 			// A crew's own transcripts (moved from the owner's tree) belong to
 			// its owner.
-			if owner := crewOwners.owner(context.Background(), ref.Root); owner != "" {
-				ownerID = owner
-			} else {
-				ownerID = "default"
-			}
+			// When the record cannot be read it stays unattributed: never
+			// the "default" account.
+			ownerID = crewOwners.owner(context.Background(), ref.Root)
 		} else {
 			ownerID = "default"
 		}

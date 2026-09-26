@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"path"
 	"regexp"
@@ -46,10 +47,9 @@ func (api *StreamingAPI) handleListOwnCrewProjects(w http.ResponseWriter, r *htt
 		writeAgentProfileError(w, http.StatusBadGateway, "could not list crews")
 		return
 	}
-	self := sanitizeUserIDForPath(claims.UserID)
 	projects := []ownCrewProject{}
 	for _, entry := range catalog {
-		if entry.OwnerID != self {
+		if !entry.IsOwner(claims.UserID) { // creator or co-owner
 			continue
 		}
 		raw, found, err := readFileFromWorkspace(r.Context(), entry.ManifestPath)
@@ -154,12 +154,9 @@ func createOwnCrewProject(ctx context.Context, userID string, profile agentprofi
 			return nil, fmt.Errorf("create crew %s: %w", file.name, err)
 		}
 	}
-	if crewOwnerRegistry.claim(ctx, workspacePath, userID) != sanitizeUserIDForPath(userID) {
+	if acl, err := crewAccessRecords.claim(workspacePath, userID); err != nil || acl.Creator != sanitizeUserIDForPath(userID) {
 		return nil, fmt.Errorf("could not record the new crew's owner")
 	}
-	crewOwners.mu.Lock()
-	delete(crewOwners.entries, workspacePath)
-	crewOwners.mu.Unlock()
 	return map[string]interface{}{
 		"id": id, "workspace_path": workspacePath, "session_id": sessionID,
 		"product_json": mustMarshalIndent(productManifest), "runtime_json": mustMarshalIndent(runtimeManifest),
@@ -184,4 +181,112 @@ func (api *StreamingAPI) ownCrewProfile(w http.ResponseWriter, r *http.Request) 
 		return nil, agentprofiles.Profile{}, false
 	}
 	return claims, profile, true
+}
+
+// crewAccessView is the wire shape of a crew's access record.
+type crewAccessView struct {
+	Creator string   `json:"creator"`
+	Owners  []string `json:"owners"`
+	Private bool     `json:"private"`
+}
+
+// GET/PUT /api/agent-profiles/{id}/my-projects/{project_id}/access: an
+// owner reads or changes who co-owns the crew and whether it is private.
+// The creator can never be removed. Changes go only through the server's
+// crew access record -- never through a file.
+func (api *StreamingAPI) handleCrewAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	claims, _, ok := api.ownCrewProfile(w, r)
+	if !ok {
+		return
+	}
+	projectID := strings.TrimSpace(mux.Vars(r)["project_id"])
+	catalog, err := listCrewCatalog(r.Context(), defaultProductProjectStore())
+	if err != nil {
+		writeAgentProfileError(w, http.StatusBadGateway, "could not list crews")
+		return
+	}
+	var entry *crewCatalogEntry
+	for i := range catalog {
+		if strings.TrimSpace(catalog[i].Manifest.ID) == projectID {
+			entry = &catalog[i]
+			break
+		}
+	}
+	admin := userAccessForClaims(claims).Admin
+	if entry == nil || (!entry.IsOwner(claims.UserID) && !admin) {
+		writeAgentProfileError(w, http.StatusNotFound, "crew not found")
+		return
+	}
+	if !strings.HasPrefix(entry.Root, crewSharedRootName+"/") {
+		writeAgentProfileError(w, http.StatusConflict, "this crew has not moved to the shared Crew/ root yet")
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeAgentProfileJSON(w, http.StatusOK, crewAccessView{Creator: entry.OwnerID, Owners: entry.Owners, Private: entry.Private})
+		return
+	}
+	var body struct {
+		Owners  []string `json:"owners"`
+		Private *bool    `json:"private"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
+		writeAgentProfileError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	var owners []string
+	for _, raw := range body.Owners {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		record := directoryUserFor(raw, raw, "")
+		if record == nil || record.Disabled || crewManifestOwner(record.ID) == "" {
+			writeAgentProfileError(w, http.StatusBadRequest, fmt.Sprintf("unknown user %q", raw))
+			return
+		}
+		if !accountMayOwnCrew(record.ID) || !userAllowedProduct(&UserClaims{UserID: record.ID, Username: record.Username}, "work") {
+			writeAgentProfileError(w, http.StatusBadRequest, fmt.Sprintf("user %q cannot co-own a crew (view-only account or no Crew access)", raw))
+			return
+		}
+		owners = append(owners, record.ID)
+	}
+	if body.Owners != nil && owners == nil {
+		owners = []string{} // an explicit empty list removes every co-owner
+	}
+	updated, err := setCrewAccess(entry.Root, owners, body.Private)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	log.Printf("[CREW_ACCESS] %s set %s owners=%v private=%v", claims.UserID, entry.Root, updated.Owners, updated.Private)
+	writeAgentProfileJSON(w, http.StatusOK, crewAccessView{Creator: updated.Creator, Owners: updated.Owners, Private: updated.Private})
+}
+
+// setCrewAccess changes a shared crew's co-owners (when owners is non-nil)
+// and privacy (when private is non-nil). The creator always stays an owner.
+func setCrewAccess(root string, owners []string, private *bool) (crewAccess, error) {
+	var updated crewAccess
+	_, err := crewAccessRecords.update(func(records map[string]crewAccess) error {
+		current, ok := records[root]
+		if !ok {
+			return fmt.Errorf("crew access record missing")
+		}
+		if owners != nil {
+			current.Owners = append([]string{current.Creator}, owners...)
+		}
+		if private != nil {
+			current.Private = *private
+		}
+		normalized, ok := normalizeCrewAccess(current)
+		if !ok {
+			return fmt.Errorf("invalid crew access record")
+		}
+		records[root], updated = normalized, normalized
+		return nil
+	})
+	return updated, err
 }

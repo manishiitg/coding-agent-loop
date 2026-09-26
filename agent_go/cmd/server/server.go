@@ -42,6 +42,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/clisecurity"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costobserver"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -2380,6 +2381,7 @@ func runServer(cmd *cobra.Command, args []string) {
 			return
 		}
 		executorHandlers.HandlePerToolMCPRequest(w, r, server, tool)
+		api.recordMCPBridgeCall(strings.TrimSpace(r.Header.Get("X-Session-ID")), server, tool)
 	}
 
 	toolsRouter := router.PathPrefix("/tools").Subrouter()
@@ -4622,6 +4624,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Inject user ID into the workflow context
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
+		workflowCtx = costobserver.ContextWithSourcePlatform(workflowCtx, req.BotPlatform)
 		// Inject chat session ID so execute_shell_command can look up the session's
 		// working directory and folder guard config from the global session map.
 		// Without this, execution agents always get workspace root as their shell cwd.
@@ -7120,6 +7123,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Inject user ID into the agent context
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
+		agentCtx = costobserver.ContextWithSourcePlatform(agentCtx, req.BotPlatform)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
 		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
 			virtualtools.RegisterSessionNotificationDestination(sessionID, dest)

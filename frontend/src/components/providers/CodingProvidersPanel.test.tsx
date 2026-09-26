@@ -109,7 +109,9 @@ describe('CodingProvidersPanel', () => {
       await act(async () => Promise.resolve())
 
       const dialog = document.querySelector('[role="dialog"]')!
-      expect(dialog.textContent).toContain('Providers')
+      expect(dialog.getAttribute('aria-label')).toBe('Providers')
+      expect(dialog.querySelector(':scope > header')).toBeNull()
+      expect(dialog.textContent).toContain('Available providers')
       expect(dialog.textContent).toContain('Claude Code')
       expect(dialog.textContent).toContain('Codex')
       expect(dialog.textContent).not.toContain('OpenAI API')

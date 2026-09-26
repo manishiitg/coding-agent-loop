@@ -1766,6 +1766,8 @@ export interface CostAggregate {
   cache_write_tokens: number
   total_cost_usd: number
   call_count: number
+  // LLM calls without a known price are excluded from total_cost_usd.
+  unpriced_call_count?: number
   // Sum of time spent waiting for LLM generations. This deliberately excludes
   // tool execution and queue time, so it is not a workflow wall-clock duration.
   llm_generation_duration_ms?: number
@@ -1812,17 +1814,57 @@ export interface CostOverviewAggregate extends CostAggregate {
   provider_actual_cost_usd?: number
   subscription_shadow_cost_usd?: number
   token_estimate_cost_usd?: number
-  unpriced_call_count?: number
 }
 
 export interface CostOverviewItem extends CostOverviewAggregate {
-  // Workflow/<name>, a Crew root, or "other" (chats and unattributed spend).
+  // Workflow/<name>, a Crew/product project root, or "other".
   id: string
-  kind: 'workflow' | 'crew' | 'other'
+  kind: 'workflow' | 'crew' | 'product' | 'other'
   name: string
   owner_id?: string
   by_scope?: Record<string, CostAggregate>
   by_model?: Record<string, CostAggregate>
+  by_user?: CostOverviewActor[]
+  by_bot?: CostOverviewBot[]
+  by_mcp?: CostOverviewMCP[]
+}
+
+export interface CostOverviewUser extends CostOverviewAggregate {
+  id: string
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+  by_work?: CostOverviewWork[]
+}
+
+export interface CostOverviewActor extends CostOverviewAggregate {
+  id: string
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+}
+
+export interface CostOverviewWork extends CostOverviewAggregate {
+  id: string
+  kind: CostOverviewItem['kind']
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+}
+
+export interface CostOverviewBot extends CostOverviewAggregate {
+  id: string
+  name: string
+  workflow: string
+  platform: string
+  user_id: string
+}
+
+export interface CostOverviewMCP {
+  server: string
+  calls: number
+  unpriced_calls: number
+  recorded_cost_usd: number
 }
 
 export interface CostOverview {
@@ -1832,6 +1874,9 @@ export interface CostOverview {
   by_provider: Record<string, CostAggregate>
   by_model: Record<string, CostAggregate>
   items: CostOverviewItem[]
+  by_user?: CostOverviewUser[]
+  by_bot?: CostOverviewBot[]
+  by_mcp?: CostOverviewMCP[]
   includes_other: boolean
 }
 

@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { usePersistentTab } from '../../hooks/usePersistentTab'
-import { Search, Server } from 'lucide-react'
+import { AlertTriangle, Search, Server } from 'lucide-react'
 import ConnectorsBrowser from '../../components/connectors/ConnectorsBrowser'
 import { ToolSelectionSection } from '../../components/ToolSelectionSection'
-import { isSelectedServer } from '../../utils/mcpServerAlias'
+import { isSelectedServer, serverNamesMatch } from '../../utils/mcpServerAlias'
 import SkillsManagerPanel from '../../components/skills/SkillsManagerPanel'
 import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
 import WorkflowEmailPanel from '../../components/workflow/WorkflowEmailPanel'
@@ -34,7 +34,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<WorkIntegrationTab, string> = {
   cli: "Help me connect an AI agent to this installation through MCP. Explain the HTTP MCP URL and browser sign-in, and ask which AI app I use.",
 }
 
-function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServersChange }: {
+export function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServersChange }: {
   tabId: string
   projectId: string
   workspacePath: string
@@ -43,6 +43,7 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
 }) {
   const selectedServers = useChatStore(state => state.chatTabs[tabId]?.config.selectedServers || [])
   const toolList = useMCPStore(state => state.toolList)
+  const toolsLoading = useMCPStore(state => state.isLoadingTools)
   // Mirror the workflow tab: connected servers plus already-selected ones
   // (a selected-but-since-disconnected server stays visible/manageable
   // instead of silently vanishing from the project's config).
@@ -56,6 +57,12 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
   const selectedAvailableServers = useMemo(() => availableServers.filter(serverName => isSelectedServer(actualSelected, serverName)), [availableServers, actualSelected])
   const unselectedAvailableServers = useMemo(() => availableServers.filter(serverName => !isSelectedServer(actualSelected, serverName)), [availableServers, actualSelected])
   const [searchQuery, setSearchQuery] = useState('')
+  // Selected for this project but not connected to the platform (e.g. a Crew
+  // the Builder created with an app that still needs sign-in). Its tools do
+  // not work until someone connects it, so say so and offer the way.
+  const needsConnecting = useMemo(() => toolsLoading ? [] : actualSelected.filter(serverName =>
+    !toolList.some(tool => tool.server && serverNamesMatch(tool.server, serverName) && tool.connection === 'connected')),
+  [toolsLoading, actualSelected, toolList])
 
   const setSelected = async (servers: string[]) => {
     const store = useChatStore.getState()
@@ -75,6 +82,38 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
 
   return (
     <div className="flex flex-col gap-3">
+      {needsConnecting.length > 0 && (
+        <div data-testid="work-mcp-needs-connecting" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="flex items-center gap-2 font-medium">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Needs connecting
+          </div>
+          <p className="mt-1 text-xs leading-5">
+            This project uses {needsConnecting.length === 1 ? 'an app that is' : 'apps that are'} not connected yet. Its tools won't work until {needsConnecting.length === 1 ? 'it is' : 'they are'} connected.
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {needsConnecting.map(serverName => (
+              <li key={serverName} className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{serverName}</span>
+                <button
+                  type="button"
+                  className="rounded border border-amber-400 px-2 py-0.5 text-xs hover:bg-amber-100 dark:border-amber-600 dark:hover:bg-amber-900/40"
+                  onClick={() => setSearchQuery(serverName)}
+                >
+                  Connect
+                </button>
+                <button
+                  type="button"
+                  className="rounded px-2 py-0.5 text-xs underline-offset-2 hover:underline"
+                  onClick={() => void onAsk(`Help me connect ${serverName} for this Crew project. It is selected but not connected yet; walk me through signing in or adding its credentials.`)}
+                >
+                  Ask agent
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {selectedAvailableServers.length > 0 && (
         <div>
           <div className="mb-3 text-sm font-medium text-muted-foreground">

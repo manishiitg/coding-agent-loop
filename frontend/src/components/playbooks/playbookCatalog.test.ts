@@ -20,7 +20,7 @@ describe('small-team catalog', () => {
 
   it('keeps the buyer-question handoff with Search Opportunity Mapper', () => {
     const growth = PLAYBOOK_CATALOG.find(item => item.id === 'website-growth-loop')
-    expect(growth?.version).toBe('0.3.0')
+    expect(growth?.version).toBe('0.4.0')
     expect(growth?.agentSlots?.find(slot => slot.id === 'search')?.agent_playbook_id).toBe('search-opportunity-mapper')
     expect(growth?.agentSlots?.find(slot => slot.id === 'search')).not.toHaveProperty('accepts')
     expect(growth?.agentSlots?.find(slot => slot.id === 'technical_seo')?.required).toBe(false)

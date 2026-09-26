@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "website-growth-loop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "changelog": [
+    { "version": "0.4.0", "summary": "Binds exact strategist and search artifacts and adds executable optional search-to-content-to-page draft handoff checks with approved-opportunity and claim gates." },
     { "version": "0.3.0", "summary": "Adds executable strategist/search artifact checks, worked examples, an action ledger and repeat-run method, and separates technical SEO from buyer-question mapping." },
     { "version": "0.2.0", "summary": "Adds a saved nine-check setup checklist with evidence references for Builder chat and the Playbook screen." },
     { "version": "0.1.0", "summary": "Adds a chat-led Website Growth team proposal with two required Crew roles, typed handoffs, a baseline-first path, and a manual test before recurrence." }

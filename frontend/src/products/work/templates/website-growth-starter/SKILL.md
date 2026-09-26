@@ -20,7 +20,7 @@ Read `templates/website-growth-starter/TEMPLATE_SETUP.json` and `templates/websi
 5. Produce a **Website Growth Brief**: site and audience summary; source-linked findings; the most important discovery and conversion gaps; a prioritized 30-day action table with stable action ID, page, evidence, effort, owner, and success signal; and the smallest next inputs needed. Start with three to five actions that the owner can actually review. See the worked brief and review failures in `templates/website-growth-starter/SETUP.md`.
 6. Ask the owner to review the brief. Revise priorities when business context changes. If the available evidence is thin, deliver a useful partial brief instead of presenting guesses as measured results.
 
-When invoked as the Website Growth Loop strategist step, return the final response as one plain JSON object matching `growth-priority-brief/v1` in the Loop's worked example. Do not wrap it in Markdown or add commentary outside the JSON. Include inspected scope, source dates, stable finding/action IDs, baseline state, and limitations so the Workflow can validate the saved response before calling the search Crew.
+When invoked as the Website Growth Loop strategist step, return the final response as one plain JSON object matching `growth-priority-brief/v1` in the Loop's worked example. Do not wrap it in Markdown or add commentary outside the JSON. Include a stable `artifact_id`, inspected scope, source dates, stable finding/action IDs, baseline state, and limitations so the Workflow can validate the saved response before calling the search Crew.
 
 ## Prioritize with an explanation
 

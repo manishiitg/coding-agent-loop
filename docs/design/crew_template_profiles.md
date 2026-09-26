@@ -95,14 +95,14 @@ Each profile answers: **when to use it, what a first result must contain, what s
 ### Content Brief Writer (`content-brief-writer`)
 
 - **Use case:** turn an approved buyer question or search opportunity into a page brief.
-- **First result:** intended reader and action, angle, outline, claims with sources or verification flags, relevant internal links, and an owner decision.
+- **First result:** intended reader and action, angle, outline, claims with sources or verification flags, relevant internal links, and an owner decision. The [illustrative approved brief](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/content-brief.json) and [rejected hypothesis brief](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/invalid-content-brief.json) show the optional Automation handoff.
 - **Setup proof:** verify the approved opportunity, inspect existing pages for duplication, and review at least one factual claim against product material. A CMS connection is optional for a brief.
 - **Later run:** update the same brief when new source facts or owner direction arrive; do not issue a second brief as if the first were never reviewed.
 
 ### Content Page Builder (`content-page-builder`)
 
 - **Use case:** draft an approved page for human review.
-- **First result:** a page draft tied to its brief, with source notes, internal links, a clear next action, and unresolved claims.
+- **First result:** a page draft tied to its brief, with source notes, internal links, a clear next action, and unresolved claims. The [reviewable draft](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/reviewable-page-draft.json) remains unpublished; the [false publication](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/invalid-page-draft.json) is rejected.
 - **Setup proof:** read the approved brief and brand/source material, inspect the existing page context, and review the rendered preview if an implementation is supplied. Drafting is distinct from publication.
 - **Later run:** revise the same draft against reviewer comments and changed facts; require an actual ship record before any measurement route treats it as published.
 
@@ -458,4 +458,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-five Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-six Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

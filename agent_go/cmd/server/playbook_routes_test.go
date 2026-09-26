@@ -27,6 +27,11 @@ func TestPlaybookReinstallPreservesProgressAndUpdateArchivesEvidence(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, relative := range []string{"scripts/validate_growth_artifact.py", "examples/content-brief.json", "examples/invalid-content-brief.json", "examples/reviewable-page-draft.json", "examples/invalid-page-draft.json"} {
+		if mock.files[workspace+"/skills/"+skill+"/"+relative] == "" {
+			t.Fatalf("Website Growth installation lacks %s", relative)
+		}
+	}
 	var progress map[string]interface{}
 	if err := json.Unmarshal([]byte(mock.files[setupPath]), &progress); err != nil {
 		t.Fatal(err)

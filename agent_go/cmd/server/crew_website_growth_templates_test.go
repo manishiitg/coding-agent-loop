@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,19 @@ func TestWebsiteGrowthCrewCatalogHasInstallableSpecialists(t *testing.T) {
 		}
 		if setup.TemplateID != id || len(setup.Checks) < 5 || len(setup.Checks) > 10 {
 			t.Fatalf("invalid %s setup: %+v", id, setup)
+		}
+	}
+	for id, expected := range map[string]string{
+		"search-opportunity-mapper": "source_brief_artifact_id",
+		"content-brief-writer":      "source_search_artifact_id",
+		"content-page-builder":      "source_content_artifact_id",
+	} {
+		item, err := loadCrewAgentTemplate(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(item.Files["skills/"+id+"/SKILL.md"], expected) {
+			t.Fatalf("%s does not describe exact %s handoff", id, expected)
 		}
 	}
 	if _, err := loadCrewAgentTemplate("not-a-template"); err == nil {

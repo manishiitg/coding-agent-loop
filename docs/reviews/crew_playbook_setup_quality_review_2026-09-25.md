@@ -10,6 +10,8 @@ The biggest remaining issue is the distance between the authored Playbook instru
 
 This review inspected the Crew catalog, installation and identity receipts, chat setup status, Workflow Playbook installation, Builder creation/attachment/trigger tools, Crew execution, typed functions, Website Growth package, and the unified design document. It used code inspection and targeted automated tests. It did not run an authenticated customer onboarding session or inspect the current rendered UI. Local changes in this review have not been deployed.
 
+Current branch update, 2026-09-26: Website Growth Loop v0.4.0 now ships executable validators and good/rejected fixtures for the strategist → search → optional content brief → page draft chain. The library validator also checks that all 44 Playbook slots resolve to installed Crew templates and that handoff graphs have matching versioned outputs, valid required edges and no cycles. Builder still must insert and test blocking steps; the generic Crew runner does not enforce these contracts automatically. Findings below remain the original review record where they describe the older checkout.
+
 ## Findings, highest priority first
 
 ### 1. High — Builder Crew creation missed the admin-only Work restriction. Fixed locally.

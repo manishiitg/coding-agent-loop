@@ -216,7 +216,7 @@ Growth Analytics shares the [growth data model](agentic-engineering-platform/gro
 
 | Playbook | Outcome |
 | --- | --- |
-| [Website Growth Loop](agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) | Propose and build a multi-Crew path from site audit to buyer-question opportunities, then add reviewed content and measurement when useful. |
+| [Website Growth Loop](agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) | Propose and build a multi-Crew path from site audit to buyer-question opportunities, with validated optional content brief and page draft handoffs. Measurement starts only after an actual shipped change and comparable source window. |
 
 The Website Growth Loop is installed as guidance and a saved ten-check setup file in a Workflow. Builder chat inspects existing Crews, proposes a concrete team, records check evidence, and uses the `create_crew` template option to set up missing specialists after review. The ten Website Growth agent templates live in the Crew catalog; selecting this Workflow Playbook alone creates no Crew or recurring run.
 

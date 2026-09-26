@@ -25,7 +25,7 @@ Resolve site, offer, audience, market, visitor action, crawl scope, owner, metri
 
 ## Plan and AgentWorks tools
 
-Use Website Growth Starter and Search Opportunity Mapper as distinct required Crews. Reuse suitable Crews; technical SEO is optional. After owner review, use `create_crew` with stable idempotency keys for missing specialists. Bind internal triggers and attachments. Add Crew steps with blocking artifact validation after each producer. Add content or measurement only when inputs and owners exist. Test manually before proposing recurrence.
+Use Website Growth Starter and Search Opportunity Mapper as distinct required Crews. Reuse suitable Crews; technical SEO is optional. After owner review, use `create_crew` with stable idempotency keys for missing specialists. Bind internal triggers and attachments. Add Crew steps with blocking artifact validation after each producer, including selected Content Brief Writer and Page Builder steps. Add measurement only when inputs and owners exist. Test manually before proposing recurrence.
 
 ## Knowledge and persistence
 
@@ -33,7 +33,7 @@ Save decisions, scope, metrics, Crew bindings, evidence, and windows. Track stab
 
 ## Validation and reporting
 
-Verify two Crew IDs, skills, access, both artifacts, and a manual run. Prove invalid artifacts stop the next Crew. The dashboard shows action state, sources, baseline, denominators, run IDs, cost, and blockers. Distinguish drafts, shipped work, and measured results.
+Verify two required Crew IDs, skills, access, exact artifact IDs, and a manual run. If content or page drafting is selected, validate its owner approval, question, claims and unsent draft too. Prove invalid artifacts stop the next Crew. The dashboard shows action state, sources, baseline, denominators, run IDs, cost, and blockers. Distinguish drafts, shipped work, and measured results.
 
 ## Guardrails
 
@@ -44,8 +44,8 @@ Do not infer indexing from a public fetch, fabricate keyword volume or traffic, 
 - [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goal, route, and schedule decisions.
 - [Team and handoff contract](references/team-and-handoffs.md): exact roles, setup checks, artifacts, and run proof.
 - [Action and measurement cycle](references/action-and-measurement.md): owner review, shipping evidence, measurement, and repeat runs.
-- [Artifact validator](scripts/validate_growth_artifact.py): deterministic first-route shape and reference checks.
-- [Example strategist brief](examples/growth-priority-brief.json) and [example search map](examples/search-opportunity-list.json): fictional worked handoff.
+- [Artifact validator](scripts/validate_growth_artifact.py): deterministic strategist, search, content and page handoff checks.
+- [Example strategist brief](examples/growth-priority-brief.json), [search map](examples/search-opportunity-list.json), [content brief](examples/content-brief.json), and [page draft](examples/reviewable-page-draft.json): fictional worked handoffs.
 - [Example run record](examples/website-growth-run.json): fictional run evidence shape.
 - [Setup progress](SETUP.json): ten checks, saved evidence, and completed IDs.
 - [Catalog metadata](playbook.json): roster, inputs, and recommendations.

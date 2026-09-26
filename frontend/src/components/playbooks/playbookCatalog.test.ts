@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(37)
+    expect(PLAYBOOK_CATALOG).toHaveLength(38)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -109,5 +109,16 @@ describe('small-team catalog', () => {
     ])
     expect(security?.handoffs?.[0].artifact_type).toBe('security-finding/v1')
     expect(security?.setupChecks).toContain('remediation_rule')
+  })
+
+  it('exposes Operations meeting actions with required status and optional review', () => {
+    const operations = PLAYBOOK_CATALOG.find(item => item.id === 'meeting-decision-to-owned-follow-through')
+    expect(operations?.category).toBe('Operations')
+    expect(operations?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'meeting-actions-coordinator', 'project-status-reporter',
+    ])
+    expect(operations?.agentSlots?.find(slot => slot.id === 'review')?.required).toBe(false)
+    expect(operations?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('meeting-action-register/v1')
+    expect(operations?.setupChecks).toContain('owner_policy')
   })
 })

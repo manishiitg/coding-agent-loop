@@ -54,6 +54,8 @@ AgentWorks
     │   └── New Customer to First Value
     ├── Customer Support
     │   └── Support Case to Reviewed Resolution
+    ├── Operations
+    │   └── Meeting Decision to Owned Follow-through
     ├── GTM
     │   └── Launch to Qualified Pipeline
     └── Shopify
@@ -75,6 +77,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Security | Finding to Verified Remediation; Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Customer Support | Support Case to Reviewed Resolution | Four Support Crews are locally installable with pending setup. Triage and Reply form the required route; Escalation is optional. Feedback analysis remains a standalone Crew task. |
+| Operations | Meeting Decision to Owned Follow-through | Six Operations Crews are locally installable with pending setup. Meeting Actions and Project Status form the required route; Chief of Staff review is optional. Order, vendor and document work can start as standalone Crew jobs. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
@@ -106,6 +109,12 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Playbook | Outcome |
 | --- | --- |
 | [Support Case to Reviewed Resolution](agentic-engineering-platform/customer-support/support-case-to-reviewed-resolution/SKILL.md) | Propose Support Triage Assistant → Support Reply Drafter with optional Escalation Coordinator; validate exact case and thread handoffs, approve contact separately, and distinguish provider delivery from observed case resolution. |
+
+### Operations Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Meeting Decision to Owned Follow-through](agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/SKILL.md) | Propose Meeting Actions Coordinator → Project Status Reporter with optional Chief of Staff review; validate meeting revision and owner acceptance, re-read tracker status, and keep task writes separate. |
 
 ### Shopify Automation
 
@@ -250,7 +259,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 18 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 19 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

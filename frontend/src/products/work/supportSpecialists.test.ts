@@ -22,7 +22,7 @@ describe('Customer Support Crew templates', () => {
       expect(setup?.completed_steps).toEqual([])
     }
     expect(matchesCrewTemplateSearch(support[1], 'approved help content')).toBe(true)
-    expect(support[1].files['skills/support-reply-drafter/SKILL.md']).toContain('send_state=not_sent')
+    expect(support[1].files['skills/support-reply-drafter/SKILL.md']).toContain('delivery_state=unsent')
     expect(support[2].files['skills/escalation-coordinator/SKILL.md']).toContain('a posted message alone is not an accepted owner assignment')
   })
 })

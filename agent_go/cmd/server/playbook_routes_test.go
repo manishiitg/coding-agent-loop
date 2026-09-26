@@ -332,6 +332,42 @@ func TestSecurityPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T)
 	}
 }
 
+func TestOperationsPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("meeting-decision-to-owned-follow-through")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/operations"
+	const skill = "agentworks-playbook-meeting-decision-to-owned-follow-through"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{
+		"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md",
+		"scripts/validate_handoff.py", "examples/meeting-action-register.json",
+		"examples/project-action-status.json", "examples/operations-review-brief.json",
+		"examples/invalid-project-action-status.json",
+	} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Operations playbook installation lacks %s", relative)
+		}
+	}
+	var setup map[string]interface{}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	completed, ok := setup["completed_steps"].([]interface{})
+	checks, checksOK := setup["checks"].([]interface{})
+	if setup["playbook_id"] != item.ID || !ok || len(completed) != 0 || !checksOK || len(checks) != 10 {
+		t.Fatalf("Operations setup invalid: %+v", setup)
+	}
+}
+
 func TestShopifyPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	item, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {
@@ -437,8 +473,8 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 37 {
-		t.Fatalf("catalog has %d playbooks, want 37", len(items))
+	if len(items) != 38 {
+		t.Fatalf("catalog has %d playbooks, want 38", len(items))
 	}
 	shopify, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {

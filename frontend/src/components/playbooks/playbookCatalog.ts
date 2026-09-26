@@ -54,6 +54,14 @@ export type PlaybookPulseFocus = {
 // Read-only catalog projection of the first-party playbook manifests. The API
 // slice will replace this projection when installation records are introduced.
 export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
+  { id: 'meeting-decision-to-owned-follow-through', title: 'Meeting Decision to Owned Follow-through', description: 'Turn authorized meeting notes into confirmed, deduplicated actions and a source-observed project status report, with optional leadership review.', version: '0.1.0', category: 'Operations', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'meeting', agent_playbook_id: 'meeting-actions-coordinator', required: true, output: 'meeting-action-register/v1' },
+    { id: 'status', agent_playbook_id: 'project-status-reporter', required: true, output: 'project-action-status/v1' },
+    { id: 'review', agent_playbook_id: 'chief-of-staff', required: false, output: 'operations-review-brief/v1' },
+  ], handoffs: [
+    { id: 'meeting-to-status', from: 'meeting', to: 'status', artifact_type: 'meeting-action-register/v1', required: true },
+    { id: 'status-to-review', from: 'status', to: 'review', artifact_type: 'project-action-status/v1', required: false },
+  ], setupChecks: ['goal_owner', 'meeting_scope', 'owner_policy', 'status_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'finding-to-verified-remediation', title: 'Finding to Verified Remediation', description: 'Connect an authorized, validated security finding to owned remediation and independent retest of the affected deployed asset.', version: '0.1.0', category: 'Security', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'finding', agent_playbook_id: 'security-findings-analyst', required: true, output: 'security-finding/v1' },
     { id: 'remediation', agent_playbook_id: 'security-remediation-coordinator', required: true, output: 'security-remediation-ledger/v1' },

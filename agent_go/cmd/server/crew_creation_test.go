@@ -557,6 +557,41 @@ func TestCreateCrewProjectAppliesCustomerSupportTemplateOnBuilderAction(t *testi
 	}
 }
 
+func TestCreateCrewProjectAppliesOperationsTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"chief-of-staff", "meeting-actions-coordinator", "project-status-reporter", "order-operations-coordinator", "vendor-researcher", "document-intake-assistant"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Operations Operator",
+				Role: "Operations operator", Purpose: "Review a sourced operations result",
+				TemplateID: templateID, StepInstruction: "Return a source-linked decision for review.",
+				IdempotencyKey: "operations-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Operations Crew lacks %s", relative)
+				}
+			}
+			var setup map[string]interface{}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			completed, ok := setup["completed_steps"].([]interface{})
+			if !ok || len(completed) != 0 {
+				t.Fatalf("Operations setup unexpectedly completed: %+v", setup)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
 	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator"} {
 		t.Run(templateID, func(t *testing.T) {

@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 42 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 48 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The fourteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The fifteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -189,6 +189,52 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** verify one authorized feedback export, source scope, review policy, owner, and a theme against representative and counterexample records.
 - **Later run:** compare the same source and window rules, retain prior theme IDs and owner decisions, and avoid counting duplicate reviews as new signals.
 
+## Operations
+
+The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/SKILL.md) Automation Playbook composes Meeting Actions Coordinator → Project Status Reporter with optional Chief of Staff review. The fictional [meeting register](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/meeting-action-register.json) and [project status](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/project-action-status.json) show its handoff; [false completion](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/invalid-project-action-status.json) is rejected.
+
+### Chief of Staff
+
+- **Use case:** prepare a periodic business priorities and decision brief from authorized team records.
+- **First result:** dated goals, progress, blockers, decisions needed, owners, due dates, source coverage, and changes since the prior review.
+- **Setup proof:** verify goal IDs, reporting period, source access and freshness, decision authority, and one sourced brief with the operator.
+- **Later run:** carry goal and decision IDs forward, compare like periods, and avoid repeating resolved or unchanged requests.
+
+### Meeting Actions Coordinator
+
+- **Use case:** turn authorized notes into a reviewed action register.
+- **First result:** meeting and notes revision, explicit decisions versus suggestions, source spans, proposed or accepted owners, due dates, duplicate task links, and review state.
+- **Setup proof:** inspect one real notes revision and participant map; verify an action span, existing tracker state, and owner acceptance before any task write.
+- **Later run:** reuse meeting and action IDs, preserve corrections, and avoid duplicate task creation after revised notes.
+
+### Project Status Reporter
+
+- **Use case:** reconcile project milestones and task records into a current status report.
+- **First result:** exact project and as-of time, open/blocked/done/unknown actions, source links and coverage, owner decisions, and next evidence.
+- **Setup proof:** read actual tracker records, verify status rules and one completed versus open claim, and review the report with the project owner.
+- **Later run:** preserve action history, re-read current task state, and never mark a meeting promise as completed work.
+
+### Order Operations Coordinator
+
+- **Use case:** investigate cross-system order and shipment exceptions beyond a particular commerce platform.
+- **First result:** queue with order, fulfillment and carrier IDs, promised time, current provider state, policy rule, owner, prior contact, and reviewed action.
+- **Setup proof:** join one authorized order to fulfillment and carrier records, check policy and time zone, and review a late or stuck case.
+- **Later run:** re-read payment, shipment and prior-contact state, preserve case IDs, and avoid duplicate refunds, shipments or messages.
+
+### Vendor Researcher
+
+- **Use case:** compare a bounded vendor set against owner-approved buying criteria.
+- **First result:** exact product and plan comparison with dated evidence, unknowns, weighted criteria, cost assumptions, risk questions, and owner shortlist.
+- **Setup proof:** verify must-haves, budget, vendor scope, current evidence and one comparable calculation with the decision owner.
+- **Later run:** recheck changed plans and quotes, preserve scoring rules and earlier owner decisions, and flag expired evidence.
+
+### Document Intake Assistant
+
+- **Use case:** extract and validate required fields from authorized incoming documents.
+- **First result:** source-linked document/version record with page spans, typed values, validation results, duplicate state, uncertainty and reviewer queue.
+- **Setup proof:** verify sample document access, schema and privacy rules, a field against the page, one failed or ambiguous value, and destination authority.
+- **Later run:** use document hash and destination ID, retain review corrections, and prevent duplicate writes for unchanged files.
+
 ## Engineering
 
 ### Incident Investigator (`incident-investigator`)
@@ -324,4 +370,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing eighteen Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing nineteen Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

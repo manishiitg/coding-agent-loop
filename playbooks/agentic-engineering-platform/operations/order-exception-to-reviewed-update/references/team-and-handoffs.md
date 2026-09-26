@@ -20,7 +20,7 @@ The last command must fail. Replace example paths with installed Workflow artifa
 
 ## Stable joins and claims
 
-Order and update artifacts share business, order, customer and case IDs. Operations also records payment, fulfillment and shipment IDs, source revision and observation time. Support cites that exact artifact ID and the current case revision. An email address, display name or order amount is not an identity join.
+Order and update artifacts share business, order, customer and case IDs. Operations also records payment, fulfillment and shipment IDs, source revision and observation time. The source payment and fulfillment records must name that order, and the carrier record must name that shipment. Support cites the exact order artifact and current case revision; the case source must name the same order and customer. An email address, display name or order amount is not an identity join.
 
 `label_created` and `not_accepted` support only `pickup_unverified`. A provider carrier acceptance event supports `carrier_accepted`; an in-transit event supports `in_transit`; a delivered event supports `delivered`. Unknown source state remains unknown. The draft's `claim_state` cannot advance beyond the source-observed exception state. A pending or failed payment cannot be described as captured. The route's output remains `unsent` with `approval_state: pending` until a separate owner decision and action route.
 

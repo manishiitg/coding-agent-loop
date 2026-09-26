@@ -6,6 +6,8 @@
   "order_id": "ord-88",
   "customer_id": "customer-7",
   "case_id": "case-204",
+  "case_record_order_id": "ord-88",
+  "case_record_customer_id": "customer-7",
   "case_revision": "rev6",
   "case_source_id": "helpdesk:case-204@rev6",
   "case_observed_at": "2026-09-26T12:05:00Z",

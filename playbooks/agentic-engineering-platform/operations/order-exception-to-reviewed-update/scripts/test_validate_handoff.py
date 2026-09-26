@@ -33,6 +33,14 @@ class OrderUpdateContractTests(unittest.TestCase):
         self.assertTrue(any('exception state' in error for error in errors))
         self.assertTrue(any('captured or sale' in error for error in errors))
 
+    def test_rejects_source_records_joined_to_other_order_or_shipment(self):
+        order = fixture('order-exception.json')
+        order['payment_record_order_id'] = 'ord-99'
+        order['carrier_record_shipment_id'] = 'track-99'
+        errors = validate_order(order)
+        self.assertTrue(any('payment_record_order_id' in error for error in errors))
+        self.assertTrue(any('carrier_record_shipment_id' in error for error in errors))
+
     def test_rejects_stale_case_and_unverified_message_claim(self):
         order = fixture('order-exception.json')
         update = fixture('order-customer-update-review.json')

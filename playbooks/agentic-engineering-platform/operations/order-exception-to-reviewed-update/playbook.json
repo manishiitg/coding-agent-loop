@@ -2,8 +2,11 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "order-exception-to-reviewed-update",
-  "version": "0.1.0",
-  "changelog": [{"version": "0.1.0", "summary": "Adds a generic order exception to support update proposal with exact order and case joins and a rejected false-resolution example."}],
+  "version": "0.1.1",
+  "changelog": [
+    {"version": "0.1.1", "summary": "Requires payment, fulfillment, carrier and case source records to join the exact order and shipment."},
+    {"version": "0.1.0", "summary": "Adds a generic order exception to support update proposal with exact order and case joins and a rejected false-resolution example."}
+  ],
   "title": "Order Exception to Reviewed Update",
   "description": "Investigate a cross-system order exception and prepare a policy-safe, unsent customer update for the exact support case.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Operations"],

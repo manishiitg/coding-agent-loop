@@ -76,7 +76,7 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'research-to-payables', from: 'research', to: 'payables', artifact_type: 'vendor-comparison/v1', required: true },
   ], setupChecks: ['goal_owner', 'request_scope', 'requirements_rule', 'commercial_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
-  { id: 'order-exception-to-reviewed-update', title: 'Order Exception to Reviewed Update', description: 'Investigate a cross-system order exception and prepare a policy-safe, unsent customer update for the exact support case.', version: '0.1.0', category: 'Operations', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+  { id: 'order-exception-to-reviewed-update', title: 'Order Exception to Reviewed Update', description: 'Investigate a cross-system order exception and prepare a policy-safe, unsent customer update for the exact support case.', version: '0.1.1', category: 'Operations', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'operations', agent_playbook_id: 'order-operations-coordinator', required: true, output: 'order-exception/v1' },
     { id: 'support', agent_playbook_id: 'support-reply-drafter', required: true, output: 'order-customer-update-review/v1' },
   ], handoffs: [

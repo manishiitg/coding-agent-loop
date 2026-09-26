@@ -947,6 +947,46 @@ func TestOperationsPlaybookInstallationCopiesContractAndPendingSetup(t *testing.
 	}
 }
 
+func TestOrderExceptionPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("order-exception-to-reviewed-update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/order-update"
+	const skill = "agentworks-playbook-order-exception-to-reviewed-update"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{
+		"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md",
+		"scripts/validate_handoff.py", "scripts/test_validate_handoff.py",
+		"examples/order-exception.json", "examples/order-customer-update-review.json",
+		"examples/invalid-order-customer-update-review.json",
+	} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("order update playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+		Checks     []struct {
+			ID string `json:"id"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 || len(setup.Checks) != 10 {
+		t.Fatalf("order update setup invalid: %+v", setup)
+	}
+}
+
 func TestShopifyPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	item, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {

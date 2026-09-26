@@ -43,6 +43,13 @@ def validate_order(order: dict) -> list[str]:
     for key in ('artifact_id', *IDENTITY, 'payment_id', 'fulfillment_id', 'shipment_id', 'policy_version', 'owner_id', *ORDER_SOURCES):
         if not nonempty(order.get(key)):
             errors.append(f'missing {key}')
+    for source_key, expected_key in (
+        ('payment_record_order_id', 'order_id'),
+        ('fulfillment_record_order_id', 'order_id'),
+        ('carrier_record_shipment_id', 'shipment_id'),
+    ):
+        if not nonempty(order.get(source_key)) or order.get(source_key) != order.get(expected_key):
+            errors.append(f'source identity mismatch {source_key}')
     if not timestamp(order.get('observed_at')) or not timestamp(order.get('promised_at')):
         errors.append('order observation or promised time is invalid')
     if not references(order.get('source_refs')):
@@ -84,6 +91,9 @@ def validate_update(order: dict, update: dict) -> list[str]:
     for key in ('artifact_id', 'case_revision', 'case_source_id', 'owner_id', 'policy_version'):
         if not nonempty(update.get(key)):
             errors.append(f'update missing {key}')
+    for source_key, expected_key in (('case_record_order_id', 'order_id'), ('case_record_customer_id', 'customer_id')):
+        if not nonempty(update.get(source_key)) or update.get(source_key) != order.get(expected_key):
+            errors.append(f'case source identity mismatch {source_key}')
     if not timestamp(update.get('case_observed_at')):
         errors.append('case observation time is invalid')
     elif timestamp(order.get('observed_at')) and timestamp(update['case_observed_at']) < timestamp(order['observed_at']):

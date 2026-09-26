@@ -1,3 +1,4 @@
+<<<<<<< ours
 ## Completion turn colliding with a user turn closed the CLI — PLAT-360
 
 [PLAT-360](pulse_platform/chat-reliability/plat-360.md) fixes a lost user
@@ -8,6 +9,21 @@ refused it as "a turn is already in flight", but the server marked the session
 longer changes the session status or fails the terminal; the completion is
 still queued for retry and runs after the user's turn. Fixed on main; deploy
 and live verification pending.
+=======
+## Plan Drift fired on cosmetic-only plan edits — PLAT-359
+
+[PLAT-359](pulse_platform/plans-contracts/plat-359.md) fixes the trigger the
+user reported as "even small change trigger a plan drift". Any persisted
+plan-step field change, title included, flagged `plan_drift_review` due, by
+design; a live audit found description-only edits were the single largest
+share of the unreviewed changelog backlog. `planDriftMaterialFieldNames` now
+gates both the per-step flag and the changelog backlog scan on whether a
+changed field can actually affect a dependent (outputs, dependencies,
+validation, routing); wording, review notes, schedule timing and model/tier
+settings no longer count. An entry with no recorded field names at all
+(untyped `update_step_config`, a step add/delete) stays conservative and is
+still counted. Pushed to main; deployment and live acceptance pending.
+>>>>>>> theirs
 
 ## Builder-created Crews are born identity-complete — PLAT-358
 

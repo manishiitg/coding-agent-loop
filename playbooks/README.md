@@ -48,6 +48,18 @@ AgentWorks
         └── New Customer to First Value
 ```
 
+## Browse categories and package locations
+
+The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats **Engineering, QA, Security, GTM, and Shopify** as first-class browse categories. Package directories retain their canonical IDs; a browse category can link to an existing package without copying it or installing a Crew.
+
+| Browse category | Current Workflow Playbook coverage | Crew and gap status |
+| --- | --- | --- |
+| Engineering | Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Engineering Crew roles are planned. |
+| QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | QA Crew roles are planned; existing packages remain under `browser-qa/`. |
+| Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Security Crew roles are planned; the role-permission package remains under `browser-qa/`. |
+| GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | The end-to-end launch-to-qualified-pipeline Playbook is planned. Existing Website Growth and Sales Crews are cross-listed, not duplicated. |
+| Shopify | No store-specific Workflow Playbook packaged yet | Shopify-specific Crews and store workflows are planned. Generic Website Growth Crews can be discovered for public-storefront work without store access. |
+
 ### Browser QA
 
 | Playbook | Outcome |

@@ -6,7 +6,7 @@ Status: catalog in progress, 2026-09-26. **21 Crew templates are installable loc
 
 Use **category** for the team or business function, **use case** for the customer's concrete job, **Crew template** for a reusable agent capability, and **Automation Playbook** for a proposed multi-Crew journey. One Crew can hold several compatible capabilities. A Playbook can reuse existing Crews; installing it does not create them or start a run. See [how setup and activation work](#product-model).
 
-| Category | Boundary and customer use cases | Installable Crew templates | Planned roles or packs | Installable multi-Crew proposal |
+| Browse category | Boundary and customer use cases | Installable Crew templates | Planned roles or packs | Relevant installable Automation Playbook |
 | --- | --- | ---: | ---: | --- |
 | [Finance](#finance) | Subscription billing exceptions; finance performance; close reconciliation; vendor spend; tax export. Owns money records and financial review, not sales contact. | 5 | 3 later roles and 4 deeper capability packs | [Finance Operations Review](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/SKILL.md) |
 | [Marketing → Website Growth](#website-growth) | A new or existing site needs relevant traffic: audit, buyer questions, SEO, content, distribution, conversion, and measurement. | 10 | 0 in this subcategory | [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) |
@@ -15,13 +15,17 @@ Use **category** for the team or business function, **use case** for the custome
 | [Customer Success](#customer-success) | Move a signed customer through onboarding to observed first value and account health. Owns post-sale adoption. | 3 | 0 | [New Customer to First Value](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/SKILL.md) |
 | [Customer Support](#customer-support) | Triage and answer incoming issues, coordinate escalation, and analyze feedback. Owns the support case, not the account's full adoption journey. | 0 | 4 | None in this Crew catalog |
 | [Operations](#operations) | Meeting actions, project status, order exceptions, vendor research, and document intake. | 0 | 6 | None in this Crew catalog |
-| [Engineering](#engineering) | Release quality, incidents, security, performance, code review, and cloud cost. | 0 | 6 | No Crew-composition proposal here; existing [engineering Workflow Playbooks](../../playbooks/README.md) are a separate catalog |
+| [Engineering](#engineering) | Code review, incidents, performance, delivery intelligence, and cloud cost. QA and Security have their own browse entries below. | 0 | 4 primary roles, plus QA and Security cross-listings | [Engineering Workflow Playbooks](../../playbooks/README.md#engineering-operations-intelligence) exist; no Crew-composition proposal here |
+| [QA](#qa) | Browser journeys, regression, role and permission checks, flaky tests, and release gates. Owns evidence that a change works. | 0 | 3 primary roles | [Browser QA Workflow Playbooks](../../playbooks/README.md#browser-qa) exist; no Crew-composition proposal here |
+| [Security](#security) | Authorized application findings, exposure triage, remediation review, and retest. Owns evidence that a risk is understood and addressed. | 0 | 3 primary roles | [Application Security Assessment and Remediation](../../playbooks/agentic-engineering-platform/security-engineering/application-security/application-security-assessment-remediation/SKILL.md) exists as a Workflow Playbook |
+| [GTM](#gtm) | Coordinate positioning, launch, website demand, lead capture, qualification, and a measurable pipeline outcome across Marketing and Sales. | Existing Marketing and Sales Crews are cross-listed; 0 GTM-specific packs | 2 primary role candidates | [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) and [Inbound Lead-to-Meeting Review](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/SKILL.md) cover parts; no end-to-end GTM proposal yet |
+| [Shopify](#shopify) | Store launch, catalog quality, storefront conversion, order exceptions, returns, and store performance. | 0 Shopify-specific packs; relevant Website Growth Crews can be discovered here | 4 primary role candidates | None packaged for Shopify yet |
 
-The parent taxonomy has **seven** categories: Finance, Marketing, Sales, Customer Success, Customer Support, Operations, and Engineering. **Website Growth** is a Marketing subcategory, although today's Crew picker still labels it “Website Growth” directly. The public site's broader Money, Customers, Growth, Operations, and Engineering labels are navigation groups, not additional template categories. Cross-category discovery is allowed: for example, Account Researcher can be found from Sales and Marketing searches, but it has one canonical ID and one setup record.
+The browse catalog now names **eleven first-class categories**: Finance, Marketing, Sales, Customer Success, Customer Support, Operations, Engineering, QA, Security, GTM, and Shopify. **Website Growth** is a Marketing subcategory, although today's Crew picker still labels it “Website Growth” directly. QA and Security are also discoverable independently of Engineering; GTM spans Marketing and Sales; Shopify is a store-specific lens across Growth, Sales, Operations, and Support. A template has one canonical ID, skill, and setup record even when it appears in several browse categories. These added categories are **documentation taxonomy**, not new choices already shipped in the Crew picker. The public site's broader Money, Customers, Growth, Operations, and Engineering labels are separate navigation groups.
 
 **Status terms:** **Available locally** means the Crew template can be selected and installs a skill plus a pending setup checklist, or the Automation Playbook can be installed as a Builder proposal. **Planned** means the row is a candidate, not selectable. **Operationally ready** applies only to a particular customer's configured Crew or Automation after access, a representative result, handoffs, and run policy are verified. None of the category counts asserts operational readiness.
 
-In the category tables below, a suggested Automation name that is **not one of the four linked Playbooks above** is an idea, not an installable Playbook. An existing Workflow Playbook with a related name can be used separately but does not make its proposed Crew or handoff available.
+In the category tables below, an unlinked suggested Automation name is an idea, not an installable Playbook. A linked existing Workflow Playbook can be installed separately, but it does not make its proposed Crew identity or a new cross-category handoff available.
 
 ## Four installable Automation Playbooks
 
@@ -81,7 +85,7 @@ A **Crew template** currently provides a reusable capability pack: a local skill
 
 Each template must work as a useful interactive Crew after the user provides its minimum inputs. Connected accounts, schedules, outbound messages, payments, production changes, and other consequential actions require explicit setup and the product's normal permissions and approvals. Never prefill a customer's target metric with an illustrative website number.
 
-The catalog tracks seven parent categories and the Website Growth subcategory described above. Several related jobs should become capabilities of one Crew rather than separate Crew identities. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
+The catalog tracks eleven first-class browse categories and the Website Growth subcategory described above. Several related jobs should become capabilities of one Crew rather than separate Crew identities. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
 The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
 
@@ -206,16 +210,60 @@ All six Crew rows below are planned. Keep these as separate Crew identities only
 
 ## Engineering
 
-All six Crew rows below are planned. Existing engineering Workflow Playbooks cover several related jobs in the Workflow Builder, but they do not install these proposed Crew identities. Product and market research belongs to Marketing or Sales unless an engineering owner is making a release, reliability, security, performance, code, or cost decision.
+The four primary Crew rows below are planned. Existing engineering Workflow Playbooks cover related jobs in the Workflow Builder, but they do not install these proposed Crew identities. QA owns test and release-gate evidence; Security owns application risk and remediation evidence. Engineering remains the home for incident, performance, code, and cloud-cost investigations.
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Release Quality Assistant** — planned | Inspect a release candidate and summarize tests, failures, evidence, and a proposed gate decision. | Repository or build, test policy, release scope. | Release & PR Quality Gate |
 | **Incident Investigator** — planned | Correlate alerts, logs, and deploys into a sourced timeline and initial hypotheses. | Incident scope, authorized telemetry, escalation policy. | Incident Investigation |
-| **Security Findings Analyst** — planned | Triage authorized findings and draft reviewed remediation steps with verification criteria. | Findings, asset scope, severity policy, code access. | Application Security |
 | **Cloud Cost Analyst** — planned | Explain cost changes and propose evidence-backed savings with service-risk checks. | Billing data, ownership map, budget, change policy. | Cloud Cost Anomaly to Savings |
 | **Performance Investigator** — planned | Analyze latency or page performance regressions and produce a reproducible diagnosis. | Targets, traces or test runs, performance budgets. | Performance Validation |
 | **PR Review Assistant** — planned | Review a change against repository standards and surface specific, verifiable risks. | Repository access, review rules, change scope. | PR Review Queue |
+
+## QA
+
+QA is a first-class browse category, even though its existing Workflow packages live under `browser-qa/` inside the Agentic Engineering Platform. It covers functional journeys, regression, permissions as experienced by users, and release gates. A security finding discovered during QA should hand off to Security without claiming it was remediated.
+
+| Crew template | Job and first useful output | Minimum user input | Existing Workflow Playbook or proposed Automation |
+| --- | --- | --- | --- |
+| **Browser Journey QA Analyst** — planned | Run an approved user journey and return exact pass/fail evidence with screenshots, console/network errors, and reproduction steps. | Approved journey, environment, test account, expected result. | [Critical Journey Validation](../../playbooks/agentic-engineering-platform/browser-qa/critical-journey-validation/SKILL.md) exists as a Workflow Playbook. |
+| **Flaky Test Investigator** — planned | Distinguish intermittent product failures from test instability and propose a verified fix or owner action. | Test history, exact build, traces, retry policy. | [Flaky-Test Detection and Stabilization](../../playbooks/agentic-engineering-platform/browser-qa/flaky-test-detection-stabilization/SKILL.md) exists as a Workflow Playbook. |
+| **Release Quality Assistant** — planned | Inspect a release candidate and summarize tests, failures, evidence, and a proposed gate decision. | Repository or build, test policy, release scope. | [Release and PR Quality Gate](../../playbooks/agentic-engineering-platform/browser-qa/release-pr-quality-gate/SKILL.md) exists as a Workflow Playbook. |
+
+## Security
+
+Security is a first-class browse category for authorized risk work. It begins with a bounded assessment, triage, reviewed remediation, and retest. Role and Permission Validation is also discoverable from Security, but remains one Workflow Playbook with its canonical `browser-qa` package ID.
+
+| Crew template | Job and first useful output | Minimum user input | Existing Workflow Playbook or proposed Automation |
+| --- | --- | --- | --- |
+| **Security Findings Analyst** — planned | Triage authorized findings and draft reviewed remediation steps with verification criteria. | Findings, asset scope, severity policy, code access. | [Application Security Assessment and Remediation](../../playbooks/agentic-engineering-platform/security-engineering/application-security/application-security-assessment-remediation/SKILL.md) exists as a Workflow Playbook. |
+| **Access Review Analyst** — planned | Compare actual user, role, and tenant permissions to an approved policy; return evidence-backed exceptions. | Role matrix, test accounts, asset scope, decision owner. | [Role and Permission Validation](../../playbooks/agentic-engineering-platform/browser-qa/role-permission-validation/SKILL.md) exists as a Workflow Playbook. |
+| **Security Remediation Coordinator** — planned | Track an approved finding through owner assignment, change review, deployed retest, and closure evidence. | Finding ID, approved fix, code/deploy evidence, retest rule. | The existing Application Security Playbook covers this Workflow journey; this Crew identity is not packaged. |
+
+## GTM
+
+GTM is a cross-functional browse category for a company taking an offer to market and turning demand into qualified pipeline. Marketing owns audience, message, content, and channels; Sales owns lead fit, contact, and meeting outcomes. The category groups compatible existing Crews under one buyer journey rather than copying their templates. Neither Website Growth Loop nor Inbound Lead-to-Meeting Review alone covers the full launch-to-pipeline lifecycle.
+
+| Crew template or capability | Job and first useful output | Minimum user input | Status and Automation |
+| --- | --- | --- | --- |
+| **Website Growth Starter**, **Search Opportunity Mapper**, **Content Distribution Coordinator** | Find buyer questions, improve the site plan, and prepare reviewed distribution. | Offer, audience, site, relevant buyer evidence, approved channels. | Available as separate Website Growth Crews; [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) covers the first two-Crew route. |
+| **Lead Intake & Qualifier**, **Account Researcher**, **Sales Follow-up Coordinator** | Review inbound interest, prepare context and an approved booking offer. | Lead source, ideal-customer criteria, contact policy, owner, booking route. | Available as Sales Crews; [Inbound Lead-to-Meeting Review](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/SKILL.md) covers qualification to reviewed follow-up. |
+| **GTM Strategy Analyst** — planned | Turn the offer, ideal customer, positioning, channels, and goals into an evidence-linked launch brief. | Offer, customer evidence, market, owner, success metric. | New Crew candidate; no GTM Automation packaged. |
+| **Launch Coordinator** — planned | Keep approved launch assets, owners, dates, dependencies, and first pipeline signals in one action ledger. | Launch plan, asset inventory, owners, approved channels, measurement sources. | New Crew candidate; no GTM Automation packaged. |
+
+The proposed **Launch to Qualified Pipeline** Automation would connect a reviewed message and site plan → approved distribution → captured lead → qualification → reviewed follow-up → observed meeting or pipeline outcome. It needs stable campaign and lead IDs, attribution limits, a verified source and consent policy, and a manual first route. It is a **planned Playbook**, not an installable package.
+
+## Shopify
+
+Shopify is a store-specific browse category for ecommerce businesses using that platform. A generic Website Growth Crew can inspect a public storefront, but Shopify catalog, order, inventory, return, and revenue claims require an authorized store connection or export. Store writes and customer messages need a separate reviewed route. The proposed agents below are not in the Crew picker and there is no Shopify Automation package yet.
+
+| Crew template | Job and first useful output | Minimum user input | Suggested Automation |
+| --- | --- | --- | --- |
+| **Catalog & Merchandising Analyst** — planned | Identify missing product facts, inconsistent variants, out-of-stock presentation, and search/navigation gaps with product IDs and a review queue. | Store URL or product export, catalog rules, priority collection. | Catalog Health Review — planned |
+| **Shopify Growth Analyst** — planned | Analyze storefront discovery, product-page quality, traffic and checkout-path evidence; propose bounded improvements. | Storefront URL, target buyer, product/collection scope, analytics or export if claiming performance. | Storefront Growth Review — planned |
+| **Store Operations Coordinator** — planned | Investigate stuck orders, fulfillment and inventory exceptions with owner-safe next actions. | Authorized order/inventory export or Shopify account, service policy, owners. | Order Exception to Resolution — planned |
+| **Returns & Support Coordinator** — planned | Review return/refund requests against order status and policy; draft customer-safe responses for approval. | Order and return records, refund policy, contact rules, owner. | Returns Review — planned |
+
+The existing **Order Operations Coordinator** proposal under Operations could later become a shared capability instead of a duplicate Shopify Crew. Keep one canonical ID and put a Shopify-specific pack on it only when store access, schemas, and policy genuinely differ. Website Growth Starter, Landing Page Optimizer, and Traffic & Engagement Analyst may also be discovered here for their generic public-storefront or analytics jobs; they do not inherit Shopify credentials or order access.
 
 ## Template definition required for implementation
 

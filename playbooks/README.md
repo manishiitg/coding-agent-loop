@@ -250,6 +250,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
+- This runs all 18 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

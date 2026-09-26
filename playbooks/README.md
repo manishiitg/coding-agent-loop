@@ -38,8 +38,14 @@ AgentWorks
     │   ├── Growth Experimentation and Follow-Through
     │   ├── SEO Intelligence
     │   └── AI Visibility Intelligence
-    └── Website Growth
-        └── Website Growth Loop
+    ├── Website Growth
+    │   └── Website Growth Loop
+    ├── Finance
+    │   └── Finance Operations Review
+    ├── Sales
+    │   └── Inbound Lead-to-Meeting Review
+    └── Customer Success
+        └── New Customer to First Value
 ```
 
 ### Browser QA
@@ -116,7 +122,27 @@ Growth Analytics shares the [growth data model](agentic-engineering-platform/gro
 | --- | --- |
 | [Website Growth Loop](agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) | Propose and build a multi-Crew path from site audit to buyer-question opportunities, then add reviewed content and measurement when useful. |
 
-The Website Growth Loop is installed as guidance and a saved nine-check setup file in a Workflow. Builder chat inspects existing Crews, proposes a concrete team, records check evidence, and uses the `create_crew` template option to set up missing specialists after review. The ten Website Growth agent templates live in the Crew catalog; selecting this Workflow Playbook alone creates no Crew or recurring run.
+The Website Growth Loop is installed as guidance and a saved ten-check setup file in a Workflow. Builder chat inspects existing Crews, proposes a concrete team, records check evidence, and uses the `create_crew` template option to set up missing specialists after review. The ten Website Growth agent templates live in the Crew catalog; selecting this Workflow Playbook alone creates no Crew or recurring run.
+
+### Finance
+
+| Playbook | Outcome |
+| --- | --- |
+| [Finance Operations Review](agentic-engineering-platform/finance/finance-operations-review/SKILL.md) | Propose a Billing Operations Coordinator → Finance Analyst review of subscription billing exceptions and source-linked financial impact. Close and payables specialists are optional; their handoffs are not part of the first packaged route. |
+
+### Sales
+
+| Playbook | Outcome |
+| --- | --- |
+| [Inbound Lead-to-Meeting Review](agentic-engineering-platform/sales/inbound-lead-to-meeting-review/SKILL.md) | Propose a Lead Intake & Qualifier → Sales Follow-up Coordinator route with optional account research, a reviewed booking offer, and delivery or booking status only when provider evidence exists. |
+
+### Customer Success
+
+| Playbook | Outcome |
+| --- | --- |
+| [New Customer to First Value](agentic-engineering-platform/customer-success/new-customer-to-first-value/SKILL.md) | Propose Customer Onboarding Coordinator → Product Adoption Analyst handoffs for an agreed first-value result, with optional account health review. |
+
+These three Playbooks are installed as **chat-led Workflow proposals** with ten setup checks each. Installation copies guidance and pending checks. Builder must inspect existing Crews, customer sources and policies, agree on the concrete plan, wire and validate handoffs, and run a real manual case before any optional recurrence or external action is activated. See the [Crew category, use-case, and agent catalog](../docs/design/crew_template_catalog.md) for available versus planned Crew templates.
 
 ## Authoring contract
 

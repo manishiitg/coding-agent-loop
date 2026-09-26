@@ -1,6 +1,79 @@
 # Crew template catalog
 
-Status: catalog in progress, 2026-09-25. Five Finance, ten Website Growth, three Sales, and three Customer Success Crew templates are available in the Crew creation dialog and through Builder's trusted `create_crew` path. They can be combined as capabilities in one Crew. Other entries are planned. Each installed template contributes a local skill and its own setup checklist. Optional integrations and recurring capabilities still require separate setup.
+Status: catalog in progress, 2026-09-26. **21 Crew templates are installable locally:** five Finance, ten Website Growth, three Sales, and three Customer Success. The remaining Crew names in this document are proposals. The four multi-Crew Automation Playbooks below are installable chat proposals, not active automations. This document is a product map, not evidence that a customer has connected tools, completed setup, or achieved an outcome. The local release has not been deployed to Dominion.
+
+## Find a job and its status
+
+Use **category** for the team or business function, **use case** for the customer's concrete job, **Crew template** for a reusable agent capability, and **Automation Playbook** for a proposed multi-Crew journey. One Crew can hold several compatible capabilities. A Playbook can reuse existing Crews; installing it does not create them or start a run. See [how setup and activation work](#product-model).
+
+| Category | Boundary and customer use cases | Installable Crew templates | Planned roles or packs | Installable multi-Crew proposal |
+| --- | --- | ---: | ---: | --- |
+| [Finance](#finance) | Subscription billing exceptions; finance performance; close reconciliation; vendor spend; tax export. Owns money records and financial review, not sales contact. | 5 | 3 later roles and 4 deeper capability packs | [Finance Operations Review](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/SKILL.md) |
+| [Marketing → Website Growth](#website-growth) | A new or existing site needs relevant traffic: audit, buyer questions, SEO, content, distribution, conversion, and measurement. | 10 | 0 in this subcategory | [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/SKILL.md) |
+| [Marketing → Other Growth](#marketing--growth) | Competitive positioning, campaign analysis, and experiment design beyond the website journey. | 0 | 3 | None in this Crew catalog |
+| [Sales](#sales) | Turn inbound interest into a qualified, reviewed meeting; later prepare calls, proposals, and pipeline reviews. Owns prospect qualification and contact. | 3 | 3 | [Inbound Lead-to-Meeting Review](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/SKILL.md) |
+| [Customer Success](#customer-success) | Move a signed customer through onboarding to observed first value and account health. Owns post-sale adoption. | 3 | 0 | [New Customer to First Value](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/SKILL.md) |
+| [Customer Support](#customer-support) | Triage and answer incoming issues, coordinate escalation, and analyze feedback. Owns the support case, not the account's full adoption journey. | 0 | 4 | None in this Crew catalog |
+| [Operations](#operations) | Meeting actions, project status, order exceptions, vendor research, and document intake. | 0 | 6 | None in this Crew catalog |
+| [Engineering](#engineering) | Release quality, incidents, security, performance, code review, and cloud cost. | 0 | 6 | No Crew-composition proposal here; existing [engineering Workflow Playbooks](../../playbooks/README.md) are a separate catalog |
+
+The parent taxonomy has **seven** categories: Finance, Marketing, Sales, Customer Success, Customer Support, Operations, and Engineering. **Website Growth** is a Marketing subcategory, although today's Crew picker still labels it “Website Growth” directly. The public site's broader Money, Customers, Growth, Operations, and Engineering labels are navigation groups, not additional template categories. Cross-category discovery is allowed: for example, Account Researcher can be found from Sales and Marketing searches, but it has one canonical ID and one setup record.
+
+**Status terms:** **Available locally** means the Crew template can be selected and installs a skill plus a pending setup checklist, or the Automation Playbook can be installed as a Builder proposal. **Planned** means the row is a candidate, not selectable. **Operationally ready** applies only to a particular customer's configured Crew or Automation after access, a representative result, handoffs, and run policy are verified. None of the category counts asserts operational readiness.
+
+In the category tables below, a suggested Automation name that is **not one of the four linked Playbooks above** is an idea, not an installable Playbook. An existing Workflow Playbook with a related name can be used separately but does not make its proposed Crew or handoff available.
+
+## Four installable Automation Playbooks
+
+| Playbook and use case | Required Crew capabilities | Optional capabilities | First reviewable result | Manual first-run proof and outcome |
+| --- | --- | --- | --- | --- |
+| [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/playbook.json): find useful traffic opportunities for a new site | Website Growth Starter → Search Opportunity Mapper | Technical SEO, content brief, page draft, measurement | Source-linked priority brief and buyer-question opportunity map | Validate the strategist-to-search artifact on the customer's site; record owner decision and baseline or baseline-first policy. No traffic lift is claimed before comparable data exists. |
+| [Inbound Lead-to-Meeting Review](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/playbook.json): turn an inbound enquiry into a reviewed booking path | Lead Intake & Qualifier → Sales Follow-up Coordinator | Account Researcher | Sourced qualification brief and an unsent, reviewable booking offer | Validate lead identity, fit, duplicate/contact gates and the draft. Count delivery only from a provider receipt, and a meeting only from a calendar or CRM event. |
+| [Finance Operations Review](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/playbook.json): resolve billing exceptions with finance context | Billing Operations Coordinator → Finance Analyst | Revenue & Close Analyst, Spend & Payables Coordinator | Validated exception queue and source-linked finance impact readout | Run with authorized billing and ledger records; review the queue and impact together. No refund, payment, or accounting write follows from installation. |
+| [New Customer to First Value](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/playbook.json): track a new customer to an agreed result | Customer Onboarding Coordinator → Product Adoption Analyst | Customer Health Coordinator | Owned milestone register and evidence-linked first-value readout | Verify customer identity, event definition, source coverage, and the onboarding-to-adoption handoff on a real authorized account. A milestone plan alone is not first-value proof. |
+
+Each Playbook's `playbook.json` declares its slots, artifact names, and capability suggestions; its `SETUP.json` records ten customer-specific checks. The [Website Growth guide](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/references/team-and-handoffs.md) and [Sales guide](sales_inbound_lead_to_meeting.md) provide the detailed journeys. Existing Workflow Playbooks outside these four are indexed in the [Playbooks README](../../playbooks/README.md); their presence does not make a planned Crew template installable.
+
+## Route a customer request to an available Crew
+
+This is the **current use-case map**, not a list of extra agents. Start with one relevant Crew for a chat request. Offer the named Automation Playbook when the customer wants an owned, measured journey across capabilities or a separate access/review boundary. A source export may support the first read-only result; the connected version needs a verified account and scope.
+
+| Customer request or use case | Primary available Crew | First useful result | Multi-Crew route when needed |
+| --- | --- | --- | --- |
+| “Explain what changed in our SaaS revenue, spend, or cash.” | [Finance Analyst](crew_template_profiles.md#finance-analyst) | Sourced finance brief with calculations and unknowns | Finance Operations Review when billing exceptions need a separate owner |
+| “Which invoices, failed payments, refunds, or disputes need attention?” | [Billing Operations Coordinator](crew_template_profiles.md#billing-operations-coordinator) | Dated exception queue and drafts for review | Finance Operations Review |
+| “Reconcile subscription billing to our close.” | [Revenue & Close Analyst](crew_template_profiles.md#revenue--close-analyst) | Close checklist and mismatch memo | Optional specialist in Finance Operations Review; no close handoff is packaged yet |
+| “Review bills and company expenses before approval.” | [Spend & Payables Coordinator](crew_template_profiles.md#spend--payables-coordinator) | Source-linked payables queue | Optional specialist in Finance Operations Review; no payables handoff is packaged yet |
+| “Prepare transaction records for our tax professional.” | [Tax Export Preparer](crew_template_profiles.md#tax-export-preparer) | Reconciled export and exception list | Usually a capability on Finance Analyst; no tax filing Automation is packaged |
+| “We launched a site; what should we fix first to attract relevant visitors?” | [Website Growth Starter](crew_template_profiles.md#website-growth-starter) | Source-linked audit and 30-day priority brief | Website Growth Loop |
+| “Which technical SEO issues are observable on our site?” | [SEO Analyst](crew_template_profiles.md#seo-analyst) | Page-level issue list and retests | Optional technical SEO slot in Website Growth Loop |
+| “Which buyer questions lack a useful page?” | [Search Opportunity Mapper](crew_template_profiles.md#search-opportunity-mapper) | Buyer-question-to-page map | Required search slot in Website Growth Loop |
+| “Prepare a brief for this approved page opportunity.” | [Content Brief Writer](crew_template_profiles.md#content-brief-writer) | Reviewable page brief | Optional content slot in Website Growth Loop |
+| “Draft the approved page for review.” | [Content Page Builder](crew_template_profiles.md#content-page-builder) | Sourced page draft and next action | Optional page slot; publication is a separate reviewed step |
+| “Which existing pages can improve from Search Console evidence?” | [Search Console Optimizer](crew_template_profiles.md#search-console-optimizer) | Sourced page/query recommendations | A standalone Crew task unless Builder designs a compatible handoff |
+| “What changed in traffic and useful visitor actions?” | [Traffic & Engagement Analyst](crew_template_profiles.md#traffic--engagement-analyst) | Sourced readout with a next action | Optional measurement slot in Website Growth Loop |
+| “Where do answer engines cite us or competitors?” | [AI Visibility Analyst](crew_template_profiles.md#ai-visibility-analyst) | Question-level observations and citation gaps | A standalone Crew task or a separately designed AI Visibility workflow |
+| “Why is this landing page not converting?” | [Landing Page Optimizer](crew_template_profiles.md#landing-page-optimizer) | Page diagnosis and testable improvement | A standalone Crew task or reviewed experiment workflow |
+| “How should we distribute this published asset?” | [Content Distribution Coordinator](crew_template_profiles.md#content-distribution-coordinator) | Channel plan and reviewed drafts | A standalone Crew task; sending needs its own approved route |
+| “Which inbound enquiries fit our customer criteria?” | [Lead Intake & Qualifier](crew_template_profiles.md#lead-intake--qualifier) | Deduplicated, source-linked qualification brief | Inbound Lead-to-Meeting Review |
+| “What verified company context will help this seller?” | [Account Researcher](crew_template_profiles.md#account-researcher) | Dated facts, labeled hypotheses, seller questions | Optional research slot in Inbound Lead-to-Meeting Review |
+| “Prepare and track a reply offering a meeting.” | [Sales Follow-up Coordinator](crew_template_profiles.md#sales-follow-up-coordinator) | Unsent, cited booking offer with owner decision | Inbound Lead-to-Meeting Review; send and booking require real receipts |
+| “Turn this signed customer handoff into an onboarding plan.” | [Customer Onboarding Coordinator](crew_template_profiles.md#customer-onboarding-coordinator) | Owned milestone register with blockers | New Customer to First Value |
+| “Did this customer achieve the agreed first result?” | [Product Adoption Analyst](crew_template_profiles.md#product-adoption-analyst) | Observed first-value status and source coverage | New Customer to First Value |
+| “Which customer accounts need an owner decision?” | [Customer Health Coordinator](crew_template_profiles.md#customer-health-coordinator) | Sourced account health brief | Optional health slot in New Customer to First Value |
+
+### How a template becomes a trustworthy detail page
+
+The [first-party Crew metadata](../../frontend/src/products/work/crewTemplates.ts), [Website Growth specialists](../../frontend/src/products/work/websiteGrowthSpecialists.ts), [Sales specialists](../../frontend/src/products/work/salesSpecialists.ts), and [Customer Success specialists](../../frontend/src/products/work/customerSuccessSpecialists.ts) are the current installable definitions. Each entry already provides a role, purpose, first result, minimum inputs, optional connections, example requests, a local skill, and a chat checklist. The Finance and Website Growth Starter skills are stored in [template files](../../frontend/src/products/work/templates/); the specialist skills and setup guides are generated from the typed definitions. These are implementation sources, not customer setup evidence.
+
+Two journeys already have concrete **handoff examples** to use as the pattern for deeper agent detail:
+
+| Reference journey | Fictional good output | Blocking example and review point | Second-run behavior |
+| --- | --- | --- | --- |
+| [Website Growth Loop](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/references/team-and-handoffs.md) | [Priority brief](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/growth-priority-brief.json) → [buyer-question map](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/search-opportunity-list.json) | [Invalid map](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/examples/invalid-search-opportunity-list.json) must stop the consumer. The owner chooses, defers, or rejects sourced actions before content or site work. | Read prior action IDs and owner decisions; inspect changed pages and new evidence first; report no new evidence when nothing changed. See [action and measurement](../../playbooks/agentic-engineering-platform/website-growth/website-growth-loop/references/action-and-measurement.md). |
+| [Inbound Lead-to-Meeting Review](sales_inbound_lead_to_meeting.md) | [Qualification brief](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/examples/lead-qualification-brief.json) → [unsent follow-up](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/examples/sales-followup-draft.json) | [Invalid qualification](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/examples/invalid-lead-qualification-brief.json) must stop follow-up. The owner reviews exact recipient, offer, contact policy, and booking link; a [delivery receipt](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/examples/sales-delivery-receipt.json) is separate from a [booked outcome](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/examples/sales-meeting-outcome.json). | Re-read lead, suppression, prior contact, replies, and booking state before another touch; retain one stable action ID. See [team and handoffs](../../playbooks/agentic-engineering-platform/sales/inbound-lead-to-meeting-review/references/team-and-handoffs.md). |
+
+These fixtures demonstrate fields and handoff shape, not a real customer result. Before promoting **each individual Crew** as a fully demonstrated public example, its own detail must also include one complete fictional input/output pair, an inadequate output with a reason it fails, the exact source or connection probe for its hard task, the owner review point, a second-run rule, and at least one exercised customer-like case. The [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md) tracks gaps in the Website Growth specialists; the [setup quality review](../reviews/crew_playbook_setup_quality_review_2026-09-25.md) tracks remaining runtime readiness gaps. The four packaged Playbooks have contract examples and validators for their selected handoffs; those fictional fixtures do not prove a customer's integration or business outcome.
 
 ## Product model
 
@@ -8,7 +81,7 @@ A **Crew template** currently provides a reusable capability pack: a local skill
 
 Each template must work as a useful interactive Crew after the user provides its minimum inputs. Connected accounts, schedules, outbound messages, payments, production changes, and other consequential actions require explicit setup and the product's normal permissions and approvals. Never prefill a customer's target metric with an illustrative website number.
 
-The catalog tracks candidate jobs in eight categories. Several related jobs should become capabilities of one Crew rather than separate Crew identities. The current website groups Money, Customers, Growth, Operations, and Engineering; the catalog separates Sales, Customer Success, Marketing & Growth, and Website Growth for specific lifecycle journeys. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
+The catalog tracks seven parent categories and the Website Growth subcategory described above. Several related jobs should become capabilities of one Crew rather than separate Crew identities. Existing Workflow playbooks may inform a template or its suggested Automation, but they are not Crew templates.
 
 The creation picker is designed for a larger installed catalog: keep Blank Crew separate from scrolling results; search across template names, categories, purposes, and first outputs; show category counts and the result count; reveal results in batches; and preserve the chosen template while filters change. On phones, browsing and Crew details are separate views. Only implemented templates appear in the picker—planned catalog entries are not offered for installation.
 
@@ -17,6 +90,8 @@ The creation picker is designed for a larger installed catalog: keep Blank Crew 
 The [B2B SaaS finance role and tool map](../research/b2b_saas_finance_roles_and_tools.md) identifies eight job families: subscription billing and receivables; payments and recovery; revenue accounting and close; payables, procurement and spend; planning and SaaS performance; cash and treasury; tax; and payroll. These are catalog filters and possible roles, not eight Crews every customer must install. Tool suggestions depend on the customer's actual billing, accounting, and regional stack.
 
 Start a small business with **two default Crew identities**: Finance Analyst owns read-oriented analysis, processor account checks, and planning; Billing Operations Coordinator owns customer-facing invoice follow-up, failed-payment investigation, and refund-request preparation. Add Revenue & Close Analyst or Spend & Payables Coordinator when a separate accounting or payment owner needs a distinct setup and access scope. Payroll Review Coordinator, Tax Compliance Coordinator, and Cash & Treasury Analyst are later specialist candidates. Tax Export Preparer is already available as an installable supporting pack for Finance Analyst; create a separate tax Crew only when a different owner, access scope, or review boundary requires it.
+
+**Later role candidates, not installable:** Payroll Review Coordinator for payroll exceptions and approvals; Tax Compliance Coordinator for jurisdiction-specific obligations and professional review; Cash & Treasury Analyst for liquidity and cash-position review. These are distinct owners only when a Finance Analyst capability would be insufficient for access or accountability.
 
 The **Finance Operations Review** Automation Playbook is an installable chat proposal. Builder can reuse or create distinct Billing Operations Coordinator and Finance Analyst Crews, then plan a manual billing exception queue → validated handoff → finance impact readout. Its ten setup checks track actual source access, owner decisions, Crew binding, validators, and a real first run. The packaged fixtures demonstrate the contract; they do not count as a customer's first run. Optional close and payables roles can be proposed, but their automated handoffs are outside this first contract. No recurrence, customer message, refund, or accounting write is activated by installation.
 
@@ -61,12 +136,14 @@ The **New Customer to First Value** Automation Playbook is an installable chat p
 
 ## Customer Support
 
+All four rows in this section are planned use cases. A support case is the unit of work; the Customer Success category owns account-level onboarding and adoption. Escalations may pass a bounded case summary to the account owner, but sharing a support inbox does not merge the roles.
+
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Support Triage Assistant** | Classify incoming cases, identify urgency, and propose an owner and next action. | Case examples, priority rules, support channels. | Inbox Triage |
-| **Support Reply Drafter** | Draft grounded replies from approved help content and show citations or source links. | Help docs, tone guide, escalation rules. | Support First Response |
-| **Escalation Coordinator** | Keep a customer escalation brief current and coordinate human handoffs. | Escalation policy, case history, responsible team. | Escalation Watch |
-| **Feedback & Review Analyst** | Cluster feedback and reviews into themes, draft responses, and flag urgent issues. | Review or feedback export, response policy, product context. | Review Responder |
+| **Support Triage Assistant** — planned | Classify incoming cases, identify urgency, and propose an owner and next action. | Case examples, priority rules, support channels. | Inbox Triage |
+| **Support Reply Drafter** — planned | Draft grounded replies from approved help content and show citations or source links. | Help docs, tone guide, escalation rules. | Support First Response |
+| **Escalation Coordinator** — planned | Keep a customer escalation brief current and coordinate human handoffs. | Escalation policy, case history, responsible team. | Escalation Watch |
+| **Feedback & Review Analyst** — planned | Cluster feedback and reviews into themes, draft responses, and flag urgent issues. | Review or feedback export, response policy, product context. | Review Responder |
 
 ## Sales
 
@@ -79,9 +156,9 @@ The **Inbound Lead-to-Meeting Review** Automation Playbook is an installable cha
 | **Lead Intake & Qualifier** — available v1 | Deduplicate and assess an inbound request against owner-defined fit rules; return a sourced lead brief and next owner decision. | Inbound enquiry/export, ideal-customer criteria, routing owner and contact policy. | Inbound Lead-to-Meeting Review |
 | **Account Researcher** — available v1, optional specialist | Prepare verified company context, labeled hypotheses and seller questions without assuming purchase intent. | Company/domain, approved research scope and offer. | Optional research slot in Inbound Lead-to-Meeting Review |
 | **Sales Follow-up Coordinator** — available v2 | Prepare a cited booking offer, then track an approved provider send and observed booking when the customer connects those routes. | Validated lead brief, approved offer, voice/contact policy, owner, booking URL and outcome source. | Inbound Lead-to-Meeting Review |
-| **Sales Call Briefing Assistant** | Assemble account context, likely questions, and a meeting brief. | Meeting details, CRM notes or files, product material. | Pre-meeting Brief |
-| **Proposal Drafter** | Turn discovery notes into a scoped proposal draft with open questions and evidence. | Discovery notes, pricing rules, approved proposal format. | Proposal Preparation |
-| **Pipeline Analyst** | Explain pipeline movement, stale deals, and forecast risks with record links. | Pipeline export or authorized CRM, stage definitions, reporting period. | Pipeline Health Review |
+| **Sales Call Briefing Assistant** — planned | Assemble account context, likely questions, and a meeting brief. | Meeting details, CRM notes or files, product material. | Pre-meeting Brief |
+| **Proposal Drafter** — planned | Turn discovery notes into a scoped proposal draft with open questions and evidence. | Discovery notes, pricing rules, approved proposal format. | Proposal Preparation |
+| **Pipeline Analyst** — planned | Explain pipeline movement, stale deals, and forecast risks with record links. | Pipeline export or authorized CRM, stage definitions, reporting period. | Pipeline Health Review |
 
 Use the customer's CRM or form export for a first read-only result. HubSpot and Salesforce are relevant provider examples, not connected accounts by default; an email or calendar connection is needed for approved delivery and outcome tracking. The [Sales implementation guide](sales_inbound_lead_to_meeting.md) records the handoff, validation, and setup boundaries.
 
@@ -106,33 +183,39 @@ Suggested sequence: **audit and baseline → choose audience/search opportunitie
 
 ## Marketing & Growth
 
+This is Marketing outside the Website Growth subcategory. All three Crew rows below are planned. The existing Growth Analytics Workflow Playbooks in the [Playbooks README](../../playbooks/README.md) can guide separate workflow setup; they are not these Crew templates.
+
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Competitor Intelligence Analyst** | Track meaningful changes in competitor positioning, pricing, and launches with sources. | Competitor list, watch topics, alert threshold. | Competitor Watch |
-| **Campaign Performance Analyst** | Explain campaign results, anomalies, and the next test to run. | Campaign data, spend, conversion definitions, reporting window. | Campaign Review |
-| **Growth Experiment Planner** | Turn a growth hypothesis into a bounded experiment plan and decision rule. | Baseline, target audience, metric, constraints. | Growth Experiment Review |
+| **Competitor Intelligence Analyst** — planned | Track meaningful changes in competitor positioning, pricing, and launches with sources. | Competitor list, watch topics, alert threshold. | Competitor Watch |
+| **Campaign Performance Analyst** — planned | Explain campaign results, anomalies, and the next test to run. | Campaign data, spend, conversion definitions, reporting window. | Campaign Review |
+| **Growth Experiment Planner** — planned | Turn a growth hypothesis into a bounded experiment plan and decision rule. | Baseline, target audience, metric, constraints. | Growth Experiment Review |
 
 ## Operations
 
+All six Crew rows below are planned. Keep these as separate Crew identities only when the owner, source access, or recurring decision differs; meeting actions and project status may share one operations Crew for a small team.
+
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Chief of Staff** | Synthesize priorities, decisions, blockers, and follow-ups into an operator brief. | Team goals, current notes, owners, reporting cadence. | Weekly Business Review |
-| **Meeting Actions Coordinator** | Extract decisions and action items with owners, due dates, and source references. | Notes or transcript, owner list, task conventions. | Meeting Notes to Actions |
-| **Project Status Reporter** | Summarize progress, risks, and requests for decisions across project records. | Project updates, milestone definitions, stakeholders. | Project Status Digest |
-| **Order Operations Coordinator** | Investigate stuck orders and prepare safe next actions and customer updates. | Order data, fulfillment policy, exception thresholds. | Order Watchdog |
-| **Vendor Researcher** | Compare vendors against requirements and produce an evidence-linked shortlist. | Requirements, budget, security constraints, decision owner. | Vendor Review |
-| **Document Intake Assistant** | Extract and check structured facts from incoming documents, flagging uncertain fields. | Sample documents, required fields, validation rules. | Document Intake Queue |
+| **Chief of Staff** — planned | Synthesize priorities, decisions, blockers, and follow-ups into an operator brief. | Team goals, current notes, owners, reporting cadence. | Weekly Business Review |
+| **Meeting Actions Coordinator** — planned | Extract decisions and action items with owners, due dates, and source references. | Notes or transcript, owner list, task conventions. | Meeting Notes to Actions |
+| **Project Status Reporter** — planned | Summarize progress, risks, and requests for decisions across project records. | Project updates, milestone definitions, stakeholders. | Project Status Digest |
+| **Order Operations Coordinator** — planned | Investigate stuck orders and prepare safe next actions and customer updates. | Order data, fulfillment policy, exception thresholds. | Order Watchdog |
+| **Vendor Researcher** — planned | Compare vendors against requirements and produce an evidence-linked shortlist. | Requirements, budget, security constraints, decision owner. | Vendor Review |
+| **Document Intake Assistant** — planned | Extract and check structured facts from incoming documents, flagging uncertain fields. | Sample documents, required fields, validation rules. | Document Intake Queue |
 
 ## Engineering
 
+All six Crew rows below are planned. Existing engineering Workflow Playbooks cover several related jobs in the Workflow Builder, but they do not install these proposed Crew identities. Product and market research belongs to Marketing or Sales unless an engineering owner is making a release, reliability, security, performance, code, or cost decision.
+
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Release Quality Assistant** | Inspect a release candidate and summarize tests, failures, evidence, and a proposed gate decision. | Repository or build, test policy, release scope. | Release & PR Quality Gate |
-| **Incident Investigator** | Correlate alerts, logs, and deploys into a sourced timeline and initial hypotheses. | Incident scope, authorized telemetry, escalation policy. | Incident Investigation |
-| **Security Findings Analyst** | Triage authorized findings and draft reviewed remediation steps with verification criteria. | Findings, asset scope, severity policy, code access. | Application Security |
-| **Cloud Cost Analyst** | Explain cost changes and propose evidence-backed savings with service-risk checks. | Billing data, ownership map, budget, change policy. | Cloud Cost Anomaly to Savings |
-| **Performance Investigator** | Analyze latency or page performance regressions and produce a reproducible diagnosis. | Targets, traces or test runs, performance budgets. | Performance Validation |
-| **PR Review Assistant** | Review a change against repository standards and surface specific, verifiable risks. | Repository access, review rules, change scope. | PR Review Queue |
+| **Release Quality Assistant** — planned | Inspect a release candidate and summarize tests, failures, evidence, and a proposed gate decision. | Repository or build, test policy, release scope. | Release & PR Quality Gate |
+| **Incident Investigator** — planned | Correlate alerts, logs, and deploys into a sourced timeline and initial hypotheses. | Incident scope, authorized telemetry, escalation policy. | Incident Investigation |
+| **Security Findings Analyst** — planned | Triage authorized findings and draft reviewed remediation steps with verification criteria. | Findings, asset scope, severity policy, code access. | Application Security |
+| **Cloud Cost Analyst** — planned | Explain cost changes and propose evidence-backed savings with service-risk checks. | Billing data, ownership map, budget, change policy. | Cloud Cost Anomaly to Savings |
+| **Performance Investigator** — planned | Analyze latency or page performance regressions and produce a reproducible diagnosis. | Targets, traces or test runs, performance budgets. | Performance Validation |
+| **PR Review Assistant** — planned | Review a change against repository standards and surface specific, verifiable risks. | Repository access, review rules, change scope. | PR Review Queue |
 
 ## Template definition required for implementation
 

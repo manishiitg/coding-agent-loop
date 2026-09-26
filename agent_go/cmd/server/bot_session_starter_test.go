@@ -301,3 +301,24 @@ func TestBotWorkflowAccessClaimsKeepWhatsAppUserAndSlackRouteSemantics(t *testin
 		t.Fatalf("Slack route grant changed: %+v", slack)
 	}
 }
+
+// A shared-bot channel route to a crew may hold the crew's logical path while
+// the crew's turns run in the owner's physical folder; both checks accept it.
+func TestSlackCrewRouteAcceptsLogicalAndPhysicalFolder(t *testing.T) {
+	route := services.ChannelRoute{ProfileID: "work", ConversationKey: "sde", WorkspacePath: "Chats/Work/projects/sde", WorkspaceUserID: "owner-1"}
+	if !slackRouteFolderMatches(route, "_users/owner-1/Chats/Work/projects/sde") {
+		t.Fatal("logical crew route rejected the crew's own turn")
+	}
+	if slackRouteFolderMatches(route, "_users/owner-2/Chats/Work/projects/sde") {
+		t.Fatal("crew route matched another owner's folder")
+	}
+	claims := &UserClaims{UserID: "owner-1", Provider: "bot_route", BotRouteProfileID: "work", BotRouteConversationKey: "sde", BotRouteWorkspacePath: "Chats/Work/projects/sde", BotRouteGrant: "run"}
+	req := QueryRequest{AgentProfileID: "work", AgentProfileConversationKey: "sde", SelectedFolder: "_users/owner-1/Chats/Work/projects/sde"}
+	if level, scoped := botRouteProfileAccessForRequest(claims, req); !scoped || level != WorkflowAccessRead {
+		t.Fatalf("crew route access = %q scoped=%v, want read", level, scoped)
+	}
+	req.SelectedFolder = "_users/owner-2/Chats/Work/projects/sde"
+	if level, _ := botRouteProfileAccessForRequest(claims, req); level != WorkflowAccessNone {
+		t.Fatalf("crew route reached another owner's folder: %q", level)
+	}
+}

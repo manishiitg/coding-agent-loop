@@ -153,6 +153,10 @@ func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAP
 		}
 		if strings.TrimSpace(route.ProfileID) != "" {
 			route.WorkspaceUserID = ownerID
+			// Store the crew's physical folder: the crew UI sends the logical
+			// path, while its turns run in the physical one and revalidation
+			// compares the two.
+			route.WorkspacePath = productConversationRuntimeWorkspace(ownerID, route.WorkspacePath)
 			next[channelID] = route
 		}
 		checked[channelID] = true

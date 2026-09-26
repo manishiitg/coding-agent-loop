@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -98,8 +97,10 @@ func botRouteProfileAccessForRequest(claims *UserClaims, req QueryRequest) (Work
 	if strings.TrimSpace(claims.BotRouteWorkflowID) != "" {
 		return WorkflowAccessNone, true
 	}
+	// A crew route saved before paths were made physical holds the logical
+	// form; the turn runs in the physical folder.
 	if strings.TrimSpace(claims.BotRouteWorkspacePath) == "" ||
-		filepath.Clean(claims.BotRouteWorkspacePath) != filepath.Clean(strings.TrimSpace(req.SelectedFolder)) {
+		!workspacePathsMatchForUser(claims.UserID, claims.BotRouteWorkspacePath, req.SelectedFolder) {
 		return WorkflowAccessNone, true
 	}
 	if strings.EqualFold(strings.TrimSpace(claims.BotRouteGrant), "owner") {

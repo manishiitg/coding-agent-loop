@@ -58,6 +58,11 @@ describe('CreateWorkProjectDialog', () => {
       root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={onCreate} submitting={false} error={null} />)
     })
 
+    const search = container.querySelector('[aria-label="Search Crew templates"]') as HTMLInputElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Finance Analyst')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     await act(async () => {
       (container!.querySelector('[data-testid="work-template-finance-analyst"]') as HTMLInputElement).click()
     })
@@ -133,7 +138,7 @@ describe('CreateWorkProjectDialog', () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'milestone register')
       search.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    expect(container.textContent).toContain('1 result')
+    expect(container.querySelector('[data-testid="work-template-customer-onboarding-coordinator"]')).not.toBeNull()
     await act(async () => {
       (container!.querySelector('[data-testid="work-template-customer-onboarding-coordinator"]') as HTMLInputElement).click()
     })

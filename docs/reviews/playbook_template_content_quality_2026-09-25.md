@@ -14,6 +14,8 @@ These are content-review judgments, not measured agent performance scores. No re
 
 Later on 2026-09-25, Website Growth Starter and Search Opportunity Mapper gained decision rules, worked examples, and repeat-run guidance. The Mapper gained two specialist checks. Website Growth Loop v0.3.0 now uses Mapper for the required buyer-question handoff, has a separate optional technical SEO slot, tracks action states, and includes a deterministic validator plus valid and invalid examples for the first two artifacts. The other eight growth specialists and the two finance templates remain at the content depth assessed below. The validator checks artifact structure and references; a customer-site run and source-truth review still need to be demonstrated.
 
+On 2026-09-26, the other eight Website Growth specialists gained domain-specific decision rules, a fictional input and reviewable output with a failed example, and two checks for their hardest task. Their generated skills and setup guides now carry those examples; each specialist has ten pending checks. This closes the authored-example and generic-checklist gaps for Website Growth, but it does not establish a real customer-site evaluation, live source truth, or operational readiness. The older findings below remain the dated review record.
+
 ## Most important content findings
 
 ### 1. Specialist checklists repeat the same structure without enough specialist verification

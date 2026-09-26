@@ -1,4 +1,5 @@
 import type { CrewTemplate } from './crewTemplates'
+import { websiteGrowthDepth } from './websiteGrowthDepth'
 
 export type WebsiteGrowthSpecialistId =
   | 'seo-analyst'
@@ -193,6 +194,8 @@ Deliver **${spec.firstResult}** ${spec.evidence}
 
 ${spec.deeperMethod || ''}
 
+${spec.workedExample || ''}
+
 ${spec.automationOutput || ''}
 
 ## Boundaries
@@ -224,7 +227,8 @@ A Crew schedule can repeat this specialist's own task. A separate Website Growth
 `
 }
 
-export const websiteGrowthSpecialists: readonly CrewTemplate[] = specialists.map(spec => {
+export const websiteGrowthSpecialists: readonly CrewTemplate[] = specialists.map(baseSpec => {
+  const spec = { ...baseSpec, ...websiteGrowthDepth[baseSpec.id] }
   const base = `templates/${spec.id}`
   const skillPath = `skills/${spec.id}/SKILL.md`
   const setupGuidePath = `${base}/SETUP.md`

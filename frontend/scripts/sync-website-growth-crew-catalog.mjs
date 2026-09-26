@@ -5,7 +5,16 @@ import ts from 'typescript'
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = path.resolve(frontendRoot, '..')
-const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/websiteGrowthSpecialists.ts'), 'utf8')
+const depthText = fs.readFileSync(path.join(frontendRoot, 'src/products/work/websiteGrowthDepth.ts'), 'utf8')
+const specialistText = fs.readFileSync(path.join(frontendRoot, 'src/products/work/websiteGrowthSpecialists.ts'), 'utf8')
+const depthImport = "import type { WebsiteGrowthSpecialistId } from './websiteGrowthSpecialists'\n"
+const specialistImport = "import { websiteGrowthDepth } from './websiteGrowthDepth'\n"
+if (!depthText.includes(depthImport) || !specialistText.includes(specialistImport)) {
+  throw new Error('Website Growth catalog source imports changed; update the sync script')
+}
+const depthSource = depthText.replace(depthImport, '')
+const specialistSource = specialistText.replace(specialistImport, '')
+const source = depthSource + '\n' + specialistSource
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { websiteGrowthSpecialists } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 

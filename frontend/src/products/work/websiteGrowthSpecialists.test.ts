@@ -16,4 +16,29 @@ describe('Website Growth Crew templates', () => {
       expect(template.files[template.setupGuidePath]).toContain('setup')
     }
   })
+
+  it('gives each specialist a worked judgment and two checks for its hard task', () => {
+    const expected: Record<string, [string, string]> = {
+      'seo-analyst': ['crawl_observation', 'issue_retest'],
+      'search-opportunity-mapper': ['question_sources', 'mapping_decision'],
+      'content-brief-writer': ['opportunity_trace', 'claim_review'],
+      'content-page-builder': ['brief_claims', 'draft_acceptance'],
+      'search-console-optimizer': ['dimension_coverage', 'reproduce_metric'],
+      'traffic-engagement-analyst': ['event_definition', 'rate_reproduction'],
+      'ai-visibility-analyst': ['sampling_policy', 'citation_check'],
+      'landing-page-optimizer': ['journey_observation', 'decision_rule'],
+      'content-distribution-coordinator': ['asset_channel_fit', 'draft_delivery_log'],
+    }
+    for (const [id, checks] of Object.entries(expected)) {
+      const template = getCrewTemplate(id as Parameters<typeof getCrewTemplate>[0])!
+      const setup = parseCrewTemplateSetupState(template.files[template.setupPath], template)!
+      expect(setup.checks.map(check => check.id)).toEqual([
+        'identity', 'skill', 'scope', 'inputs', 'access', ...checks, 'first_result', 'review', 'recurrence',
+      ])
+      const skill = template.files[`skills/${id}/SKILL.md`]
+      expect(skill).toContain('Fictional')
+      expect(skill).toMatch(/Inadequate:|Review failure:/)
+      expect(template.files[template.setupGuidePath]).toContain('Fictional')
+    }
+  })
 })

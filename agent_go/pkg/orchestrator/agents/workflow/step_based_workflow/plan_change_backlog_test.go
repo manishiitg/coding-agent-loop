@@ -24,9 +24,20 @@ func changelogWorkspace(t *testing.T, files map[string]string) string {
 }
 
 const mixedChangelog = `{"entries":[
- {"timestamp":"2026-07-22T09:00:00Z","tool":"update_regular_step","reason":"retire the regression pass","step_ids":["step-a"],"changes":[{"step_id":"step-a","field":"description","old_value":"o","new_value":"n"}]},
+ {"timestamp":"2026-07-22T09:00:00Z","tool":"update_regular_step","reason":"retire the regression pass","step_ids":["step-a"],"changes":[{"step_id":"step-a","field":"context_dependencies","old_value":"o","new_value":"n"}]},
  {"timestamp":"2026-07-21T09:00:00Z","tool":"update_step_config","reason":"already reconciled","step_ids":["step-b"],"artifact_review":{"done":true,"reviewed_by":"pulse_fixer"}},
  {"timestamp":"2026-07-20T09:00:00Z","tool":"update_validation_schema","reason":"tighten output","step_ids":["step-c"],"changes":[{"step_id":"step-c","field":"validation_schema"}]}
+]}`
+
+// A change whose only named field is cosmetic (wording, review notes,
+// schedule timing, model/tier settings) cannot orphan a dependent step, eval,
+// report, or DB contract, so it must never enter the backlog at all -- not
+// even as a listed-but-harmless entry.
+const cosmeticOnlyChangelog = `{"entries":[
+ {"timestamp":"2026-07-23T09:00:00Z","tool":"update_regular_step","reason":"clarify wording","step_ids":["step-d"],"changes":[{"step_id":"step-d","field":"description","old_value":"o","new_value":"n"}]},
+ {"timestamp":"2026-07-22T09:00:00Z","tool":"update_regular_step","reason":"rename the step","step_ids":["step-e"],"changes":[{"step_id":"step-e","field":"title","old_value":"o","new_value":"n"}]},
+ {"timestamp":"2026-07-21T09:00:00Z","tool":"write_workflow_manifest","reason":"reschedule","step_ids":[],"changes":[{"field":"workflow.json.schedules"},{"field":"workflow.json.updated_at"}]},
+ {"timestamp":"2026-07-20T09:00:00Z","tool":"update_step_config","reason":"pin a model","step_ids":["step-f"],"changes":[{"step_id":"step-f","field":"workflow.json.capabilities.llm_config.builder_llm"}]}
 ]}`
 
 // The backlog must be exactly the entries nobody has stamped. A stamped entry is
@@ -59,7 +70,7 @@ func TestCollectPlanChangeBacklogCarriesTriageDetail(t *testing.T) {
 	if first.Reason != "retire the regression pass" || len(first.StepIDs) != 1 || first.StepIDs[0] != "step-a" {
 		t.Fatalf("triage detail missing: %#v", first)
 	}
-	if len(first.FieldsChanged) != 1 || first.FieldsChanged[0] != "description" {
+	if len(first.FieldsChanged) != 1 || first.FieldsChanged[0] != "context_dependencies" {
 		t.Fatalf("changed fields missing: %#v", first)
 	}
 	if first.SourceFile != "changelog-a.json" {
@@ -68,6 +79,28 @@ func TestCollectPlanChangeBacklogCarriesTriageDetail(t *testing.T) {
 	// It must read as evidence, not as a claim that something is broken.
 	if !strings.Contains(got.Note, "not a verdict") {
 		t.Fatalf("note should disclaim judgement: %q", got.Note)
+	}
+}
+
+// Description/title wording, schedule timing, and model/tier settings are
+// cosmetic: none of them can affect a dependent, so the backlog must be nil,
+// not merely small.
+func TestCollectPlanChangeBacklogExcludesCosmeticOnlyEntries(t *testing.T) {
+	ws := changelogWorkspace(t, map[string]string{"changelog-a.json": cosmeticOnlyChangelog})
+	if got := CollectPlanChangeBacklog(ws); got != nil {
+		t.Fatalf("cosmetic-only changes must produce no backlog, got %#v", got)
+	}
+}
+
+// An untyped update_step_config call and a step add/delete record no field
+// names at all -- the unknown blast radius stays conservative and the entry
+// is still counted, unlike a change whose named fields are all cosmetic.
+func TestCollectPlanChangeBacklogKeepsEntriesWithNoNamedFields(t *testing.T) {
+	untyped := `{"entries":[{"timestamp":"2026-07-22T09:00:00Z","tool":"update_step_config","reason":"tune retries","step_ids":["step-g"]}]}`
+	ws := changelogWorkspace(t, map[string]string{"changelog-a.json": untyped})
+	got := CollectPlanChangeBacklog(ws)
+	if got == nil || got.UnreviewedCount != 1 {
+		t.Fatalf("an entry with no field names must stay in the backlog, got %#v", got)
 	}
 }
 

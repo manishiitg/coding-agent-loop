@@ -115,7 +115,7 @@ func TestClearDriftReviewAfterPlanUpdate(t *testing.T) {
 
 	cleared, err := clearDriftReviewAfterPlanUpdate(ctx, "", "step-a", []PlanFieldChange{{
 		StepID: "step-a",
-		Field:  "description",
+		Field:  "context_dependencies",
 	}}, readFile, writeFile)
 	if err != nil {
 		t.Fatalf("clearDriftReviewAfterPlanUpdate returned error: %v", err)
@@ -157,7 +157,7 @@ func TestClearDriftReviewAfterPlanUpdateIsIdempotentWhenAlreadyFlagged(t *testin
 	writeCalled := false
 	cleared, err := clearDriftReviewAfterPlanUpdate(ctx, "", "step-a", []PlanFieldChange{{
 		StepID: "step-a",
-		Field:  "description",
+		Field:  "context_dependencies",
 	}}, func(_ context.Context, path string) (string, error) {
 		return files[path], nil
 	}, func(_ context.Context, path, content string) error {
@@ -176,13 +176,46 @@ func TestClearDriftReviewAfterPlanUpdateIsIdempotentWhenAlreadyFlagged(t *testin
 	}
 }
 
-// The agreed corrective contract is explicit: do not attempt to classify an
-// update as material or cosmetic in Go, because even a title change can alter
-// meaning. Unlike description_reviewed (which legitimately skips a title-only
-// edit — the prose-vs-behavior claim it makes genuinely doesn't move), a
-// drift review's broader claim ("this step's current configured form has
-// been checked") is stale the instant any field changes, title included.
-func TestClearDriftReviewAfterPlanUpdateFlagsOnTitleOnly(t *testing.T) {
+// 2026-09-26: a title- or description-only edit must NOT flag
+// drift_review.needs_review. It supersedes the prior "any field, title
+// included" contract, which made plan_drift_review due on nearly every plan
+// edit — description-only edits were the single largest share of live
+// workflows' unreviewed changelog backlog. A wording rewrite occasionally
+// hides a real behavior change, but that then shows up as an output or data
+// change on the step's next run, which Pulse's own step-output/step-concern
+// review already catches.
+func TestClearDriftReviewAfterPlanUpdateSkipsTitleAndDescriptionOnly(t *testing.T) {
+	ctx := context.Background()
+	for _, field := range []string{"title", "description"} {
+		t.Run(field, func(t *testing.T) {
+			files := map[string]string{
+				"planning/step_config.json": `{"steps":[{"id":"step-a","agent_configs":{"drift_review":{"reviewed_at":"2026-08-01T00:00:00Z","reviewed_by":"pulse:plan_drift_review","checks":[{"check_id":"report_query_compatibility","status":"pass","evidence":"all report queries ran cleanly"}]}}}]}`,
+			}
+			writeCalled := false
+			cleared, err := clearDriftReviewAfterPlanUpdate(ctx, "", "step-a", []PlanFieldChange{{
+				StepID: "step-a",
+				Field:  field,
+			}}, func(_ context.Context, path string) (string, error) {
+				return files[path], nil
+			}, func(_ context.Context, path, content string) error {
+				writeCalled = true
+				files[path] = content
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("clearDriftReviewAfterPlanUpdate returned error: %v", err)
+			}
+			if cleared || writeCalled {
+				t.Fatalf("a %s-only change must not flag drift_review.needs_review", field)
+			}
+		})
+	}
+}
+
+// A field that can affect a dependent (here context_dependencies) still
+// flags the step, and the prior review's evidence survives untouched — the
+// stale-flag model, unchanged by the 2026-09-26 materiality narrowing.
+func TestClearDriftReviewAfterPlanUpdateFlagsOnMaterialField(t *testing.T) {
 	ctx := context.Background()
 	files := map[string]string{
 		"planning/step_config.json": `{"steps":[{"id":"step-a","agent_configs":{"drift_review":{"reviewed_at":"2026-08-01T00:00:00Z","reviewed_by":"pulse:plan_drift_review","checks":[{"check_id":"report_query_compatibility","status":"pass","evidence":"all report queries ran cleanly"}]}}}]}`,
@@ -190,7 +223,7 @@ func TestClearDriftReviewAfterPlanUpdateFlagsOnTitleOnly(t *testing.T) {
 
 	cleared, err := clearDriftReviewAfterPlanUpdate(ctx, "", "step-a", []PlanFieldChange{{
 		StepID: "step-a",
-		Field:  "title",
+		Field:  "context_dependencies",
 	}}, func(_ context.Context, path string) (string, error) {
 		return files[path], nil
 	}, func(_ context.Context, path, content string) error {
@@ -201,7 +234,7 @@ func TestClearDriftReviewAfterPlanUpdateFlagsOnTitleOnly(t *testing.T) {
 		t.Fatalf("clearDriftReviewAfterPlanUpdate returned error: %v", err)
 	}
 	if !cleared {
-		t.Fatalf("a title-only change must flag drift_review.needs_review — no field is exempt from the drift-review trigger")
+		t.Fatalf("a context_dependencies change must flag drift_review.needs_review")
 	}
 
 	var out StepConfigFile
@@ -210,13 +243,38 @@ func TestClearDriftReviewAfterPlanUpdateFlagsOnTitleOnly(t *testing.T) {
 	}
 	got := out.Steps[0].AgentConfigs.DriftReview
 	if got == nil || !got.NeedsReview {
-		t.Fatalf("drift_review.needs_review should be true after a title-only change, got %#v", got)
+		t.Fatalf("drift_review.needs_review should be true after a context_dependencies change, got %#v", got)
 	}
 	// Evidence from the prior review must survive — the stale flag model
 	// preserves it until a completed review replaces it, unlike the earlier
 	// null-on-edit design this superseded.
 	if len(got.Checks) != 1 || got.ReviewedBy != "pulse:plan_drift_review" {
 		t.Fatalf("prior review evidence was not preserved: %+v", got)
+	}
+}
+
+// A field change that is entirely cosmetic (multiple non-material fields at
+// once) still must not flag the step -- materiality is checked per field,
+// not just on the first one.
+func TestClearDriftReviewAfterPlanUpdateSkipsMultipleNonMaterialFields(t *testing.T) {
+	ctx := context.Background()
+	files := map[string]string{
+		"planning/step_config.json": `{"steps":[{"id":"step-a","agent_configs":{"drift_review":{"reviewed_at":"2026-08-01T00:00:00Z","reviewed_by":"pulse:plan_drift_review"}}}]}`,
+	}
+	cleared, err := clearDriftReviewAfterPlanUpdate(ctx, "", "step-a", []PlanFieldChange{
+		{StepID: "step-a", Field: "title"},
+		{StepID: "step-a", Field: "description"},
+	}, func(_ context.Context, path string) (string, error) {
+		return files[path], nil
+	}, func(_ context.Context, path, content string) error {
+		files[path] = content
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("clearDriftReviewAfterPlanUpdate returned error: %v", err)
+	}
+	if cleared {
+		t.Fatalf("title and description together are still cosmetic-only and must not flag drift_review")
 	}
 }
 
@@ -348,7 +406,7 @@ func TestClearDriftReviewAfterPlanUpdateRetriedSucceedsOnSecondAttempt(t *testin
 	}
 	cleared, err := clearDriftReviewAfterPlanUpdateRetried(ctx, "", "step-a", []PlanFieldChange{{
 		StepID: "step-a",
-		Field:  "description",
+		Field:  "context_dependencies",
 	}}, readFile, writeFile, loggerv2.NewNoop())
 	if err != nil {
 		t.Fatalf("expected the retry to succeed, got error: %v", err)
@@ -374,7 +432,7 @@ func TestClearDriftReviewAfterPlanUpdateRetriedReturnsPersistentFailure(t *testi
 	}
 	_, err := clearDriftReviewAfterPlanUpdateRetried(ctx, "", "step-a", []PlanFieldChange{{
 		StepID: "step-a",
-		Field:  "description",
+		Field:  "context_dependencies",
 	}}, readFile, writeFile, loggerv2.NewNoop())
 	if err == nil {
 		t.Fatal("expected a persistent write failure to be returned after both attempts fail")

@@ -2453,9 +2453,10 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	if len(resumeSessionID) > 0 {
 		msg.ResumeSessionID = resumeSessionID[0]
 	}
-	// A thread keeps the title of its first message across resumes.
+	// A thread keeps the title of its first message across resumes. A DM
+	// continues the sender's own chat, which keeps its own name.
 	sessionTitle := ""
-	if connector := m.GetConnector(msg.Platform); connector != nil && msg.ResumeSessionID == "" {
+	if connector := m.GetConnector(msg.Platform); connector != nil && msg.ResumeSessionID == "" && !msg.DirectMessage {
 		sessionTitle = botSessionTitle(msg, botConnectorChannelName(context.Background(), connector, threadID))
 	}
 	withBotSender(&msg)
@@ -3515,9 +3516,11 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 		profileRoute := active.profileRoute
 		routeGrant := active.BotRouteGrant
 		sessionID := active.SessionID
+		directMessage := active.Metadata != nil && active.Metadata.DirectMessage
 		active.mu.Unlock()
 		if isProfileTurn {
-			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true, PresetProfile: profileRoute, ResumeSessionID: sessionID}
+			// A DM thread keeps running in its sender's own chat.
+			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true, PresetProfile: profileRoute, ResumeSessionID: sessionID, DirectMessage: directMessage && platform == "slack"}
 			req, _, handled, err := m.profileTurn(context.Background(), userID, msg, threadID)
 			if err == nil && handled {
 				active.mu.Lock()

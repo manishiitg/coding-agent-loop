@@ -272,10 +272,21 @@ func TestBotDryRunCrewDMRunsAsTheSender(t *testing.T) {
 	app := w.createApp(t, "SDE", crewRunModeOwnerRoot, "work")
 	w.dmSenders(t, app, map[string]services.SlackDMSender{"U0OWNER": dmSender(dryRunOwnerEmail), "U0READER": dmSender("reader@example.com")})
 
+	// One user, one chat: every DM continues the sender's own chat of the
+	// crew, the one their web chat opens.
 	owner := w.dm(t, app.ID, "U0OWNER")
 	requireMode(t, owner, "owner", "full")
-	if key, _ := owner.Request["agent_profile_conversation_key"].(string); !strings.HasPrefix(key, "crew-aaa:slack-") {
-		t.Fatalf("DM ran in %q, want its own chat of the crew", key)
+	if key, _ := owner.Request["agent_profile_conversation_key"].(string); key != "crew-aaa" {
+		t.Fatalf("DM ran in %q, want the crew's own conversation", key)
+	}
+	if web := w.webChatSession(t, "owner"); owner.SessionID != web {
+		t.Fatalf("owner's DM ran in session %q, want their web chat %q", owner.SessionID, web)
+	}
+	if title, _ := owner.Request["session_title"].(string); strings.Contains(title, "what changed today") {
+		t.Fatalf("a DM renamed the user's own chat to %q", title)
+	}
+	if again := w.dm(t, app.ID, "U0OWNER"); again.SessionID != owner.SessionID {
+		t.Fatalf("a second DM thread opened another chat: %q vs %q", again.SessionID, owner.SessionID)
 	}
 	// Attachments are checked as the sender, as in their web chat: the
 	// crew's owner-only workflow keeps a reader out until it is removed.
@@ -292,7 +303,11 @@ func TestBotDryRunCrewDMRunsAsTheSender(t *testing.T) {
 	raw, _ := json.Marshal(runtime)
 	w.mock.files[crewRunModeOwnerRoot+"/workflow.json"] = string(raw)
 	w.mock.mu.Unlock()
-	requireMode(t, w.dm(t, app.ID, "U0READER"), "reader", "run")
+	reader := w.dm(t, app.ID, "U0READER")
+	requireMode(t, reader, "reader", "run")
+	if web := w.webChatSession(t, "reader"); reader.SessionID != web || reader.SessionID == owner.SessionID {
+		t.Fatalf("reader's DM ran in session %q, want their own web chat %q (owner's is %q)", reader.SessionID, web, owner.SessionID)
+	}
 
 	channel := w.mention(t, app.ID, "C0CREWCHAN1")
 	requireAdmitted(t, channel, "crew-aaa")
@@ -344,4 +359,20 @@ func TestBotDryRunDMRefusals(t *testing.T) {
 	if outcome := w.dm(t, shared.ID, "U0OWNER"); outcome.Admitted {
 		t.Fatalf("the shared bot ran a DM: %+v", outcome)
 	}
+}
+
+// webChatSession is the session a user's web chat with the crew opens
+// (resolveAgentProfileConversation's lookup, without the HTTP request).
+func (w botDryRunWorld) webChatSession(t *testing.T, userID string) string {
+	t.Helper()
+	ctx := context.Background()
+	binding, _, err := resolveConversationBindingForUser(ctx, userID, w.profile, "crew-aaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := defaultProductConversationRegistryStore().resolveOrCreate(ctx, userID, w.profile, binding, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record.SessionID
 }

@@ -44,6 +44,8 @@ type BotDryRunOutcome struct {
 	// query boundary); nil when it was refused earlier.
 	Request map[string]interface{} `json:"-"`
 	UserID  string                 `json:"-"`
+	// SessionID is the conversation the turn would run in.
+	SessionID string `json:"-"`
 }
 
 // dryRunConnector wraps the real platform connector: capabilities, formatter
@@ -99,9 +101,10 @@ func (m *BotConversationManager) RunDryRun(ctx context.Context, msg BotIncomingM
 	}
 	connector := &dryRunConnector{BotConnector: base, sent: make(chan struct{}, 1)}
 	type admission struct {
-		req    map[string]interface{}
-		userID string
-		err    error
+		req       map[string]interface{}
+		sessionID string
+		userID    string
+		err       error
 	}
 	admitted := make(chan admission, 1)
 	dry := &BotConversationManager{
@@ -121,7 +124,7 @@ func (m *BotConversationManager) RunDryRun(ctx context.Context, msg BotIncomingM
 	}
 	dry.startSession = func(sessionCtx context.Context, req map[string]interface{}, sessionID, userID string, cb func(*events.AgentEvent)) error {
 		err := admit(sessionCtx, req, sessionID, userID, cb)
-		admitted <- admission{req: req, userID: userID, err: err}
+		admitted <- admission{req: req, sessionID: sessionID, userID: userID, err: err}
 		return err
 	}
 	msg.IsMention = true
@@ -132,7 +135,7 @@ func (m *BotConversationManager) RunDryRun(ctx context.Context, msg BotIncomingM
 	for {
 		select {
 		case result := <-admitted:
-			outcome := BotDryRunOutcome{Request: result.req, UserID: result.userID, Destination: dryRunDestination(result.req)}
+			outcome := BotDryRunOutcome{Request: result.req, UserID: result.userID, SessionID: result.sessionID, Destination: dryRunDestination(result.req)}
 			if errors.Is(result.err, ErrBotDryRunAdmitted) {
 				outcome.Admitted = true
 				var admission *BotDryRunAdmission

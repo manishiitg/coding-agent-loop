@@ -95,12 +95,17 @@ the next tool call.
 
 ### Chats
 
-Each top-level DM starts a thread, and each thread is its own chat in the
-crew, as channel threads are (`slackThreadConversationKey`). The session runs
-as the sender. Deviation from the plan: the chat is registered in the crew
-owner's conversation list (where the crew's conversations live), not the
-sender's; moving reader DM chats to the reader's own list is a follow-up. In a
-workflow, the DM runs as a Builder or Run chat of that user.
+One user, one chat (user, 2026-09-26). A DM continues the sender's own chat
+of the crew: the same conversation their web chat opens (and WhatsApp
+continues), found exactly as the web finds it (`resolveConversationBindingForUser`
+plus the sender's own conversation registry, `slackDMProfileTurn`). Every DM
+thread continues that one chat; an owner's is the crew's own chat, a reader's
+is their reader chat. Slack channel threads are different: each is its own
+chat of the crew (a group conversation, run as the route).
+
+Workflows: a DM runs as a Builder or Run chat of that user for the workflow
+(one bot conversation per DM thread); workflows have no single per-user web
+chat to continue yet.
 
 Attachments are checked as the sender, as in their web chat: a crew with an
 owner-only attachment refuses a reader's DM until the attachment is removed.

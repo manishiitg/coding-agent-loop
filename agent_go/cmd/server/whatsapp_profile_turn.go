@@ -201,6 +201,9 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
+	if msg.Platform == "slack" && msg.DirectMessage {
+		return api.slackDMProfileTurn(ctx, userID, profile, conversationKey, msg, threadID)
+	}
 	// In a multi-chat project (a crew) a Slack thread is its own chat (a
 	// separate native session and history), not the project's main
 	// conversation: that main chat is the owner's, and every thread sharing
@@ -226,6 +229,41 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 			return nil, "", false, err
 		}
 	}
+	return productBotTurnRequest(ctx, workspaceUserID, profile, conversation, msg, threadID)
+}
+
+// slackDMProfileTurn runs a 1:1 Slack DM in the sender's own chat of the
+// crew: the same conversation their web chat (and WhatsApp) continues, found
+// exactly as the web resolves it (resolveAgentProfileConversation). One user,
+// one chat: every DM thread continues it; an owner's is the crew's own chat,
+// a reader's is their reader chat in their own registry.
+func (api *StreamingAPI) slackDMProfileTurn(ctx context.Context, senderID string, profile agentprofiles.Profile, conversationKey string, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
+	userID := strings.TrimSpace(senderID)
+	if !IsMultiUserMode() {
+		userID = GetDefaultUserID()
+	}
+	if userID == "" {
+		return nil, "", false, fmt.Errorf("the DM sender has no AgentWorks account")
+	}
+	binding, owned, err := resolveConversationBindingForUser(ctx, userID, profile, conversationKey)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
+	}
+	if owned {
+		if err := initializeProductConversationWorkspace(ctx, userID, profile, binding); err != nil {
+			return nil, "", false, err
+		}
+	}
+	conversation, err := defaultProductConversationRegistryStore().resolveOrCreate(ctx, userID, profile, binding, "")
+	if err != nil {
+		return nil, "", false, fmt.Errorf("open %s conversation: %w", profile.Name, err)
+	}
+	return productBotTurnRequest(ctx, userID, profile, conversation, msg, threadID)
+}
+
+// productBotTurnRequest builds a bot turn in a resolved product
+// conversation, with the engine the conversation is bound to.
+func productBotTurnRequest(ctx context.Context, workspaceUserID string, profile agentprofiles.Profile, conversation ProductConversationRecord, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
 	input := AgentProfileChatRequest{Message: msg.Text}
 	if conversation.ProjectLLMConfig == nil {
 		if option, ok := whatsappEngineFor(profile, conversation); ok {

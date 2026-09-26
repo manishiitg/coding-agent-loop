@@ -271,8 +271,9 @@ not proof of end-to-end delivery.
   Connect users), Slack must confirm the conversation is a 1:1 IM with them,
   and their Slack email must match exactly one enabled account in
   `users.json`. The query boundary and every tool call re-check the mapping.
-  Each top-level DM starts its own thread and chat. The shared bot does not
-  take DMs.
+  One user, one chat: a crew DM continues the sender's own chat of the crew,
+  the same one their web chat and WhatsApp continue, whichever DM thread it
+  arrives in. The shared bot does not take DMs.
 
 DMs need the `im:history` and `im:read` scopes, the `message.im` event, and
 App Home → Messages Tab with "Allow users to send Slash commands and messages

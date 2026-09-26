@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -868,12 +869,15 @@ func TestLegacyLogicalCrewSlackConnectionStaysManageableByItsOwner(t *testing.T)
 	}
 }
 
-// RTS 2026-09-26: a crew app saved with the logical path answered every
-// mention with "This Slack route is no longer configured". Startup repairs its
-// scope from the one user tree holding the project and selects it for the crew.
-func TestRepairLogicalCrewSlackConnection(t *testing.T) {
-	_, workspace := setupSlackConnectionTest(t)
+// RTS 2026-09-26: crew destinations saved in the logical form had no owner,
+// so the crew's own bot answered "This Slack route is no longer configured".
+// The startup migration rewrites every store (connection scope, its channel
+// routes, the platform channel routes) to the owner's physical folder and
+// selects a repaired app for its crew.
+func TestMigrateCrewBotScopes(t *testing.T) {
+	api, workspace := setupSlackConnectionTest(t)
 	physical := "_users/alice/Chats/Work/projects/alpha"
+	logical := "Chats/Work/projects/alpha"
 	workspace.files[physical+"/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","capabilities":{}}`
 	svc, err := ensureSlackService()
 	if err != nil {
@@ -881,23 +885,74 @@ func TestRepairLogicalCrewSlackConnection(t *testing.T) {
 	}
 	conn, err := svc.CreateSlackConnection(context.Background(), services.SlackConnectionInput{
 		DisplayName: "SDE", BotToken: "xoxb-" + "repair-alpha", AppToken: "xapp-repair-alpha",
-		Enabled: false, WorkspacePath: "Chats/Work/projects/alpha", ProfileID: "work",
+		Enabled: false, WorkspacePath: physical, ProfileID: "work",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	repairLogicalCrewSlackConnections(context.Background(), svc)
-
-	repaired, ok := svc.GetConnection(conn.ID)
-	if !ok || repaired.WorkspacePath != physical {
-		t.Fatalf("scope = %q, want %q", repaired.WorkspacePath, physical)
+	other, err := svc.CreateSlackConnection(context.Background(), services.SlackConnectionInput{
+		DisplayName: "Helper", BotToken: "xoxb-" + "repair-helper", AppToken: "xapp-repair-helper",
+		Enabled: false, WorkspacePath: "Workflow/helper",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// GetConnection masks tokens; the tail shows they were kept.
-	if !strings.HasSuffix(repaired.BotToken, "lpha") || !strings.HasSuffix(repaired.AppToken, "lpha") || repaired.Enabled {
-		t.Fatalf("repair changed tokens or enabled state: %+v", repaired)
+	if _, err := svc.SetSlackConnectionChannelRoute(context.Background(), other.ID, "C0SHARED1", &services.SlackConnectionRoute{WorkspacePath: physical, ProfileID: "work", AddedBy: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the legacy state as it existed on disk: logical crew paths.
+	workspace.files["config/slack-config.json"] = strings.ReplaceAll(workspace.files["config/slack-config.json"], physical, logical)
+	if err := svc.ReloadConfig(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.chatStore.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{
+		ID: "slack", Enabled: true, BotMode: true,
+		AllowedChannels: `{"C0PLATFORM":{"profile_id":"work","conversation_key":"proj_alpha","workspace_path":"` + logical + `","workspace_user_id":"alice","bot_grant":"run"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	api.migrateCrewBotScopes(context.Background(), svc)
+
+	repaired, _ := svc.GetConnection(conn.ID)
+	if repaired.WorkspacePath != physical {
+		t.Fatalf("connection scope = %q, want %q", repaired.WorkspacePath, physical)
+	}
+	if !strings.HasSuffix(repaired.BotToken, "lpha") || repaired.Enabled {
+		t.Fatalf("migration changed tokens or enabled state: %+v", repaired)
 	}
 	if selected, err := productSlackConnectionID(context.Background(), "work", physical); err != nil || selected != conn.ID {
 		t.Fatalf("crew did not select its repaired app: %q, %v", selected, err)
+	}
+	helper, _ := svc.GetConnection(other.ID)
+	if route := helper.ChannelRoutes["C0SHARED1"]; route.WorkspacePath != physical {
+		t.Fatalf("connection channel route = %q, want %q", route.WorkspacePath, physical)
+	}
+	_, routes, err := api.slackRoutes(context.Background())
+	if err != nil || routes["C0PLATFORM"].WorkspacePath != physical {
+		t.Fatalf("platform channel route = %+v, %v", routes["C0PLATFORM"], err)
+	}
+}
+
+// Every Slack store refuses a logical crew path, so a caller that skips the
+// edge conversion fails here rather than in Slack.
+func TestSlackStoresRefuseLogicalCrewScope(t *testing.T) {
+	setupSlackConnectionTest(t)
+	svc, err := ensureSlackService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreateSlackConnection(context.Background(), services.SlackConnectionInput{
+		DisplayName: "SDE", BotToken: "xoxb-" + "logical-alpha", AppToken: "xapp-logical-alpha",
+		WorkspacePath: "Chats/Work/projects/alpha", ProfileID: "work",
+	})
+	if !errors.Is(err, services.ErrLogicalCrewScope) {
+		t.Fatalf("create with a logical crew path = %v, want ErrLogicalCrewScope", err)
+	}
+	if err := validateSlackRoutingScopes(map[string]ChannelRoute{"C1": {ProfileID: "work", WorkspacePath: "Chats/Work/projects/alpha"}}); !errors.Is(err, services.ErrLogicalCrewScope) {
+		t.Fatalf("platform route with a logical crew path = %v", err)
+	}
+	if err := validateSlackRoutingScopes(map[string]ChannelRoute{"C1": {WorkflowID: "wf", WorkspacePath: "Workflow/reports"}}); err != nil {
+		t.Fatalf("workflow route refused: %v", err)
 	}
 }

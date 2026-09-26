@@ -1215,6 +1215,9 @@ type SlackConnectionInput struct {
 
 // CreateSlackConnection adds a registry entry with a server-minted ID.
 func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackConnectionInput) (SlackConnection, error) {
+	if err := ValidateBotScope(input.WorkspacePath, input.ProfileID); err != nil {
+		return SlackConnection{}, err
+	}
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	if input.DisplayName == "" {
 		return SlackConnection{}, fmt.Errorf("slack connection display_name is required")
@@ -1312,6 +1315,9 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 			}
 			conn.Enabled = input.Enabled
 			nextPath, nextProfile := strings.TrimSpace(input.WorkspacePath), strings.TrimSpace(input.ProfileID)
+			if err := ValidateBotScope(nextPath, nextProfile); err != nil {
+				return SlackConnection{}, err
+			}
 			if !SameSlackScopePath(nextPath, conn.WorkspacePath) || nextProfile != conn.ProfileID {
 				// Channel routes were granted by the old scope's owner; a
 				// rescoped app must not keep answering for their destinations.
@@ -1365,6 +1371,9 @@ func (s *SlackService) SetSlackConnectionChannelRoute(ctx context.Context, connI
 			next.ProfileID = strings.TrimSpace(next.ProfileID)
 			if next.WorkspacePath == "" {
 				return SlackConnection{}, fmt.Errorf("a route needs a destination workflow or crew project")
+			}
+			if err := ValidateBotScope(next.WorkspacePath, next.ProfileID); err != nil {
+				return SlackConnection{}, err
 			}
 			if next.SameDestination(conn.WorkspacePath, conn.ProfileID) {
 				return SlackConnection{}, fmt.Errorf("this bot already answers for its own %s in every channel", map[bool]string{true: "crew", false: "workflow"}[next.ProfileID != ""])

@@ -341,8 +341,10 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		// The crew's "Native agent tools" switch. Resolve returned a copy, so
 		// this changes only this request's profile; the session key hashes the
 		// definition, so toggling relaunches the coding CLI. Owners only:
-		// readers keep AgentWorks-only tools.
-		if crewOwned && crew.Binding.ProjectNativeAgentTools {
+		// readers keep AgentWorks-only tools. Hybrid needs an allowlist tool
+		// policy (agentprofiles validation); the switch is on by default, so a
+		// profile without one keeps AgentWorks-only tools instead of failing.
+		if crewOwned && crew.Binding.ProjectNativeAgentTools && profile.ToolPolicy.IsAllowlist() {
 			profile.Runtime.AgentTools.Mode = "hybrid"
 		}
 		if !crewOwned {

@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(34)
+    expect(PLAYBOOK_CATALOG).toHaveLength(35)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -77,5 +77,16 @@ describe('small-team catalog', () => {
     expect(success?.agentSlots?.find(slot => slot.id === 'health')?.required).toBe(false)
     expect(success?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('onboarding-milestone-register/v1')
     expect(success?.setupChecks).toContain('first_value_rule')
+  })
+
+  it('exposes the Customer Support case route with optional escalation', () => {
+    const support = PLAYBOOK_CATALOG.find(item => item.id === 'support-case-to-reviewed-resolution')
+    expect(support?.category).toBe('Customer Support')
+    expect(support?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'support-triage-assistant', 'support-reply-drafter',
+    ])
+    expect(support?.agentSlots?.find(slot => slot.id === 'escalation')?.required).toBe(false)
+    expect(support?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('support-case-triage/v1')
+    expect(support?.setupChecks).toContain('handoff_contract')
   })
 })

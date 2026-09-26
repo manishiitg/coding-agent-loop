@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 38 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 42 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The eleven multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twelve multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -159,6 +159,36 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** agree on account owner, health rules, support scope and renewal source; verify one current signal and the linked first-value readout. A missing source must remain visible.
 - **Later run:** update stable risk/action IDs, distinguish a resolved blocker from stale data, and avoid declaring churn risk from a single unsupported signal.
 
+## Customer Support
+
+### Support Triage Assistant
+
+- **Use case:** classify a current support case, its urgency, duplicate state, and next owner decision.
+- **First result:** a sourced `support-case-triage/v1` with tenant, case, account, thread revision, priority policy, symptom versus verified incident state, owner, and next action. See the [illustrative triage](../../playbooks/agentic-engineering-platform/customer-support/support-case-to-reviewed-resolution/examples/support-case-triage.json).
+- **Setup proof:** read one authorized case and latest thread, verify policy and owner, check prior contact and duplicate records, then review a real triage decision.
+- **Later run:** re-read the current thread and status, retain case identity, and supersede outdated priority or incident claims when evidence changes.
+
+### Support Reply Drafter
+
+- **Use case:** prepare a customer response for the exact case and recipient from current approved material.
+- **First result:** a grounded, unsent `support-reply-draft/v1` with claim references, channel, recipient, open questions, and approval state. See the [illustrative reply](../../playbooks/agentic-engineering-platform/customer-support/support-case-to-reviewed-resolution/examples/support-reply-draft.json).
+- **Setup proof:** inspect a real case, approved help source, reply policy, and prior contact; have the owner review one exact unsent message.
+- **Later run:** re-read the thread before revising or sending. A delivered message needs exact approval and a provider receipt; a draft is never delivery proof.
+
+### Escalation Coordinator
+
+- **Use case:** hand a case to a receiving team when access, ownership, or expertise changes.
+- **First result:** a bounded impact brief with case and account IDs, deadline, receiving owner, acceptance state, and evidence. See the [illustrative escalation](../../playbooks/agentic-engineering-platform/customer-support/support-case-to-reviewed-resolution/examples/support-escalation-brief.json).
+- **Setup proof:** verify escalation policy, accepting team, one real case, and a receiving-owner decision; do not report a pending handoff as accepted.
+- **Later run:** re-read impact and owner state, preserve handoff and deadline IDs, and notify the support owner when acceptance or status changes.
+
+### Feedback & Review Analyst
+
+- **Use case:** group a bounded feedback or review set into themes and owner decisions.
+- **First result:** sourced theme brief with time window, denominator and source coverage, examples, urgency, and a proposed product or support action; any public response remains an unsent draft.
+- **Setup proof:** verify one authorized feedback export, source scope, review policy, owner, and a theme against representative and counterexample records.
+- **Later run:** compare the same source and window rules, retain prior theme IDs and owner decisions, and avoid counting duplicate reviews as new signals.
+
 ## Engineering
 
 ### Incident Investigator (`incident-investigator`)
@@ -290,4 +320,4 @@ Each profile answers: **when to use it, what a first result must contain, what s
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. Shopify's installed skills and guides include fictional good/rejected outputs and source probes for each of the five roles. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized merchant data, review its first result, and exercise a repeat case. The existing ten Playbook fixture sets cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing eleven Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

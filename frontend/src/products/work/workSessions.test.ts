@@ -263,6 +263,26 @@ describe('createWorkSession', () => {
     expect(setup.checks).toHaveLength(9)
   })
 
+  it.each([
+    ['support-triage-assistant', 'Support Triage Assistant'],
+    ['support-reply-drafter', 'Support Reply Drafter'],
+    ['escalation-coordinator', 'Escalation Coordinator'],
+    ['feedback-review-analyst', 'Feedback & Review Analyst'],
+  ] as const)('creates the %s Customer Support Crew without a case write or message', async (id, name) => {
+    updatePlannerFile.mockClear()
+    const session = await createWorkSession(name, 'Review a support case.', undefined, id)
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const runtime = JSON.parse(writes.get(session.workspacePath + '/workflow.json')!)
+    const setup = JSON.parse(writes.get(session.workspacePath + '/templates/' + id + '/TEMPLATE_SETUP.json')!)
+    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(runtime.capabilities.selected_skills).toEqual([id])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(setup).toMatchObject({ template_id: id, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+  })
+
   it('creates a Website Growth Starter with a separate setup checklist and no active connections', async () => {
     updatePlannerFile.mockClear()
     const session = await createWorkSession('Our Website Growth Crew', 'Grow relevant website visits.', '🌱', 'website-growth-starter')

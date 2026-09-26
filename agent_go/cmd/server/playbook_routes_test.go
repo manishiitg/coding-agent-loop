@@ -224,6 +224,42 @@ func TestGTMPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	}
 }
 
+func TestCustomerSupportPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("support-case-to-reviewed-resolution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/support"
+	const skill = "agentworks-playbook-support-case-to-reviewed-resolution"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{
+		"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md",
+		"scripts/validate_handoff.py", "examples/support-case-triage.json",
+		"examples/support-reply-draft.json", "examples/approved-support-reply.json", "examples/support-escalation-brief.json",
+		"examples/provider-delivery.json", "examples/case-outcome.json",
+	} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Customer Support playbook installation lacks %s", relative)
+		}
+	}
+	var setup map[string]interface{}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	completed, ok := setup["completed_steps"].([]interface{})
+	checks, checksOK := setup["checks"].([]interface{})
+	if setup["playbook_id"] != item.ID || !ok || len(completed) != 0 || !checksOK || len(checks) != 10 {
+		t.Fatalf("Customer Support setup invalid: %+v", setup)
+	}
+}
+
 func TestShopifyPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	item, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {
@@ -329,8 +365,8 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 34 {
-		t.Fatalf("catalog has %d playbooks, want 34", len(items))
+	if len(items) != 35 {
+		t.Fatalf("catalog has %d playbooks, want 35", len(items))
 	}
 	shopify, err := findPlaybook("order-exception-to-resolution")
 	if err != nil {

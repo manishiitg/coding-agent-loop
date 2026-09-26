@@ -54,6 +54,15 @@ export type PlaybookPulseFocus = {
 // Read-only catalog projection of the first-party playbook manifests. The API
 // slice will replace this projection when installation records are introduced.
 export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
+  { id: 'support-case-to-reviewed-resolution', title: 'Support Case to Reviewed Resolution', description: 'Route an authorized customer case through sourced triage, a grounded unsent reply or owned escalation, and provider-backed follow-through.', version: '0.1.0', category: 'Customer Support', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'triage', agent_playbook_id: 'support-triage-assistant', required: true, output: 'support-case-triage/v1' },
+    { id: 'reply', agent_playbook_id: 'support-reply-drafter', required: true, output: 'support-reply-draft/v1' },
+    { id: 'escalation', agent_playbook_id: 'escalation-coordinator', required: false, output: 'support-escalation-brief/v1' },
+  ], handoffs: [
+    { id: 'triage-to-reply', from: 'triage', to: 'reply', artifact_type: 'support-case-triage/v1', required: true },
+    { id: 'triage-to-escalation', from: 'triage', to: 'escalation', artifact_type: 'support-case-triage/v1', required: false },
+    { id: 'escalation-to-reply', from: 'escalation', to: 'reply', artifact_type: 'support-escalation-brief/v1', required: false },
+  ], setupChecks: ['goal_owner', 'case_scope', 'priority_policy', 'contact_knowledge', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'order-exception-to-resolution', title: 'Order Exception to Resolution', description: 'Connect an order or fulfillment problem to a return or refund request, then prepare an approved action and verify the resulting store and customer state.', version: '0.1.1', category: 'Shopify', order: 1, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'store_operations', agent_playbook_id: 'store-operations-coordinator', required: true, output: 'store-order-exception/v1' },
     { id: 'returns_refunds', agent_playbook_id: 'returns-refunds-coordinator', required: true, output: 'return-resolution-review/v1' },

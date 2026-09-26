@@ -332,31 +332,33 @@ The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineeri
 
 ## Engineering
 
+All four Engineering skill packs now include a fictional source-to-result example, a failed result to reject, and a role-specific source or calculation probe in the existing nine-check setup. These examples define expected output quality; a customer setup still needs one real authorized case and owner review.
+
 ### Incident Investigator (`incident-investigator`)
 
 - **Use case:** investigate a production incident across the customer's alerts, telemetry, deploys, and incident records.
-- **First result:** dated, sourced timeline with observed impact, labeled hypotheses, gaps, accountable owner, and next decisions. The existing [incident Workflow](../../playbooks/agentic-engineering-platform/reliability-operations/incident-investigation-coordination/SKILL.md) covers a related route.
+- **First result:** dated, sourced timeline with observed impact, labeled hypotheses, gaps, accountable owner, and next decisions. The skill works through a fictional 5xx-rate calculation and rejects an unsupported rollback claim. The existing [incident Workflow](../../playbooks/agentic-engineering-platform/reliability-operations/incident-investigation-coordination/SKILL.md) covers a related route.
 - **Setup proof:** read one real alert and associated telemetry or deploy record; verify incident and service IDs, event versus ingestion time, source coverage, escalation policy, and an on-call review.
 - **Later run:** append new evidence to the same incident, correct disproven hypotheses, and check action state before notifying or creating another ticket. Recovery actions require a reviewed route.
 
 ### Engineering Delivery Coordinator (`engineering-delivery-coordinator`)
 
 - **Use case:** follow a blocked change across issue, PR, CI, deployment, and owner handoffs.
-- **First result:** blocker ledger with exact issue and change IDs, commit SHA, CI and deployment states, environment, owner, due time, and the next evidence needed.
+- **First result:** blocker ledger with exact issue and change IDs, commit SHA, CI and deployment states, environment, owner, due time, and the next evidence needed. Its worked example keeps a merged, CI-green PR blocked when production still runs a different SHA.
 - **Setup proof:** join one actual issue to a PR, build, and deployment record using stable identifiers; verify release policy, owner, and whether a green build reached the intended environment.
 - **Later run:** update the same blocker IDs, distinguish merged from deployed and verified, and avoid duplicate reminders. Merge, CI rerun, ticket write, and deployment need separate authorization.
 
 ### Performance Investigator (`performance-investigator`)
 
 - **Use case:** investigate a page or API regression using the customer's performance tools and release history.
-- **First result:** regression brief with metric definition, comparable baseline/current measurements, coverage caveats, likely bottleneck, owner, and retest plan.
+- **First result:** regression brief with metric definition, comparable baseline/current measurements, coverage caveats, likely bottleneck, owner, and retest plan. The skill recomputes a fictional p95 delta and leaves a database-span correlation as a hypothesis.
 - **Setup proof:** inspect a representative trace or measurement, confirm route, environment, percentile, units, traffic segment, baseline and current windows, and budget; review the diagnosis with the owner.
 - **Later run:** repeat the same measurement rule, record changed traffic or instrumentation, and close only after a comparable retest. Existing [browser](../../playbooks/agentic-engineering-platform/performance-engineering/browser-performance-validation/SKILL.md) and [API](../../playbooks/agentic-engineering-platform/performance-engineering/api-performance-validation/SKILL.md) Workflows can inform the route.
 
 ### Cloud Cost Analyst (`cloud-cost-analyst`)
 
 - **Use case:** explain a cloud bill change and prepare risk-checked savings decisions across billing, usage, ownership, and service data.
-- **First result:** reconciled cost-change brief with currency and period rules, service owners, arithmetic, candidate savings ranges, risks, and verification plan.
+- **First result:** reconciled cost-change brief with currency and period rules, service owners, arithmetic, candidate savings ranges, risks, and verification plan. The skill separates a fictional usage-driven increase and one-time charge from a still unverified savings estimate.
 - **Setup proof:** read an authorized bill or export, reconcile one change against usage or allocation evidence, confirm discounts and owner map, and review a candidate with the service owner.
 - **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The existing [FinOps Workflow](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) covers the longer route.
 

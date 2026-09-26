@@ -18,6 +18,9 @@ type Specialist = {
   boundary: string
   handoff: string
   repeatRule: string
+  specialistProbe: string
+  workedExample: string
+  inadequateExample: string
 }
 
 const specialists: readonly Specialist[] = [
@@ -40,6 +43,11 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not restart a service, roll back a deploy, change an incident severity, or publish an external status update without an authorized owner decision and tool route.',
     handoff: 'A recovery Workflow can consume a bounded `incident-investigation/v1` artifact containing incident ID, service, evidence references, hypotheses, owner decisions, and proposed actions. Verify the same incident and service before a remediation step uses it.',
     repeatRule: 'On another run, re-read the incident and action state, append only new evidence, and correct disproven hypotheses. Do not duplicate incident tickets or page owners twice.',
+    specialistProbe: 'For one incident, verify the alert ID, service and event window against the telemetry source; join a deploy only through the same service/environment and observed SHA. Recompute one impact measure from source counts, label telemetry gaps, and ask the on-call owner to accept or reject the first proposed action.',
+    workedExample: `Fictional input: incident INC-42 concerns the production API between 09:10 and 09:25 UTC. Alert A-42 reports 160 5xx responses in 2,000 requests. The prior comparable window has 20 in 2,000. Deployment D-9 changed the same API service at 09:05; logs L-4 show database timeouts. No database saturation metric was retained.
+
+Reviewable output: **INC-42, investigating**. Timeline: 09:05 D-9 deployed SHA abc123; 09:10 A-42 begins; 09:13 L-4 records timeout samples; 09:25 alert stops. Observed 5xx rate is 160/2,000 = 8%, versus 20/2,000 = 1% in the prior window. The deploy is temporally correlated, not established as the cause. Hypothesis H-1: a query or pool change increased timeouts; missing proof is a database saturation trace. Next action: on-call owner inspects traces and decides whether to start an approved rollback route. External status and rollback state remain **not started**. Next check: 09:40 UTC.`,
+    inadequateExample: '“The 09:05 deploy caused the outage; roll it back and announce resolution.” This fails because the root cause is unproven, the service action lacks owner approval, and no recovery retest or communication receipt exists.',
   },
   {
     id: 'engineering-delivery-coordinator', name: 'Engineering Delivery Coordinator', icon: '🧭', subcategory: 'Delivery',
@@ -60,6 +68,11 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not merge, rerun CI, deploy, update an issue, or send a team message without an authorized route and reviewed action.',
     handoff: 'A release Workflow can consume `engineering-blocker-ledger/v1` with stable issue and change IDs, SHA, environment, CI and deployment evidence, owner, and approval state. QA can add independent verification evidence.',
     repeatRule: 'Reconcile the same stable issue and change IDs on later runs, close only blockers with observed resolution, and avoid duplicate follow-ups.',
+    specialistProbe: 'For one release item, trace issue → PR → CI → deployment by exact issue, PR and SHA IDs. Compare the target environment’s deployed SHA with the reviewed SHA; require a provider deployment receipt before marking it shipped. Have the release owner review the missing gate and its next action.',
+    workedExample: `Fictional input: release R-7 includes issue ENG-42 and PR 81 at SHA abc123. CI run CI-81 passed at 14:20 UTC; PR 81 merged at 14:25. Staging deployment ST-19 runs abc123; production deployment PRD-18 still runs def456. The release policy requires a production canary check.
+
+Reviewable output: ledger row **ENG-42 / PR 81 / abc123**. Code review: complete (PR 81). CI: passed (CI-81). Staging: deployed (ST-19). Production: **not deployed** (PRD-18 has a different SHA). Verification: pending canary. Blocker B-1: release owner decides by 16:00 UTC whether to schedule the production rollout and names the canary verifier. No issue update, deploy, or notification has been sent. Next check: 17:00 UTC if a rollout is approved, otherwise after the next owner decision.`,
+    inadequateExample: '“PR 81 is merged and CI is green, so ENG-42 is live in production.” This fails because the production deployment source shows a different SHA and the required canary has no result.',
   },
   {
     id: 'performance-investigator', name: 'Performance Investigator', icon: '⏱️', subcategory: 'Performance',
@@ -80,6 +93,11 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not alter production configuration, change a performance budget, deploy a fix, or treat one synthetic run as a customer-wide outcome without owner review.',
     handoff: 'A performance Workflow can consume `performance-regression/v1` with route, metric definition, baseline/current evidence, hypotheses, proposed change, and retest criteria. QA or Engineering verifies the same route and environment.',
     repeatRule: 'Compare later runs to the recorded baseline rule; note instrumentation or traffic changes and close the regression only after a comparable retest.',
+    specialistProbe: 'Reproduce one before/after metric with the same route, percentile, units, environment, region, instrumentation and comparable traffic segment. Show sample sizes, percentage change, budget and confounders; keep a slow span or deploy correlation as a hypothesis until an experiment or retest supports it.',
+    workedExample: `Fictional input: production GET /api/search, EU region, p95 latency in milliseconds, instrumentation v3. The approved budget is 500 ms. A comparable 24-hour baseline has p95 420 ms from 10,200 requests; the post-release window has p95 690 ms from 10,050. Traces T-8 show database span p95 110 → 350 ms, but the query plan and cache-hit mix are unavailable.
+
+Reviewable output: **regression open**. p95 rose 270 ms, or (690 − 420)/420 = 64.3%; the current p95 exceeds the 500 ms budget by 190 ms. Evidence: APM exports B-1/C-1, trace set T-8, release SHA abc123. Hypothesis: slower database work contributed; confidence medium because traffic composition and query plan are missing. Owner: search-service lead. Next: inspect the query plan and cache mix, then retest the same route/region/segment against the 500 ms budget. No fix or measured improvement is claimed.`,
+    inadequateExample: '“Latency doubled because of the deploy; increase the database budget and close the incident.” This fails the arithmetic, asserts causality from timing, changes the budget without review, and has no comparable retest.',
   },
   {
     id: 'cloud-cost-analyst', name: 'Cloud Cost Analyst', icon: '☁️', subcategory: 'FinOps',
@@ -100,6 +118,11 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not stop resources, resize infrastructure, purchase commitments, or book savings in finance without owner approval and a verified change route.',
     handoff: 'A FinOps Workflow can consume `cloud-cost-review/v1` with billing scope, source IDs, change decomposition, candidate estimates, risk, owner, approval, and post-change verification rule.',
     repeatRule: 'Track candidate IDs and owner decisions; compare actual billed results after an approved change and report when savings cannot yet be observed.',
+    specialistProbe: 'For one account/service, reconcile two equal billing periods in the same currency and allocation rule. Decompose the exact delta into price, usage, one-time and discount effects with source rows. Separate a candidate savings estimate from an approved infrastructure change and later realized billed savings.',
+    workedExample: `Fictional input: account A-9, compute service, USD, equal 30-day windows 2026-08-02–08-31 and 2026-09-01–09-30 with unchanged discount policy. Baseline export E-8 shows 10,000 eligible compute-hours at $1.20 = $12,000. Current export E-9 shows 12,000 hours at $1.20 = $14,400 plus a separately labeled $300 one-time support charge; billed total $14,700. Resource map M-2 names the platform lead.
+
+Reviewable output: **cost increase $2,700 (22.5%)**. Usage effect: 2,000 additional hours × $1.20 = $2,400; one-time charge: $300; price effect: $0; total explained: $2,700. Candidate C-1: inspect an idle nonproduction worker before any schedule change; estimated saving range $250–$600/month requires peak-load and dependency evidence. Owner: platform lead. Decision: review pending. Realized savings: **unknown** until an approved change and a comparable bill arrive.`,
+    inadequateExample: '“September costs $2,700 more, so shut down the worker and book $600 saved.” This fails because the candidate’s usage and service risk are unverified and an estimate is not a billed saving.',
   },
 ]
 
@@ -109,7 +132,7 @@ function checklist(spec: Specialist): string {
     { id: 'skill', title: 'Verify the selected skill', instructions: `Confirm skills/${spec.id}/SKILL.md exists and ${spec.id} is selected for this Crew.` },
     { id: 'scope', title: 'Set the job and evidence scope', instructions: `Record the first job, owner, time window, environment or account scope, and authorization. Minimum input: ${spec.minimumInput}` },
     { id: 'access', title: 'Test source access', instructions: `Read one representative authorized record or export and record exact ID, freshness, and coverage. ${spec.optionalConnections} A provider name alone is not access.` },
-    { id: 'join_rules', title: 'Verify identity and decision rules', instructions: 'Confirm how records join across tools, the owner map, metric or status definitions, escalation threshold, and what incomplete coverage means. Keep ambiguous joins unresolved.' },
+    { id: 'join_rules', title: 'Verify identity and decision rules', instructions: spec.specialistProbe },
     { id: 'first_result', title: 'Produce the first result', instructions: `Use actual authorized evidence to produce ${spec.firstResult} ${spec.evidence} An illustrative fixture does not complete this check.` },
     { id: 'review', title: 'Review the result and next action', instructions: 'Show the sourced result, unknowns, proposed next action, owner, and exact approval boundary. Record owner corrections and decision.' },
     { id: 'delivery', title: 'Choose action and delivery routes', optional: true, instructions: `Choose read-only chat or separately authorized writes and notifications. Read-only chat completes this decision. ${spec.boundary}` },
@@ -138,6 +161,16 @@ ${spec.method.map((step, index) => `${index + 1}. ${step}`).join('\n')}
 
 Deliver **${spec.firstResult}** ${spec.evidence}
 
+## Fictional worked example
+
+${spec.workedExample}
+
+## Inadequate output to reject
+
+${spec.inadequateExample}
+
+This example does not complete setup. Reproduce one case from authorized customer records and save the owner's review.
+
 ## Follow-through
 
 ${spec.repeatRule}
@@ -162,6 +195,14 @@ Template \`${spec.id}\` version 1. Progress lives in \`templates/${spec.id}/TEMP
 Provide ${spec.minimumInput} Ask: “${spec.exampleRequests[0]}”
 
 Expected output: **${spec.firstResult}** ${spec.evidence}
+
+## Fictional example and failure
+
+${spec.workedExample}
+
+Reject: ${spec.inadequateExample}
+
+The example does not prove source access. Reproduce one real case and record the owner decision.
 
 ## Source and connection choice
 

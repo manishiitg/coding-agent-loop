@@ -168,6 +168,22 @@ describe('createWorkSession', () => {
     expect(writes.get(`${session.workspacePath}/skills/${id}/SKILL.md`)).toContain('## Setup in chat')
   })
 
+  it('creates an Engineering Operations Analyst with pending metric setup and no active route', async () => {
+    updatePlannerFile.mockClear()
+    const id = 'engineering-operations-analyst'
+    const session = await createWorkSession('Engineering Operations Analyst', 'Review one team metric.', undefined, id)
+    const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
+    const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
+    const setup = JSON.parse(writes.get(`${session.workspacePath}/templates/${id}/TEMPLATE_SETUP.json`)!)
+    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(runtime.capabilities.selected_skills).toEqual([id])
+    expect(runtime.schedules).toEqual([])
+    expect(runtime.triggers).toEqual([])
+    expect(setup).toMatchObject({ template_id: id, completed_steps: [] })
+    expect(setup.checks).toHaveLength(9)
+    expect(writes.get(`${session.workspacePath}/skills/${id}/SKILL.md`)).toContain('engineering-metric-observation/v1')
+  })
+
   it.each([
     ['competitor-intelligence-analyst', 'Competitor Intelligence Analyst'],
     ['campaign-performance-analyst', 'Campaign Performance Analyst'],

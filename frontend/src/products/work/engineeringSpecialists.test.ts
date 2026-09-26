@@ -7,6 +7,7 @@ describe('Engineering Crew templates', () => {
     expect(engineering.map(item => item.id)).toEqual([
       'incident-investigator',
       'engineering-delivery-coordinator',
+      'engineering-operations-analyst',
       'performance-investigator',
       'cloud-cost-analyst',
       'post-incident-reviewer',
@@ -30,9 +31,10 @@ describe('Engineering Crew templates', () => {
     expect(engineering.some(item => /code review|PR Review Assistant/i.test(item.name))).toBe(false)
     expect(engineering[0].files['skills/incident-investigator/SKILL.md']).toContain('160/2,000 = 8%')
     expect(engineering[1].files['skills/engineering-delivery-coordinator/SKILL.md']).toContain('Production: **not deployed**')
-    expect(engineering[2].files['skills/performance-investigator/SKILL.md']).toContain('64.3%')
-    expect(engineering[3].files['skills/cloud-cost-analyst/SKILL.md']).toContain('total explained: $2,700')
-    expect(engineering[3].files['skills/cloud-cost-analyst/SKILL.md']).toContain('cloud-cost-review/v1')
+    expect(engineering[2].files['skills/engineering-operations-analyst/SKILL.md']).toContain('engineering-metric-observation/v1')
+    expect(engineering[3].files['skills/performance-investigator/SKILL.md']).toContain('64.3%')
+    expect(engineering[4].files['skills/cloud-cost-analyst/SKILL.md']).toContain('total explained: $2,700')
+    expect(engineering[4].files['skills/cloud-cost-analyst/SKILL.md']).toContain('cloud-cost-review/v1')
     expect(engineering[1].files['skills/engineering-delivery-coordinator/SKILL.md']).toContain('cloud-change-review/v1')
   })
 })

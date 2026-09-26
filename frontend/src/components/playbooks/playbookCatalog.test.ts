@@ -14,6 +14,12 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
+    expect(intelligence[0].version).toBe('0.2.0')
+    expect(intelligence[0].agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'engineering-operations-analyst', 'engineering-delivery-coordinator',
+    ])
+    expect(intelligence[0].handoffs?.[0].artifact_type).toBe('engineering-metric-observation/v1')
+    expect(intelligence[0].setupChecks).toHaveLength(10)
     expect(PLAYBOOK_CATALOG).toHaveLength(51)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })

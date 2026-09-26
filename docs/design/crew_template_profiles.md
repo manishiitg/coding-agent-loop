@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-five multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-six multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -373,7 +373,7 @@ The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineeri
 
 ## Engineering
 
-All six Engineering skill packs now include a fictional source-to-result example, a failed result to reject, and a role-specific source or calculation probe in the existing nine-check setup. These examples define expected output quality; a customer setup still needs one real authorized case and owner review.
+All seven Engineering skill packs now include a fictional source-to-result example, a failed result to reject, and a role-specific source or calculation probe in the existing nine-check setup. These examples define expected output quality; a customer setup still needs one real authorized case and owner review.
 
 ### Incident Investigator (`incident-investigator`)
 
@@ -388,6 +388,13 @@ All six Engineering skill packs now include a fictional source-to-result example
 - **First result:** blocker ledger with exact issue and change IDs, commit SHA, CI and deployment states, environment, owner, due time, and the next evidence needed. Its worked example keeps a merged, CI-green PR blocked when production still runs a different SHA.
 - **Setup proof:** join one actual issue to a PR, build, and deployment record using stable identifiers; verify release policy, owner, and whether a green build reached the intended environment.
 - **Later run:** update the same blocker IDs, distinguish merged from deployed and verified, and avoid duplicate reminders. Merge, CI rerun, ticket write, and deployment need separate authorization.
+
+### Engineering Operations Analyst (`engineering-operations-analyst`)
+
+- **Use case:** reconcile one governed team delivery, quality or reliability measure and pose a bounded improvement question.
+- **First result:** [comparable metric observation](../../playbooks/agentic-engineering-platform/engineering-operations-intelligence/engineering-operations-intelligence/examples/engineering-metric-observation.json) with exact population, rule, numerator/denominator, coverage and target; a [partial source](../../playbooks/agentic-engineering-platform/engineering-operations-intelligence/engineering-operations-intelligence/examples/engineering-metric-not-evaluable.json) remains unknown.
+- **Setup proof:** freeze team/service and metric policy, join actual source rows by stable IDs, reproduce counts for equal windows, verify coverage and have the engineering owner review the question.
+- **Later run:** preserve source and policy revisions, compare only compatible windows, and start a new baseline after a rule or team change. [Engineering Operations Intelligence](../../playbooks/agentic-engineering-platform/engineering-operations-intelligence/engineering-operations-intelligence/SKILL.md) passes the validated observation to Delivery for a separate owner review.
 
 ### Post-Incident Reviewer (`post-incident-reviewer`)
 

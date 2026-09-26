@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-two multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-three multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -249,7 +249,7 @@ The three inbound Sales skills include fictional worked and rejected cases align
 
 ## Customer Success
 
-The four installed Customer Success skills now include a fictional input and reviewable output, a failed output, and a role-specific identity or evidence probe. Their shared example follows the account and artifact IDs in New Customer to First Value. A real customer account and owner decision are still required to complete setup.
+The five installed Customer Success skills include a fictional input and reviewable output, a failed output, and a role-specific identity or evidence probe. Onboarding and first value share example account IDs; renewal has a separate exact-contract case. A real customer account and owner decision are still required to complete setup.
 
 ### Customer Onboarding Coordinator (`customer-onboarding-coordinator`)
 
@@ -275,9 +275,16 @@ The four installed Customer Success skills now include a fictional input and rev
 ### Customer Health Coordinator (`customer-health-coordinator`)
 
 - **Use case:** review an account's adoption, support and renewal signals together.
-- **First result:** [health brief](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/examples/customer-health-brief.json) with evidence, unknowns, risks, and an owner-reviewed next action.
-- **Setup proof:** agree on account owner, health rules, support scope and renewal source; verify one current signal and the linked first-value readout. A missing source must remain visible.
+- **First result:** [health brief](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/examples/customer-health-brief.json) for first value or a bounded [renewal health brief](../../playbooks/agentic-engineering-platform/customer-success/renewal-risk-to-owned-decision/examples/renewal-health-brief.json), each with observed signals, hypotheses, coverage and an owner question.
+- **Setup proof:** agree on account owner, health rules and source scope; verify one current signal and its first-value or usage source. A missing source must remain visible. Renewal terms are verified by Renewal Coordinator.
 - **Later run:** update stable risk/action IDs, distinguish a resolved blocker from stale data, and avoid declaring churn risk from a single unsupported signal.
+
+### Renewal Coordinator (`renewal-coordinator`)
+
+- **Use case:** turn bounded account health plus current executed renewal terms into an owned contract decision.
+- **First result:** an [exact-contract renewal register](../../playbooks/agentic-engineering-platform/customer-success/renewal-risk-to-owned-decision/examples/renewal-decision-register.json) with notice calculation, current billing state, owner decision or blocker, and no implied customer action.
+- **Setup proof:** probe the executed agreement and revision, matching subscription, notice timezone and prior notice ledger, current billing record and validated health artifact for the exact tenant/account. Recompute days to notice and have the renewal owner review a real case.
+- **Later run:** retain case key and prior decisions, re-read contract and notice receipts, and start a fresh review when terms or owner change. Count messages, amendments or cancellations only from separate approved routes and provider evidence.
 
 ## Customer Support
 

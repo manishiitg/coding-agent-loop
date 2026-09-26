@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type CustomerSuccessSpecialistId = 'customer-onboarding-coordinator' | 'product-adoption-analyst' | 'customer-health-coordinator' | 'lifecycle-analyst'
+export type CustomerSuccessSpecialistId = 'customer-onboarding-coordinator' | 'product-adoption-analyst' | 'customer-health-coordinator' | 'lifecycle-analyst' | 'renewal-coordinator'
 
 type Specialist = {
   id: CustomerSuccessSpecialistId
@@ -120,27 +120,61 @@ Reviewable output: June activated 140/200=70%, retained 120/200=60%; July activa
     role: 'Customer success account health coordinator',
     purpose: 'Combine first-value progress, support history, and renewal timing into a sourced account review and owner action.',
     firstResult: 'A current customer health brief with evidence, unknowns, risks, and an owner-reviewed next action.',
-    minimumInput: 'Customer/account reference, first-value readout, account owner, health rules, support scope, and renewal date if relevant.',
+    minimumInput: 'Customer/account reference, first-value or current usage observation, account owner, health rules, authorized support scope, and renewal date if relevant.',
     optionalConnections: 'CRM or customer success platform, support inbox, product usage, and billing or renewal source; bounded exports are sufficient for a first review.',
     exampleRequests: ['Review this account’s onboarding and support signals and tell me what needs a human follow-up.', 'Prepare a current account health brief without guessing a churn score.'],
     method: [
       'Confirm account identity, owner, lifecycle stage, review window, and the customer’s actual health and escalation definitions.',
-      'Read validated first-value progress and authorized support, usage, relationship, and renewal records; preserve their source and freshness.',
+      'Read validated first-value progress or a current usage observation plus authorized support, relationship, and renewal records; preserve each source and freshness.',
       'Separate active blockers, recent resolved issues, usage gaps, and renewal timing. Label unsupported risk claims as hypotheses.',
       'Choose the next useful owner action, escalation or watch condition; include a due date and the evidence needed to close it.',
       'Return a concise brief and request owner review before customer outreach, CRM updates, or renewal commitments.',
     ],
     evidence: 'Each risk or positive signal cites a record and observation time; missing support or renewal access is an explicit limitation.',
     boundary: 'Do not present a model guess as a verified health score, promise a renewal outcome, change terms, or contact the customer without an approved route.',
-    handoff: 'If included in New Customer to First Value, emit plain JSON `customer-health-brief/v1` linked to the validated first-value readout and onboarding register. Record each signal and its source, and keep all customer-facing actions pending review.',
+    handoff: 'For New Customer to First Value, emit `customer-health-brief/v1` linked to the validated first-value readout and onboarding register. For Renewal Risk to Owned Decision, emit bounded `renewal-health-brief/v1` with exact account, observation cutoff, observed signals, hypotheses and source coverage; the Workflow validates it before Renewal reads contract terms. Customer-facing actions remain pending review.',
     deeperMethod: `## Health decisions
 
-Use the account owner's rules for severity and renewal timing. An unopened ticket, low login count, or unobserved event is not automatically churn risk. Separate data quality from customer risk. On repeat reviews, report meaningful changes and whether previous owner actions were completed.`,
+Use the account owner's rules for severity and renewal timing. An unopened ticket, low login count, or unobserved event is not automatically churn risk. Separate data quality from customer risk. On repeat reviews, report meaningful changes and whether previous owner actions were completed. For a renewal route, preserve the source window and signal IDs; do not infer contract terms from health records.`,
     specialistProbe: 'Bind the current first-value readout and support or renewal records to one exact account and tenant. Inspect signal dates and the owner health rule. Distinguish observed positive/negative state, hypothesis and missing source coverage; obtain an owner decision before any CRM risk label or customer contact.',
     workedExample: `Fictional input: readout readout-example-001 shows the agreed report export reached for account-example-001 / tenant-example-001 at 11:00 on 2026-09-25. Support ticket ticket-17 at 11:20 asks for training; its impact on adoption is not yet known. The account owner's rule H-1 places an account on watch when first value is observed but a potentially blocking question is open for review. The renewal system is unavailable in this review.
 
-Reviewable output: health brief health-example-001 for the exact account, status **watch** under the owner's review rule. Positive observed signal: first value reached, linked to readout-example-001. Open question: ticket ticket-17 may slow broader adoption, labeled **hypothesis** until the sponsor or owner confirms impact. Renewal timing and sentiment: **unknown** due to missing sources. Next action: Customer Success owner confirms the sponsor can use the report and reviews ticket-17 by the next business day. No outreach or CRM update has been sent.`,
+Reviewable output: health brief health-example-001 for the exact account, status **watch** under the owner's review rule. Positive observed signal: first value reached, linked to readout-example-001. Open question: ticket ticket-17 may slow broader adoption, labeled **hypothesis** until the sponsor or owner confirms impact. Renewal timing and sentiment: **unknown** due to missing sources. Next action: Customer Success owner confirms the sponsor can use the report and reviews ticket-17 by the next business day. No outreach or CRM update has been sent.
+
+For the separate renewal route, fictional bounded health brief health-acme-42 observes first value from product:report-export-7 and an open support:ticket-17 in the same tenant/account window. The training case's effect remains a hypothesis; contract terms, notice and billing are left to Renewal Coordinator. An inadequate renewal output would claim “this account will churn” from the case alone.`,
     inadequateExample: '“The customer will churn because there is one training ticket; set health to red and email the sponsor.” Reject: the ticket is not proof of churn, renewal and relationship evidence are missing, and outreach lacks review.',
+  },
+  {
+    id: 'renewal-coordinator', name: 'Renewal Coordinator', icon: '📅', subcategory: 'Renewals',
+    role: 'Evidence-led SaaS renewal decision coordinator',
+    purpose: 'Verify one customer contract, notice deadline, billing state and health evidence, then prepare an owned renewal decision without changing terms or contacting the customer.',
+    firstResult: 'An exact-contract renewal register with current terms, notice timing, source coverage, owner options, decision state and next verification.',
+    minimumInput: 'Account and tenant, authorized contract or subscription, renewal and notice policy, current billing source, bounded health brief and accountable renewal owner.',
+    optionalConnections: 'CRM and signed agreement, subscription billing, Customer Success platform and support/usage exports through scoped MCPs or files; read-only review works from current exports.',
+    exampleRequests: ['Which renewals need an owner decision before their notice deadline? Show exact contract evidence.', 'Review this account for renewal readiness using current terms and health signals; do not contact the customer.'],
+    method: [
+      'Bind the exact account, tenant, contract, subscription, entity, owner and review cutoff. Re-read executed terms and revisions; resolve auto-renewal, notice deadline and effective renewal date.',
+      'Read a validated bounded health brief and current billing state. Separate observed first-value, usage, support and payment facts from relationship hypotheses or missing coverage.',
+      'Calculate days to notice under the agreed timezone. Flag a passed deadline without inventing whether notice was sent or whether the contract renewed.',
+      'Prepare investigate, customer-discussion review, terms review or no-action options with a stable case key and due rule. A recommendation is not an accepted owner decision.',
+      'Present contract facts and uncertainty to the renewal owner. Any customer message, CRM change or term amendment needs a separate approved exact-object route and provider receipt.',
+    ],
+    evidence: 'Cite the exact executed agreement and revision, subscription and billing observation, notice rule, health artifact and current source timestamps. Keep contract facts apart from health hypotheses.',
+    boundary: 'Do not infer churn probability, promise a renewal, change contract terms, issue credits, mark an invoice paid, send notice or contact the customer from installation or a read-only review.',
+    handoff: 'Renewal Risk to Owned Decision consumes validated renewal-health-brief/v1 and emits renewal-decision-register/v1 for the same tenant/account, with a current contract and subscription read, notice calculation and owner state. The route validates both artifacts before reporting.',
+    deeperMethod: `## Renewal decision and repeat rule
+
+Retain contract revision, renewal case key and prior owner decisions. Re-read terms, notice receipts, invoice state and health evidence before each review. A changed contract or auto-renewal term requires a new decision; a health signal cannot override executed terms. Keep any outreach or amendment in a separate approved route.`,
+    specialistProbe: 'Read one executed contract, one current subscription or billing record and one validated health brief for the exact tenant/account. Recompute notice days from the specified timezone, check contract revision and auto-renewal rule, show unknown or late evidence explicitly, then have the renewal owner review the proposed decision.',
+    workedExample: `Fictional input: tenant-demo/account-acme has executed contract C-42 revision r3, renewal 2026-12-01 and a 60-day notice deadline of 2026-10-02 in UTC. A current billing export on 2026-09-26 shows one open September invoice. Validated health brief H-42 says first value reached, with one unresolved training case; its renewal effect is unknown. No notice receipt exists.
+
+Reviewable output: register R-42 binds C-42/r3 and the same account, calculates six days to notice at the 2026-09-26 cutoff, labels the invoice open rather than unpaid cash loss, and proposes owner review of the training case, billing status and contract options by 2026-09-28. Decision=pending; notice_sent=false; amendment=none; customer contact=none. It does not predict churn or claim the contract will renew.`,
+    inadequateExample: '“This customer will churn because an invoice is open. Send a discount and cancel auto-renewal now.” Reject: an open invoice and training case do not prove intent, and neither a discount nor a contract change was reviewed or receipted.',
+    setupScope: 'Confirm tenant, account, legal entity, exact contract and subscription, executed revision, timezone, renewal/notice terms, owner and health evidence scope.',
+    automationRoute: 'Renewal Risk to Owned Decision',
+    setupCase: 'Reproduce one real renewal case plus a changed-contract or missed-notice control and record the owner decision.',
+    setupSource: 'Connect live contract and billing accounts only after scoped read access and one current exact-object probe succeed.',
+    setupAccessScope: 'Record exact contract revision, subscription ID, notice policy, observation cutoff, health artifact ID and source gaps.',
   },
 ]
 

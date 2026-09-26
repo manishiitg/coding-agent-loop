@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(48)
+    expect(PLAYBOOK_CATALOG).toHaveLength(49)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -200,6 +200,16 @@ describe('small-team catalog', () => {
     ])
     expect(handoff?.handoffs?.[0].artifact_type).toBe('sales-cs-handoff/v1')
     expect(handoff?.setupChecks).toHaveLength(10)
+  })
+
+  it('exposes a health-to-renewal decision with exact notice setup', () => {
+    const renewal = PLAYBOOK_CATALOG.find(item => item.id === 'renewal-risk-to-owned-decision')
+    expect(renewal?.category).toBe('Customer Success')
+    expect(renewal?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'customer-health-coordinator', 'renewal-coordinator',
+    ])
+    expect(renewal?.handoffs?.[0].artifact_type).toBe('renewal-health-brief/v1')
+    expect(renewal?.setupChecks).toContain('contract_policy')
   })
 
   it('exposes maturity-aware retention as a two-Crew proposal', () => {

@@ -236,6 +236,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'sales-to-onboarding', from: 'sales', to: 'onboarding', artifact_type: 'sales-cs-handoff/v1', required: true },
   ], setupChecks: ['goal_owner', 'deal_scope', 'agreement_policy', 'first_value_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'renewal-risk-to-owned-decision', title: 'Renewal Risk to Owned Decision', description: 'Join bounded customer-health evidence to current SaaS contract and billing terms for an owner-reviewed renewal decision.', version: '0.1.0', category: 'Customer Success', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'health', agent_playbook_id: 'customer-health-coordinator', required: true, output: 'renewal-health-brief/v1' },
+    { id: 'renewal', agent_playbook_id: 'renewal-coordinator', required: true, output: 'renewal-decision-register/v1' },
+  ], handoffs: [
+    { id: 'health-to-renewal', from: 'health', to: 'renewal', artifact_type: 'renewal-health-brief/v1', required: true },
+  ], setupChecks: ['goal_owner', 'account_scope', 'contract_policy', 'health_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'finance-operations-review', title: 'Finance Operations Review', description: 'Coordinate billing exceptions and a sourced finance impact review, with optional accounting close and payables specialists.', version: '0.1.0', category: 'Finance', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'billing-exception-queue/v1' },
     { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'finance-impact-readout/v1' },

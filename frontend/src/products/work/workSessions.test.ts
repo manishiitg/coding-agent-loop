@@ -212,6 +212,7 @@ describe('createWorkSession', () => {
     ['customer-onboarding-coordinator', 'Customer Onboarding Coordinator'],
     ['product-adoption-analyst', 'Product Adoption Analyst'],
     ['customer-health-coordinator', 'Customer Health Coordinator'],
+    ['renewal-coordinator', 'Renewal Coordinator'],
   ] as const)('creates the %s Customer Success Crew with pending setup', async (id, name) => {
     updatePlannerFile.mockClear()
     const session = await createWorkSession(name, 'Help customers reach first value.', undefined, id)

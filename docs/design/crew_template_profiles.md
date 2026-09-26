@@ -173,6 +173,8 @@ Each profile answers: **when to use it, what a first result must contain, what s
 
 ## Sales
 
+The three inbound Sales skills include fictional worked and rejected cases aligned to Inbound Lead-to-Meeting Review. Each setup checklist now probes the specific source join and decision boundary for its role. These examples demonstrate the expected output; a real lead or account source and seller review are still required to complete setup.
+
 ### Sales Call Briefing Assistant (`sales-call-briefing`)
 
 - **Use case:** prepare a seller for one exact buyer meeting without inventing buying intent or attendee authority.

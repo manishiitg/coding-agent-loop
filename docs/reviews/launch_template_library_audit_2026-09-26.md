@@ -16,11 +16,10 @@ Date: 2026-09-26. Scope: authored Crew and Automation Playbook library in this c
 
 ## Content depth still to close
 
-The launch catalog's quality rule asks each Crew for an inspectable input/output example, a failed example, a hard source probe, owner review, repeat rule and a customer-like exercise. A passing package validator proves shape and links, not this full content standard. The four Engineering and three Customer Success Crews now include worked and rejected outputs plus role-specific source probes in their installed skills. Shopify skills have illustrative output and rejection sections. The next highest-value authored gaps are:
+The launch catalog's quality rule asks each Crew for an inspectable input/output example, a failed example, a hard source probe, owner review, repeat rule and a customer-like exercise. A passing package validator proves shape and links, not this full content standard. The four Engineering, three Customer Success, and three inbound Sales Crews now include worked and rejected outputs plus role-specific source probes in their installed skills. Shopify skills have illustrative output and rejection sections. The next highest-value authored gaps are:
 
-1. **Sales intake:** Lead Intake & Qualifier, Account Researcher and Sales Follow-up Coordinator have a validated Automation route, but their installed skills still need equivalent standalone examples and failure cases.
-2. **Finance core:** Billing Operations Coordinator, Revenue & Close Analyst and Spend & Payables Coordinator need richer standalone cases even though the billing packs and several Finance Playbooks already contain fictional artifacts.
-3. **Customer case verification:** Customer Success authored examples now cover the three roles, but no actual account, source access or owner review has been exercised. The same applies to the other template categories until pilot setup evidence is recorded.
+1. **Finance core:** Billing Operations Coordinator, Revenue & Close Analyst and Spend & Payables Coordinator need richer standalone cases even though the billing packs and several Finance Playbooks already contain fictional artifacts.
+2. **Customer case verification:** Authored examples now cover the inbound Sales, Customer Success, and Engineering roles, but no actual account, source access or owner review has been exercised. The same applies to the other template categories until pilot setup evidence is recorded.
 
 These are prioritized content gaps, not proof that the remaining skills are complete. Review each category's actual installed skill and setup guide before promotion. Exercise at least one authorized customer-like case per role during pilot setup. Keep external sends, payments, infrastructure changes and schedules behind the customer's reviewed action route.
 

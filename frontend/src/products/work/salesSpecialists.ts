@@ -19,6 +19,9 @@ type SalesSpecialist = {
   boundary: string
   handoff: string
   deeperMethod: string
+  specialistProbe: string
+  workedExample: string
+  inadequateExample: string
 }
 
 const specialists: readonly SalesSpecialist[] = [
@@ -45,6 +48,11 @@ const specialists: readonly SalesSpecialist[] = [
 Use the owner's actual ideal-customer profile and disqualification rules. A missing company size, budget, timing, or authority signal is **unknown**, not a negative score. Do not invent an intent score or convert a content download into a demo request. A duplicate CRM record should be linked for owner review, not silently merged or overwritten. For a not-fit or contact-blocked lead, return an internal disposition and stop the outbound handoff.
 
 On repeat intake, use the lead source ID and stable brief ID to check whether the record, owner, or stage changed. Report the delta and avoid opening a second case for the same enquiry.`,
+    specialistProbe: 'For one inbound enquiry, resolve the exact source row, company/domain, lead and contact references, approved fit-policy version and owner. Check duplicates across the authorized CRM scope and current contact/suppression state. Reproduce one criterion from source evidence; keep missing data unknown and have the owner approve the qualification and route before any CRM write or contact.',
+    workedExample: `Fictional input: enquiry lead-example-001 in exports/fictional-inbound-leads.csv row 7 asks for a demo of multi-location appointment scheduling. Policy docs/fictional-ideal-customer-profile.md section 1 includes clinics in the supported market. The authorized open-lead export query reports no duplicate as of 09:40 UTC. The enquiry gives no budget and contact policy still needs review.
+
+First result: brief-example-001 identifies the source row and policy, marks market **match** and budget **unknown**, records duplicate_state **none** within the checked export, and recommends **qualified** for owner review. The next action is to review a reply draft and contact policy. No CRM record or message is created. On a later run, recheck the source ID, duplicate scope and policy before changing the brief.`,
+    inadequateExample: '“This clinic is a high-budget hot lead, so add it to the CRM and start a sequence.” Reject: the budget is unknown, the intent score is invented, contact policy is unresolved, and neither the CRM write nor outbound sequence is authorized.',
   },
   {
     id: 'account-researcher', version: 1, name: 'Account Researcher', icon: '🔎', subcategory: 'Account intelligence',
@@ -67,6 +75,11 @@ On repeat intake, use the lead source ID and stable brief ID to check whether th
     deeperMethod: `## Research quality
 
 Prefer the account's own current site and the customer's approved CRM over unsourced directory summaries. Check a company-domain match before attaching a finding to a lead. Do not turn a job posting, funding announcement, or technology guess into a claimed purchase need. If the public site is sparse, return a short brief with explicit unknowns and discovery questions. Recheck time-sensitive facts before a later run.`,
+    specialistProbe: 'For one approved account, match company name and canonical domain to the validated lead brief before research. Open a current company-controlled page and record its URL and observation time. Separate one observed fact from one hypothesis, trace each reference, and ask the seller to accept or correct the discovery question; do not attach a different company with a similar name.',
+    workedExample: `Fictional input: validated brief-example-001 identifies harborclinic.example. Its fictional /locations page, observed at 09:50 UTC, lists three clinic locations. The original demo enquiry asks about multi-location scheduling; it does not describe the current scheduling system or budget.
+
+First result: research-example-001 links to brief-example-001 and the matching domain. “The site lists three locations” is **observed** with the page reference. “Coordinating those locations may matter” is a **hypothesis**, supported by the page and enquiry but explicitly unconfirmed. The seller's question is “How are appointments coordinated across the locations today?” Refresh the page before using this finding on a later date.`,
+    inadequateExample: '“Harbor Clinic has three locations, uses a legacy scheduler, and is ready to buy our platform.” Reject: the scheduler and buying intent are unsupported, and a public page does not establish permission to contact anyone.',
   },
   {
     id: 'sales-followup-coordinator', version: 2, name: 'Sales Follow-up Coordinator', icon: '✉️', subcategory: 'Follow-up',
@@ -89,6 +102,11 @@ Prefer the account's own current site and the customer's approved CRM over unsou
     deeperMethod: `## Contact and repeat-run rules
 
 An inbound request is not blanket consent for every channel or cadence. Follow the customer's policy and current suppression state. Stop a draft when the lead is not qualified, contact is blocked, a relevant reply already arrived, or a meeting is already booked. If CRM or inbox access is absent, state that duplicate-contact checks are incomplete and keep the result an internal proposal. For an approved send, re-read the durable decision and exact message fingerprint, lead, suppression, reply and meeting state; use a stable action ID and provider receipt so retries cannot produce duplicate sends. Report booked only from a matched calendar or CRM event.`,
+    specialistProbe: 'For one validated qualified lead, verify the exact recipient reference and owner against the brief, current contact/suppression policy, prior messages and replies, existing meeting state, approved offer claims and owner-specific booking URL. Show the exact draft and next-check date to the owner. Before any separately approved send, recheck state and message fingerprint; require a provider receipt and matched meeting event for later outcome claims.',
+    workedExample: `Fictional input: brief-example-001 qualifies lead-example-001, research-example-001 supplies a three-location observation, and the approved offer document supports a scheduling demo. The recipient is crm-export:contact-001. Contact policy remains review_required; no verified send approval or provider receipt is supplied.
+
+First result: draft-example-001 has subject “Your scheduling demo request” and a short reply about the prospect's stated multi-location question. It cites the enquiry and approved offer, names the Sales owner, sets a next-check date, and records send_state **not_sent** with approval_required **true**. The owner reviews recipient, wording, booking URL, timing and current suppression state. A draft is neither delivered nor booked.`,
+    inadequateExample: '“I sent the follow-up and booked a meeting because the lead asked for a demo.” Reject: the supplied case has no approved send, provider delivery receipt, or matched calendar/CRM meeting event; a draft and inbound interest cannot prove those outcomes.',
   },
 ]
 
@@ -98,7 +116,7 @@ function checklist(spec: SalesSpecialist): string {
     { id: 'skill', title: 'Verify the selected skill', instructions: `Confirm skills/${spec.id}/SKILL.md exists and ${spec.id} is selected for this Crew.` },
     { id: 'scope', title: 'Set business and lead scope', instructions: `Confirm the offer, target buyer, market, reporting window, and authorized source scope for this role. Minimum input: ${spec.minimumInput}` },
     { id: 'access', title: 'Test source access', instructions: `Read a representative authorized source or export. ${spec.optionalConnections} Record the actual account or file, date coverage, and missing access; a named provider is not a connected account.` },
-    { id: 'policy', title: 'Agree on qualification and contact policy', instructions: 'Confirm actual fit criteria, routing owner, contact/suppression rules, and the distinction between a draft and an approved send. Mark unresolved policy as a blocker.' },
+    { id: 'policy', title: 'Verify source and decision rules', instructions: spec.specialistProbe },
     { id: 'first_result', title: 'Produce the first result', instructions: `Produce ${spec.firstResult} ${spec.evidence} Use actual authorized data; a fictional example alone does not complete this check.` },
     { id: 'review', title: 'Review the first result', instructions: 'Show a representative output to the owner and record corrections, decision, and next action before completing setup.' },
     { id: 'delivery', title: 'Decide on delivery', optional: true, instructions: spec.id === 'sales-followup-coordinator' ? 'Choose chat-only or a separately approved sending and booking-tracking route. Verify the actual sending account/grants, owner-specific booking URL, meeting source, review gate and provider receipt before enabling delivery. Chat-only is a completed decision; this template itself enables no outbound action.' : 'Choose chat-only or a separately approved CRM/email/calendar route. Chat-only is a completed decision. No outbound action or CRM mutation is enabled by this template.' },
@@ -129,6 +147,16 @@ Deliver **${spec.firstResult}** ${spec.evidence}
 
 ${spec.deeperMethod}
 
+## Fictional worked example
+
+${spec.workedExample}
+
+## Inadequate output to reject
+
+${spec.inadequateExample}
+
+The fictional example does not complete setup. Reproduce one case from authorized customer records and save the owner's review.
+
 ## Automation handoff
 
 ${spec.handoff} The Crew step must supply the schema fields and output path; ask Builder to repair a route that omits them. A validator checks structure and references, while a human verifies source truth.
@@ -149,6 +177,14 @@ Template \`${spec.id}\` version ${spec.version}. Progress lives in \`templates/$
 Provide ${spec.minimumInput} Ask: “${spec.exampleRequests[0]}”
 
 Expected output: **${spec.firstResult}** ${spec.evidence}
+
+## Fictional example and failure
+
+${spec.workedExample}
+
+Reject: ${spec.inadequateExample}
+
+The example does not prove source access. Reproduce one real lead or account case and record the owner's decision.
 
 ## Source and connection choice
 

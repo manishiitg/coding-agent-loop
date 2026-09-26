@@ -13,10 +13,10 @@ describe('withSlackDryRun', () => {
   })
 
   it('adds a passing routing check when a mention reaches the crew', async () => {
-    dryRunSlackConnection.mockResolvedValue({ admitted: true, destination: 'crew sde (_users/u1/Chats/Work/projects/sde)' })
+    dryRunSlackConnection.mockResolvedValue({ admitted: true, mode: 'run', destination: 'crew sde (_users/u1/Chats/Work/projects/sde)' })
     const result = await withSlackDryRun('slack_sde', tokensOK, 'crew')
     expect(result.success).toBe(true)
-    expect(result.checks?.at(-1)).toMatchObject({ name: 'A mention reaches this crew', status: 'passed' })
+    expect(result.checks?.at(-1)).toMatchObject({ name: 'A mention reaches this crew', status: 'passed', message: 'crew sde (_users/u1/Chats/Work/projects/sde) · answers in Run mode in channels' })
   })
 
   it('fails the test with the reply the user would see when routing refuses', async () => {

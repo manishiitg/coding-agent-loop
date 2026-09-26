@@ -259,6 +259,29 @@ Manual delivery checks remain required even when token checks pass:
 Tokens cannot read event-subscription settings. Passing the connection test is
 not proof of end-to-end delivery.
 
+## Who a Slack turn runs as
+
+- **Channels, private channels and group DMs** are groups: the turn runs as
+  the route (the workflow or crew), always in Run mode. The sender is named in
+  the prompt (`From: <name> <email> (Slack)`) and kept as the audit actor.
+- **A 1:1 DM with a workflow's or crew's own bot** runs as the sender's
+  AgentWorks account, in that account's own mode: owner or editor gets the
+  full chat, a reader gets Run mode, anyone without access is refused. The
+  sender must be a full member of the app's Slack team (no guests, no Slack
+  Connect users), Slack must confirm the conversation is a 1:1 IM with them,
+  and their Slack email must match exactly one enabled account in
+  `users.json`. The query boundary and every tool call re-check the mapping.
+  Each top-level DM starts its own thread and chat. The shared bot does not
+  take DMs.
+
+DMs need the `im:history` and `im:read` scopes, the `message.im` event, and
+App Home → Messages Tab with "Allow users to send Slash commands and messages
+from the messages tab". The generated app manifest sets all of these;
+"Save & test" reports missing DM scopes without failing channel bots.
+
+Sources: `agent_go/cmd/server/services/slack_dm.go`,
+`agent_go/cmd/server/slack_dm.go`, `docs/design/bot_identity_model.md`.
+
 ## Slack workflow triggers
 
 Route owners can configure `human_message` or `trusted_app` triggers with

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,7 +33,7 @@ type botDryRunWorld struct {
 func newBotDryRunWorld(t *testing.T) botDryRunWorld {
 	t.Helper()
 	fx := newCrewRunModeFixture(t)
-	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"aman","email":"`+dryRunOwnerEmail+`","can_create":true},{"id":"reader","username":"vaibhav","email":"reader@example.com","can_create":true},{"id":"stranger","username":"stranger","can_create":true}]}`)
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"aman","email":"`+dryRunOwnerEmail+`","can_create":true},{"id":"reader","username":"vaibhav","email":"reader@example.com","can_create":true},{"id":"stranger","username":"stranger","email":"stranger@example.com","can_create":true},{"id":"twin-a","username":"twina","email":"twin@example.com","can_create":true},{"id":"twin-b","username":"twinb","email":"twin@example.com","can_create":true},{"id":"gone","username":"gone","email":"gone@example.com","can_create":true,"disabled":true}]}`)
 	resetSlackServiceForTest(t)
 	store, err := chathistory.NewFilesystemStore(t.TempDir())
 	if err != nil {
@@ -218,5 +219,129 @@ func TestBotDryRunCrewSlackThreadsGetTheirOwnChats(t *testing.T) {
 	}
 	if firstKey == secondKey {
 		t.Fatalf("two Slack threads share one chat: %q", firstKey)
+	}
+}
+
+// Slack DMs (docs/design/bot_identity_model.md): a 1:1 DM with a workflow's
+// or crew's own bot runs as the AgentWorks account the sender's Slack email
+// maps to, in that account's own mode. Channels stay Run mode.
+
+// dmSenders fakes Slack's users.info + conversations.info per Slack user id.
+func (w botDryRunWorld) dmSenders(t *testing.T, app services.SlackConnection, senders map[string]services.SlackDMSender) {
+	t.Helper()
+	svc, err := w.slack.ServiceForConnection(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.SetDMSenderLookup(func(_ context.Context, userID, _ string) (services.SlackDMSender, error) {
+		sender, ok := senders[userID]
+		if !ok {
+			return services.SlackDMSender{}, fmt.Errorf("users_not_found")
+		}
+		return sender, nil
+	})
+}
+
+func (w botDryRunWorld) dm(t *testing.T, connectionID, senderSlackID string) services.BotDryRunOutcome {
+	t.Helper()
+	outcome, err := w.api.dryRunSlackDM(context.Background(), connectionID, senderSlackID, "D0DMCHAN01", "what changed today?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return outcome
+}
+
+func dmSender(email string) services.SlackDMSender {
+	return services.SlackDMSender{Name: strings.Split(email, "@")[0], Email: email, OneToOne: true}
+}
+
+func requireMode(t *testing.T, outcome services.BotDryRunOutcome, userID, mode string) {
+	t.Helper()
+	if !outcome.Admitted {
+		t.Fatalf("DM was refused: %q replies=%q", outcome.Reason, outcome.Replies)
+	}
+	if outcome.UserID != userID || outcome.Mode != mode {
+		t.Fatalf("DM runs as %q in %q mode, want %q in %q", outcome.UserID, outcome.Mode, userID, mode)
+	}
+}
+
+// The crew's owner DMs its bot: their own full chat. A reader of the crew
+// gets Run mode. A channel mention of the same bot is always Run mode.
+func TestBotDryRunCrewDMRunsAsTheSender(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	app := w.createApp(t, "SDE", crewRunModeOwnerRoot, "work")
+	w.dmSenders(t, app, map[string]services.SlackDMSender{"U0OWNER": dmSender(dryRunOwnerEmail), "U0READER": dmSender("reader@example.com")})
+
+	owner := w.dm(t, app.ID, "U0OWNER")
+	requireMode(t, owner, "owner", "full")
+	if key, _ := owner.Request["agent_profile_conversation_key"].(string); !strings.HasPrefix(key, "crew-aaa:slack-") {
+		t.Fatalf("DM ran in %q, want its own chat of the crew", key)
+	}
+	// Attachments are checked as the sender, as in their web chat: the
+	// crew's owner-only workflow keeps a reader out until it is removed.
+	if outcome := w.dm(t, app.ID, "U0READER"); outcome.Admitted {
+		t.Fatalf("a reader's DM got the owner's private attachment: %+v", outcome)
+	}
+	w.mock.mu.Lock()
+	var runtime map[string]any
+	if err := json.Unmarshal([]byte(w.mock.files[crewRunModeOwnerRoot+"/workflow.json"]), &runtime); err != nil {
+		w.mock.mu.Unlock()
+		t.Fatal(err)
+	}
+	runtime["workflow_context_paths"] = []string{"Workflow/shared"}
+	raw, _ := json.Marshal(runtime)
+	w.mock.files[crewRunModeOwnerRoot+"/workflow.json"] = string(raw)
+	w.mock.mu.Unlock()
+	requireMode(t, w.dm(t, app.ID, "U0READER"), "reader", "run")
+
+	channel := w.mention(t, app.ID, "C0CREWCHAN1")
+	requireAdmitted(t, channel, "crew-aaa")
+	if channel.Mode != "run" {
+		t.Fatalf("channel mention runs in %q mode, want run", channel.Mode)
+	}
+}
+
+// A workflow's own bot: the owner gets Builder, a reader Run mode, and
+// someone without access to the workflow is refused.
+func TestBotDryRunWorkflowDMRunsAsTheSender(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	app := w.createApp(t, "Shared-WF", "Workflow/shared", "")
+	w.dmSenders(t, app, map[string]services.SlackDMSender{"U0OWNER": dmSender(dryRunOwnerEmail), "U0READER": dmSender("reader@example.com"), "U0STRANGER": dmSender("stranger@example.com")})
+
+	requireMode(t, w.dm(t, app.ID, "U0OWNER"), "owner", "full")
+	requireMode(t, w.dm(t, app.ID, "U0READER"), "reader", "run")
+	if outcome := w.dm(t, app.ID, "U0STRANGER"); outcome.Admitted {
+		t.Fatalf("a user without workflow access got a turn: %+v", outcome)
+	}
+}
+
+// Nobody is run as a user unless Slack proves a 1:1 DM with a full member
+// whose email names exactly one enabled account; the shared bot takes no DMs.
+func TestBotDryRunDMRefusals(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	app := w.createApp(t, "SDE", crewRunModeOwnerRoot, "work")
+	notOneToOne := dmSender(dryRunOwnerEmail)
+	notOneToOne.OneToOne = false
+	guest := dmSender(dryRunOwnerEmail)
+	guest.Guest = true
+	external := dmSender(dryRunOwnerEmail)
+	external.External = true
+	w.dmSenders(t, app, map[string]services.SlackDMSender{
+		"U0GROUP": notOneToOne, "U0GUEST": guest, "U0EXTERNAL": external,
+		"U0UNKNOWN": dmSender("nobody@example.com"), "U0TWIN": dmSender("twin@example.com"), "U0GONE": dmSender("gone@example.com"),
+	})
+	for _, sender := range []string{"U0GROUP", "U0GUEST", "U0EXTERNAL", "U0UNKNOWN", "U0TWIN", "U0GONE", "U0NOTINSLACK"} {
+		if outcome := w.dm(t, app.ID, sender); outcome.Admitted || len(outcome.Replies) == 0 {
+			t.Fatalf("%s: DM ran or got no explanation: %+v", sender, outcome)
+		}
+	}
+
+	shared := w.createApp(t, "Shared", "", "")
+	if err := w.slack.SetDefaultSlackConnection(context.Background(), shared.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.dmSenders(t, shared, map[string]services.SlackDMSender{"U0OWNER": dmSender(dryRunOwnerEmail)})
+	if outcome := w.dm(t, shared.ID, "U0OWNER"); outcome.Admitted {
+		t.Fatalf("the shared bot ran a DM: %+v", outcome)
 	}
 }

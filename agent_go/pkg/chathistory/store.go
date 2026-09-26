@@ -120,4 +120,7 @@ type BotMetadata struct {
 	UserID      string `json:"user_id,omitempty"`
 	UserName    string `json:"user_name,omitempty"`
 	UserEmail   string `json:"user_email,omitempty"`
+	// DirectMessage: a 1:1 Slack DM whose sender the Slack service mapped
+	// to an AgentWorks account; its turns run as that account.
+	DirectMessage bool `json:"direct_message,omitempty"`
 }

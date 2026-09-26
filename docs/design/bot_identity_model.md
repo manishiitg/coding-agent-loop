@@ -1,6 +1,6 @@
 # Bots: who a turn runs as
 
-Status: crew-in-Slack gaps shipped 2026-09-26; Slack DMs as the sender decided, not built.
+Status: built 2026-09-26 — crew-in-Slack gaps and 1:1 Slack DMs as the sender (dry-run tested; not yet live-verified).
 Decisions (user, 2026-09-26): identity by email match; the prompt names the sender with their email; a DM runs as the user only when it is a true 1:1 DM. Related: `bot_destination_scope.md`.
 
 ## Rule
@@ -39,10 +39,10 @@ namespace (`ResourceOwnerID`), and a workflow route runs as a synthetic
 `bot-…` principal. The sender is only an audit actor and an email allow/block
 list.
 
-**Slack DMs do not work at all.** The app subscribes to `app_mention`,
-`message.channels` and `message.groups`, not `message.im`, and
-`handleSocketModeMessage` drops every top-level message that isn't a thread
-reply. A DM never reaches a turn.
+**Slack DMs did not work at all** before this change: the app subscribed to
+`app_mention`, `message.channels` and `message.groups` only, and
+`handleSocketModeMessage` dropped every top-level message that wasn't a
+thread reply.
 
 ## Slack DMs as the sender
 
@@ -76,7 +76,11 @@ mode) when the bot has one, or the bot says who it can't identify.
 
 ### Principal
 
-A DM turn uses a new provider, `bot_user`: `UserID` = the mapped user,
+Built as: `services/slack_dm.go` (ingress proof: `directMessage`,
+`handleSlackDirectMessage`), `slack_dm.go` (account lookup
+`slackDMUserForEmail`, `revalidateSlackDMPrincipal`), the DM flag carried in
+the thread's bot metadata (`_trusted_slack_dm` on each request), and
+`applyBotRouteClaims`. A DM turn uses a new provider, `bot_user`: `UserID` = the mapped user,
 `Provider` = `bot_user`, and the Slack user id as the audit actor. It is
 revalidated at the query boundary and on every tool call, like `bot_route`:
 
@@ -91,11 +95,15 @@ the next tool call.
 
 ### Chats
 
-Each DM thread (or the DM itself, when the user doesn't thread) is its own
-chat in the crew, as channel threads are today
-(`slackThreadConversationKey`). It shows in the user's own chat list, owned by
-the user, not the crew owner. In a workflow, the DM runs in that user's own
-Builder or Run chat.
+Each top-level DM starts a thread, and each thread is its own chat in the
+crew, as channel threads are (`slackThreadConversationKey`). The session runs
+as the sender. Deviation from the plan: the chat is registered in the crew
+owner's conversation list (where the crew's conversations live), not the
+sender's; moving reader DM chats to the reader's own list is a follow-up. In a
+workflow, the DM runs as a Builder or Run chat of that user.
+
+Attachments are checked as the sender, as in their web chat: a crew with an
+owner-only attachment refuses a reader's DM until the attachment is removed.
 
 ### Setup
 

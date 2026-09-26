@@ -220,15 +220,19 @@ type BotIncomingMessage struct {
 	MessageTS     string // platform timestamp of the incoming message (used to add/remove reactions)
 	Timestamp     time.Time
 	IsThreadReply bool
-	IsMention     bool            // true when the bot was @mentioned (vs plain thread reply)
+	IsMention     bool // true when the bot was @mentioned (vs plain thread reply)
 	// senderNoted: withBotSender already put the sender line on Text.
 	senderNoted bool
+	// DirectMessage: a 1:1 Slack DM, set only by the Slack service after it
+	// proved the sender (slack_dm.go) and put their account in
+	// WorkspaceUserID. The turn runs as that account, not as the route.
+	DirectMessage bool
 	// MentionsOtherUser is true when the message tags another platform user
 	// but not the bot (Slack <@U...> of someone else). Thread replies with
 	// this set are addressed to a colleague: the bot stays silent no matter
 	// how many people are in the thread.
 	MentionsOtherUser bool
-	ThreadHistory []ThreadMessage // populated when tagged in existing thread
+	ThreadHistory     []ThreadMessage // populated when tagged in existing thread
 	// PresetWorkflow, when set, overrides channel-based workflow routing
 	// for this message. WhatsApp uses it after its @<slug> router has
 	// selected a workflow explicitly.
@@ -292,6 +296,8 @@ func botMetaFromMsg(msg BotIncomingMessage, threadID ThreadID) *chathistory.BotM
 		UserID:    msg.UserID,
 		UserName:  msg.UserName,
 		UserEmail: msg.UserEmail,
+		// Only the Slack service sets DirectMessage, after proving the sender.
+		DirectMessage: msg.DirectMessage && msg.Platform == "slack",
 	}
 }
 
@@ -317,6 +323,11 @@ func applyBotQueryRequestMetadata(req map[string]interface{}, meta *chathistory.
 	}
 	if value := strings.TrimSpace(meta.UserEmail); value != "" {
 		req["bot_user_email"] = value
+	}
+	if meta.DirectMessage && meta.Platform == "slack" {
+		// Internal-only key: the server's bot context reads it, and the
+		// public query contract has no such field.
+		req["_trusted_slack_dm"] = true
 	}
 }
 
@@ -939,13 +950,18 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			}
 			return false
 		}
-		msg.WorkspaceUserID = workspaceUserID
+		// The owner holds the crew's conversations. A channel turn also
+		// runs as the owner (in Run mode); a 1:1 DM runs as its sender,
+		// whom the Slack service already mapped into WorkspaceUserID.
+		if !msg.DirectMessage {
+			msg.WorkspaceUserID = workspaceUserID
+		}
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
 		}
 		if active != nil && !m.routeChangeKeepsSession(*msg, active) {
 			active.mu.Lock()
-			active.UserID = workspaceUserID
+			active.UserID = strings.TrimSpace(msg.WorkspaceUserID)
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
 			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
@@ -976,9 +992,10 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 	}
 	botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
 	userEmail := ""
-	if strings.EqualFold(strings.TrimSpace(msg.Platform), "whatsapp") {
-		// WhatsApp is paired to a workspace account. Its saved slug identifies
-		// a destination, not an independent permission grant.
+	if strings.EqualFold(strings.TrimSpace(msg.Platform), "whatsapp") || msg.DirectMessage {
+		// WhatsApp is paired to a workspace account, and a 1:1 Slack DM is
+		// mapped to its sender's account. The route identifies a
+		// destination, not an independent permission grant.
 		botUserID = strings.TrimSpace(msg.WorkspaceUserID)
 		userEmail = strings.TrimSpace(msg.UserEmail)
 	}

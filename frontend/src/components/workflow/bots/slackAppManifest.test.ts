@@ -1,19 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
-  SLACK_BOT_EVENTS, SLACK_REQUIRED_SCOPE_GROUPS, SLACK_REQUIRED_SCOPES,
+  SLACK_BOT_EVENTS, SLACK_DM_EVENTS, SLACK_DM_SCOPES, SLACK_REQUIRED_SCOPE_GROUPS, SLACK_REQUIRED_SCOPES,
   buildSlackAppManifest, slackAppManifestJSON, slackBotDisplayName,
 } from './slackAppManifest'
 
 describe('Slack app manifest', () => {
   it('takes scopes and events from the permissions checklist', () => {
     const manifest = buildSlackAppManifest()
-    expect(manifest.oauth_config.scopes.bot).toEqual(SLACK_REQUIRED_SCOPE_GROUPS.flatMap(group => group.scopes))
+    expect(manifest.oauth_config.scopes.bot).toEqual([...SLACK_REQUIRED_SCOPE_GROUPS.flatMap(group => group.scopes), ...SLACK_DM_SCOPES])
     expect(manifest.oauth_config.scopes.bot).toEqual([
       'app_mentions:read', 'channels:history', 'groups:history', 'channels:read', 'groups:read',
-      'chat:write', 'reactions:write', 'users:read', 'users:read.email',
+      'chat:write', 'reactions:write', 'users:read', 'users:read.email', 'im:history', 'im:read',
     ])
-    expect(manifest.settings.event_subscriptions.bot_events).toEqual([...SLACK_BOT_EVENTS])
-    expect(manifest.settings.event_subscriptions.bot_events).toEqual(['app_mention', 'message.channels', 'message.groups'])
+    expect(manifest.settings.event_subscriptions.bot_events).toEqual([...SLACK_BOT_EVENTS, ...SLACK_DM_EVENTS])
+    expect(manifest.settings.event_subscriptions.bot_events).toEqual(['app_mention', 'message.channels', 'message.groups', 'message.im'])
+  })
+
+  it('opens the Messages tab so people can DM the app', () => {
+    expect(buildSlackAppManifest().features.app_home).toEqual({ home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false })
   })
 
   it('enables Socket Mode and interactivity, disables org deploy and token rotation', () => {
@@ -37,7 +41,7 @@ describe('Slack app manifest', () => {
 
   it('adds only known optional scopes, once', () => {
     const scopes = buildSlackAppManifest({ optionalScopes: ['files:read', 'files:read', 'admin', 'chat:write'] }).oauth_config.scopes.bot
-    expect(scopes).toEqual([...SLACK_REQUIRED_SCOPES, 'files:read'])
+    expect(scopes).toEqual([...SLACK_REQUIRED_SCOPES, ...SLACK_DM_SCOPES, 'files:read'])
   })
 
   it('serialises to valid JSON with exactly the manifest fields', () => {

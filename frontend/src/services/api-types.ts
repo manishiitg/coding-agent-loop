@@ -1146,6 +1146,8 @@ export interface SlackTestResponse {
 // (POST /connections/{id}/dry-run).
 export interface SlackDryRunResponse {
   admitted: boolean
+  /** How an admitted turn runs: channels always "run"; a 1:1 DM in its sender's own mode. */
+  mode?: 'full' | 'run'
   reason?: string
   replies?: string[]
   destination?: string

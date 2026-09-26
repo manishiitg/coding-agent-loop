@@ -51,6 +51,14 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 		claims.Provider = "bot_owner"
 		return
 	}
+	if strings.TrimSpace(platform) == "slack" {
+		// A 1:1 DM whose sender the Slack service mapped to this account
+		// (slack_dm.go): the turn runs as that user, not as the route.
+		if dm, _ := reqMap["_trusted_slack_dm"].(bool); dm {
+			claims.Provider = slackDMProvider
+			return
+		}
+	}
 	grant, _ := reqMap["bot_route_grant"].(string)
 	grant = services.NormalizeBotRouteGrant(grant, "")
 	if strings.TrimSpace(platform) != "slack" || stringFromRequestMap(reqMap, "bot_route_grant") == "" {

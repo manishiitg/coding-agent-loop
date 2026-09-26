@@ -79,7 +79,7 @@ function questionsFor(topic: Exclude<IntegrationHowToTopic, 'Gmail'>, scopeNoun:
       },
       {
         title: 'Which permissions and events does the bot need?',
-        answer: <>Under <b>Bot Token Scopes</b>, add <code>app_mentions:read</code>, <code>channels:history</code>, <code>groups:history</code>, <code>channels:read</code>, <code>groups:read</code>, <code>chat:write</code>, <code>reactions:write</code>, <code>users:read</code>, and <code>users:read.email</code>. Subscribe to <code>app_mention</code>, <code>message.channels</code>, and <code>message.groups</code>. The full checklist is in this tab.</>,
+        answer: <>Under <b>Bot Token Scopes</b>, add <code>app_mentions:read</code>, <code>channels:history</code>, <code>groups:history</code>, <code>channels:read</code>, <code>groups:read</code>, <code>chat:write</code>, <code>reactions:write</code>, <code>users:read</code>, and <code>users:read.email</code>. Subscribe to <code>app_mention</code>, <code>message.channels</code>, and <code>message.groups</code>. For direct messages with the bot, also add <code>im:history</code>, <code>im:read</code> and the <code>message.im</code> event, and turn on <b>App Home → Messages Tab</b>. The manifest sets all of this. The full checklist is in this tab.</>,
       },
       {
         title: 'How do I make the bot answer in a channel?',

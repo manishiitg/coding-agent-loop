@@ -6,7 +6,7 @@ import { Label } from '../../ui/label'
 import type { SlackTestResponse } from '../../../services/api-types'
 import {
   SLACK_APP_TOKEN_SCOPE, SLACK_BOT_EVENTS, SLACK_DEFAULT_APP_NAME, SLACK_INTERACTIVITY_REQUIRED,
-  SLACK_OPTIONAL_SCOPES, SLACK_REQUIRED_SCOPE_GROUPS, slackAppManifestJSON,
+  SLACK_DM_EVENTS, SLACK_DM_SCOPES, SLACK_OPTIONAL_SCOPES, SLACK_REQUIRED_SCOPE_GROUPS, slackAppManifestJSON,
 } from './slackAppManifest'
 
 // Shared by a workflow's own bot form and the admin's shared bot form:
@@ -40,6 +40,7 @@ export function SlackPermissionsChecklist() {
       <p><b className="text-foreground">Optional bot scopes:</b> {SLACK_OPTIONAL_SCOPES.map((item, i) => <span key={item.scope}>{i > 0 && '; '}<Code>{item.scope}</Code> to {item.purpose}</span>)}.</p>
       <p><b className="text-foreground">App-Level Token:</b> add <Code>{SLACK_APP_TOKEN_SCOPE}</Code> under <b>Basic Information → App-Level Tokens</b> for Socket Mode.</p>
       <p><b className="text-foreground">Required bot events:</b> under <b>Event Subscriptions → Subscribe to bot events</b>, add {codeList(SLACK_BOT_EVENTS)} and save. Enable Socket Mode first; leave Request URL empty.</p>
+      <p><b className="text-foreground">Direct messages (1:1 with the bot):</b> add the scopes {codeList(SLACK_DM_SCOPES)} and the event {codeList(SLACK_DM_EVENTS)}, and under <b>App Home</b> turn on the <b>Messages Tab</b> and tick <b>Allow users to send Slash commands and messages from the messages tab</b>. A DM runs with the sender's own AgentWorks permissions, matched by their Slack email; channels always run in Run mode.</p>
       {SLACK_INTERACTIVITY_REQUIRED && <p><b className="text-foreground">Interactivity:</b> turn on <b>Interactivity &amp; Shortcuts</b> so button clicks in the bot's replies reach it. With Socket Mode no Request URL is needed.</p>}
       <p>Reinstall the Slack app after changing scopes. “Save &amp; test” checks tokens and granted scopes; confirm delivery with an @mention and a plain thread reply.</p>
     </section>
@@ -116,13 +117,16 @@ export function SlackAppSetupSteps({ finalStep }: { finalStep: ReactNode }) {
           Go to <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="underline">api.slack.com/apps</a> → <b>Create New App</b> → <b>From scratch</b>. Pick a name and your workspace.
         </li>
         <li>
-          <b>OAuth &amp; Permissions</b> → <b>Bot Token Scopes</b>. Add the required scopes in the permissions card below. Add optional scopes only for features you need.
+          <b>OAuth &amp; Permissions</b> → <b>Bot Token Scopes</b>. Add the required scopes in the permissions card below, plus {codeList(SLACK_DM_SCOPES)} for direct messages. Add optional scopes only for features you need.
         </li>
         <li>
           <b>Basic Information</b> → <b>App-Level Tokens</b> → <b>Generate Token and Scopes</b>. Add <Code>connections:write</Code> and copy the <Code>xapp-</Code> <b>App Token</b>. Then enable <b>Socket Mode</b>.
         </li>
         <li>
-          <b>Event Subscriptions</b> → enable and subscribe to the bot events {codeList(SLACK_BOT_EVENTS)}. All are required; leave the Request URL empty.
+          <b>Event Subscriptions</b> → enable and subscribe to the bot events {codeList(SLACK_BOT_EVENTS)}. All are required; leave the Request URL empty. For direct messages also add {codeList(SLACK_DM_EVENTS)}.
+        </li>
+        <li>
+          For direct messages: <b>App Home</b> → turn on the <b>Messages Tab</b> and tick <b>Allow users to send Slash commands and messages from the messages tab</b>.
         </li>
         {SLACK_INTERACTIVITY_REQUIRED && <li><b>Interactivity &amp; Shortcuts</b> → turn it on. No Request URL is needed with Socket Mode.</li>}
         <li>

@@ -234,6 +234,11 @@ type SlackService struct {
 	interactionHandler BotInteractionHandler
 	botID              string
 	botUserID          string // Bot's own Slack user ID (for stripping @mentions)
+	teamID             string // The app's own Slack team; DMs as a user need the sender in it
+
+	// dmSenderLookup reads a DM sender and conversation from Slack; tests
+	// replace it (nil = the Slack API).
+	dmSenderLookup func(ctx context.Context, userID, channelID string) (SlackDMSender, error)
 
 	// Message deduplication — prevents processing the same Slack event twice
 	seenMessages   map[string]time.Time
@@ -1737,6 +1742,13 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	if s.handleConfiguredSlackTrigger(ev) {
 		return
 	}
+	// A 1:1 DM with the bot (channel_type "im"): every message, top-level or
+	// in a thread, is addressed to the bot. Group DMs ("mpim") are groups
+	// and take the channel path below.
+	if ev.ChannelType == "im" {
+		s.handleSlackDirectMessage(ev)
+		return
+	}
 
 	// Only process thread replies (not bot messages)
 	if ev.BotID != "" || ev.ThreadTimeStamp == "" || ev.ThreadTimeStamp == ev.TimeStamp {
@@ -1961,6 +1973,7 @@ func (s *SlackService) resolveBotIdentity() {
 	if err == nil {
 		s.botUserID = authResp.UserID
 		s.botID = authResp.BotID
+		s.teamID = authResp.TeamID
 		log.Printf("[SLACK_BOT] Bot user ID resolved: %s", s.botUserID)
 	}
 }
@@ -2469,7 +2482,6 @@ func (s *SlackService) resolveSlackUser(userID string) (name, email string) {
 	name = firstNonEmptyString(user.Profile.DisplayName, user.Profile.RealName, user.RealName, user.Name, userID)
 	return name, user.Profile.Email
 }
-
 
 // resolveSlackRoute routes a message that arrived on this listener: a
 // dedicated (scoped) app serves its own destination, a shared app follows

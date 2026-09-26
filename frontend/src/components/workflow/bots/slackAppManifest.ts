@@ -18,6 +18,13 @@ export const SLACK_OPTIONAL_SCOPES: ReadonlyArray<{ scope: string; purpose: stri
 
 export const SLACK_BOT_EVENTS: readonly string[] = ['app_mention', 'message.channels', 'message.groups']
 
+// 1:1 direct messages with the bot. A DM runs with the sender's own
+// AgentWorks permissions (matched by their Slack email); channels always run
+// in Run mode. Channel bots work without these, so "Save & test" reports
+// them as needed for DMs rather than failing.
+export const SLACK_DM_SCOPES: readonly string[] = ['im:history', 'im:read']
+export const SLACK_DM_EVENTS: readonly string[] = ['message.im']
+
 /** App-level token scope for Socket Mode (not part of the manifest). */
 export const SLACK_APP_TOKEN_SCOPE = 'connections:write'
 
@@ -38,7 +45,10 @@ export function slackBotDisplayName(name: string): string {
 
 export interface SlackAppManifest {
   display_information: { name: string }
-  features: { bot_user: { display_name: string; always_online: boolean } }
+  features: {
+    app_home: { home_tab_enabled: boolean; messages_tab_enabled: boolean; messages_tab_read_only_enabled: boolean }
+    bot_user: { display_name: string; always_online: boolean }
+  }
   oauth_config: { scopes: { bot: string[] } }
   settings: {
     event_subscriptions: { bot_events: string[] }
@@ -55,10 +65,14 @@ export function buildSlackAppManifest({ name, optionalScopes = [] }: { name?: st
   const extra = optionalScopes.filter(scope => allowedOptional.has(scope) && !SLACK_REQUIRED_SCOPES.includes(scope))
   return {
     display_information: { name: appName },
-    features: { bot_user: { display_name: slackBotDisplayName(appName), always_online: true } },
-    oauth_config: { scopes: { bot: [...SLACK_REQUIRED_SCOPES, ...new Set(extra)] } },
+    features: {
+      // The Messages tab is where people DM the app.
+      app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+      bot_user: { display_name: slackBotDisplayName(appName), always_online: true },
+    },
+    oauth_config: { scopes: { bot: [...SLACK_REQUIRED_SCOPES, ...SLACK_DM_SCOPES, ...new Set(extra)] } },
     settings: {
-      event_subscriptions: { bot_events: [...SLACK_BOT_EVENTS] },
+      event_subscriptions: { bot_events: [...SLACK_BOT_EVENTS, ...SLACK_DM_EVENTS] },
       ...(SLACK_INTERACTIVITY_REQUIRED ? { interactivity: { is_enabled: true } } : {}),
       org_deploy_enabled: false,
       socket_mode_enabled: true,

@@ -69,7 +69,7 @@ func (api *StreamingAPI) bindToolExecutionContextForSession(requestCtx context.C
 		// ingress) are the two principals a bot-marked session may execute
 		// under. Anything else bound here means the session changed origin
 		// underneath its tools.
-		if bound.Provider != "bot_route" && bound.Provider != "bot_owner" {
+		if bound.Provider != "bot_route" && bound.Provider != "bot_owner" && bound.Provider != slackDMProvider {
 			if _, bot := api.botExecutionForSession(authoritySession); bot {
 				return nil, fmt.Errorf("%s session origin changed; start a new turn", tool)
 			}
@@ -81,7 +81,7 @@ func (api *StreamingAPI) bindToolExecutionContextForSession(requestCtx context.C
 		ctx = context.WithValue(ctx, UserContextKey, &copy)
 		ctx = context.WithValue(ctx, common.UserIDKey, copy.UserID)
 		ctx = executor.WithSessionID(ctx, toolSession)
-		if copy.Provider == "bot_route" {
+		if copy.Provider == "bot_route" || copy.Provider == slackDMProvider {
 			validated, err := api.revalidateExecutionPrincipal(ctx, req)
 			if err != nil {
 				return nil, err

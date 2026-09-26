@@ -15,11 +15,24 @@ import (
 // passed every check. runSession ends such a session quietly.
 var ErrBotDryRunAdmitted = errors.New("bot dry run: turn admitted")
 
+// BotDryRunAdmission is the admitted outcome with the mode the turn would
+// run in; it matches ErrBotDryRunAdmitted.
+type BotDryRunAdmission struct {
+	// Mode: "full" (the principal may change the destination) or "run".
+	Mode string
+}
+
+func (a *BotDryRunAdmission) Error() string        { return ErrBotDryRunAdmitted.Error() }
+func (a *BotDryRunAdmission) Is(target error) bool { return target == ErrBotDryRunAdmitted }
+
 // BotDryRunOutcome is what a real message would have produced.
 type BotDryRunOutcome struct {
 	// Admitted: the turn passed routing, preparation, revalidation and access,
 	// and would have started.
 	Admitted bool `json:"admitted"`
+	// Mode is "full" or "run" for an admitted turn: channels always run in
+	// Run mode, a 1:1 DM in its sender's own mode.
+	Mode string `json:"mode,omitempty"`
 	// Reason is the refusal, when the turn was not admitted.
 	Reason string `json:"reason,omitempty"`
 	// Replies are the messages the bot would have posted in the thread
@@ -122,6 +135,10 @@ func (m *BotConversationManager) RunDryRun(ctx context.Context, msg BotIncomingM
 			outcome := BotDryRunOutcome{Request: result.req, UserID: result.userID, Destination: dryRunDestination(result.req)}
 			if errors.Is(result.err, ErrBotDryRunAdmitted) {
 				outcome.Admitted = true
+				var admission *BotDryRunAdmission
+				if errors.As(result.err, &admission) {
+					outcome.Mode = admission.Mode
+				}
 			} else if result.err != nil {
 				outcome.Reason = result.err.Error()
 			}

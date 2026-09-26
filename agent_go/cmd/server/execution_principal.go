@@ -25,6 +25,9 @@ type ExecutionPrincipal struct {
 // turns. Listener validation alone is insufficient for a queued turn.
 func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req QueryRequest) (context.Context, error) {
 	claims := GetUserFromContext(ctx)
+	if claims != nil && claims.Provider == slackDMProvider {
+		return api.revalidateSlackDMPrincipal(ctx, claims, req)
+	}
 	if claims == nil || claims.Provider != "bot_route" {
 		return ctx, nil
 	}

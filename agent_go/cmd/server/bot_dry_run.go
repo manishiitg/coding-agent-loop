@@ -80,14 +80,44 @@ func (api *StreamingAPI) admitBotTurn(ctx context.Context, reqMap map[string]int
 		return fmt.Errorf("handleQuery returned status %d: %w", http.StatusForbidden, err)
 	}
 	req.AgentMode = normalizeAgentMode(req.AgentMode)
-	if _, _, admitErr := api.admitQueryTarget(principalCtx, &req, GetUserIDFromContext(principalCtx), sessionID); admitErr != nil {
+	_, access, admitErr := api.admitQueryTarget(principalCtx, &req, GetUserIDFromContext(principalCtx), sessionID)
+	if admitErr != nil {
 		status := http.StatusForbidden
 		if admitErr.invalidProfile {
 			status = http.StatusBadRequest
 		}
 		return fmt.Errorf("handleQuery returned status %d: %w", status, admitErr)
 	}
-	return services.ErrBotDryRunAdmitted
+	mode := "full"
+	if readOnlyForRequest(access, req) {
+		mode = "run"
+	}
+	return &services.BotDryRunAdmission{Mode: mode}
+}
+
+// dryRunSlackDM is dryRunSlackMention for a 1:1 DM from senderSlackID: the
+// Slack service's proof of the sender (the app's own lookup, which tests
+// replace), then the same bot manager and query boundary.
+func (api *StreamingAPI) dryRunSlackDM(ctx context.Context, connectionID, senderSlackID, channelID, text string) (services.BotDryRunOutcome, error) {
+	if api == nil || api.botManager == nil {
+		return services.BotDryRunOutcome{}, fmt.Errorf("bot manager unavailable")
+	}
+	svc, err := ensureSlackService()
+	if err != nil {
+		return services.BotDryRunOutcome{}, err
+	}
+	app, err := svc.ServiceForConnection(connectionID)
+	if err != nil {
+		return services.BotDryRunOutcome{}, err
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "dry run"
+	}
+	msg, refusal := app.DryRunDirectMessage(ctx, senderSlackID, channelID, text)
+	if refusal != "" {
+		return services.BotDryRunOutcome{Reason: refusal, Replies: []string{refusal}}, nil
+	}
+	return api.botManager.RunDryRun(ctx, msg, api.admitBotTurn, botDryRunTimeout)
 }
 
 // slackConnectionDryRunHandler is POST /connections/{id}/dry-run: what a

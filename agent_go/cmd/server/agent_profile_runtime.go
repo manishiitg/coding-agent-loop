@@ -719,19 +719,24 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
-	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		var input QueryRequest
 		if len(req) > 0 {
 			input = req[0]
 		}
 		active, _ := api.getActiveSession(sessionID)
-		policy := resolveWorkflowChatPolicy(sessionID, input, active, false)
-		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", policy.Origin == "interactive" && registerWorkUIAllowed(input)); err != nil {
+		policy := resolveWorkflowChatPolicy(sessionID, input, active, readOnly)
+		// Run mode keeps the Slack read tool, as a workflow's Run chat does:
+		// a crew answering in Slack reads its own thread (a bot turn's tool
+		// is held to the channel and destination it arrived on). Changing
+		// the bot's setup needs write access in the app.
+		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", !readOnly && policy.Origin == "interactive" && registerWorkUIAllowed(input)); err != nil {
 			return err
 		}
-
-		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
-			return err
+		if !readOnly {
+			if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
+				return err
+			}
 		}
 	}
 	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {

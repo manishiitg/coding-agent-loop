@@ -2462,11 +2462,17 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 
 	// An unrouted message on an account with a default product profile runs
 	// in that profile's own conversation: its request and session id come
-	// from the server layer, and the generic thread-history/restore plumbing
-	// does not apply — the conversation already holds every prior turn.
+	// from the server layer, and the generic restore plumbing does not apply.
 	var queryReq map[string]interface{}
 	profileTurn := false
 	if msg.PresetWorkflow == nil && m.profileTurn != nil {
+		// A Slack thread starts its own chat in the crew, which has seen
+		// nothing of the thread yet: give its first turn the thread, as a
+		// workflow's first turn gets it. WhatsApp runs in the profile's
+		// main conversation, which already holds every prior turn.
+		if msg.Platform == "slack" && msg.PresetProfile != nil && msg.ResumeSessionID == "" {
+			msg.Text = m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
+		}
 		req, profileSessionID, handled, err := m.profileTurn(context.Background(), workspaceUserID, msg, threadID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Profile turn failed for thread %s: %v", threadID.Key(), err)

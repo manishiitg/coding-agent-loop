@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -249,5 +250,48 @@ func TestDefaultProfilePersistsWithTheOwner(t *testing.T) {
 	}
 	if profileID, folder := reopened.DefaultProfile(); profileID != "" || folder != "" {
 		t.Fatalf("cleared default profile = (%q, %q), want empty", profileID, folder)
+	}
+}
+
+// A crew's Slack thread is its own chat, new to the thread: its first turn
+// carries the thread's earlier messages, as a workflow's first turn does
+// (RTS 2026-09-26: the crew answered without the thread it was asked about).
+func TestSlackCrewFirstTurnGetsTheThread(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	manager.RegisterConnector(&historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", UserName: "alice", Text: "the invoice for ACME is attached, amount looks wrong"},
+			{UserID: "U-bob", UserName: "bob", Text: "@crew check this"},
+		},
+	})
+	texts := make(chan string, 1)
+	manager.SetProfileTurnFunc(func(_ context.Context, _ string, msg BotIncomingMessage, _ ThreadID) (map[string]interface{}, string, bool, error) {
+		texts <- msg.Text
+		return map[string]interface{}{"agent_profile_id": "work", "query": msg.Text}, "crew-thread-chat", true, nil
+	})
+	manager.SetStartSessionFunc(func(context.Context, map[string]interface{}, string, string, func(*events.AgentEvent)) error {
+		return nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "slack",
+		UserID:          "U-bob",
+		WorkspaceUserID: "owner",
+		ChannelID:       "C0CREW",
+		ThreadTS:        "1700000000.000100",
+		MessageTS:       "1700000000.000200",
+		Text:            "check this",
+		IsMention:       true,
+		IsThreadReply:   true,
+		PresetWorkflow:  &ChannelRoute{ProfileID: "work", ConversationKey: "crew-aaa", WorkspacePath: "_users/owner/Chats/Work/projects/alpha", WorkspaceUserID: "owner", BotGrant: "run"},
+	})
+	select {
+	case text := <-texts:
+		if !strings.Contains(text, "amount looks wrong") || !strings.Contains(text, "check this") {
+			t.Fatalf("first crew turn lacks the thread: %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile turn never built")
 	}
 }

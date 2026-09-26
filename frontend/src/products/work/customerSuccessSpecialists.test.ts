@@ -8,10 +8,17 @@ describe('Customer Success Crew templates', () => {
     for (const template of success) {
       expect(getCrewTemplate(template.id)).toBe(template)
       expect(template.files[`skills/${template.id}/SKILL.md`]).toContain('## Automation handoff')
+      expect(template.files[`skills/${template.id}/SKILL.md`]).toContain('## Fictional worked example')
+      expect(template.files[`skills/${template.id}/SKILL.md`]).toContain('## Inadequate output to reject')
+      expect(template.files[`skills/${template.id}/SKILL.md`]).toContain('does not complete setup')
       const setup = parseCrewTemplateSetupState(template.files[template.setupPath], template)
       expect(setup?.checks).toHaveLength(9)
       expect(setup?.completed_steps).toEqual([])
+      expect((setup?.checks.find(check => check.id === 'definitions')?.instructions.length ?? 0)).toBeGreaterThan(150)
       expect(template.files[template.setupGuidePath]).toContain('Source and connection choice')
     }
+    expect(success[0].files['skills/customer-onboarding-coordinator/SKILL.md']).toContain('first-report”: **pending**')
+    expect(success[1].files['skills/product-adoption-analyst/SKILL.md']).toContain('Status: **reached**')
+    expect(success[2].files['skills/customer-health-coordinator/SKILL.md']).toContain('labeled **hypothesis**')
   })
 })

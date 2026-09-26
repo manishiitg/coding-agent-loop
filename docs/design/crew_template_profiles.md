@@ -224,6 +224,8 @@ Each profile answers: **when to use it, what a first result must contain, what s
 
 ## Customer Success
 
+The three installed Customer Success skills now include a fictional input and reviewable output, a failed output, and a role-specific identity or evidence probe. Their shared example follows the account and artifact IDs in New Customer to First Value. A real customer account and owner decision are still required to complete setup.
+
 ### Customer Onboarding Coordinator (`customer-onboarding-coordinator`)
 
 - **Use case:** turn an authorized signed-customer handoff into an owned path to first value.

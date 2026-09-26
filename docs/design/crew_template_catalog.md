@@ -207,7 +207,7 @@ Tax Export keeps its own setup checklist, so a Finance Analyst can be ready for 
 
 ## Customer Success
 
-For a B2B SaaS company, the first useful post-sale journey is **new customer to first value**. Start with Customer Onboarding Coordinator and Product Adoption Analyst. Add Customer Health Coordinator when a distinct account owner needs a broader review of adoption, support and renewal context. These are reusable capabilities; one Crew may carry several when access and ownership are compatible.
+For a B2B SaaS company, the first useful post-sale journey is **new customer to first value**. Start with Customer Onboarding Coordinator and Product Adoption Analyst. Add Customer Health Coordinator when a distinct account owner needs a broader review of adoption, support and renewal context. These are reusable capabilities; one Crew may carry several when access and ownership are compatible. Each installed skill now includes a fictional source-to-result example, a failed result and a role-specific setup probe; real account evidence and owner review still complete setup.
 
 The **New Customer to First Value** Automation Playbook is an installable chat proposal. Builder inspects the signed customer handoff, purchased scope, owner, onboarding tracker, product event source, and the customer's actual first-value definition. It proposes an owned milestone register → validated adoption readout → optional health review. Its ten setup checks require real source access, identity mapping, evidence rules, Crew bindings, validators, an owner-reviewed plan, and a real manual run. Selection does not contact customers, update accounts, or enable recurrence. The [Customer Success guide](customer_success_first_value.md) defines the handoffs and evidence boundaries.
 

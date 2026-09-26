@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 51 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 55 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The seventeen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The eighteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -19,6 +19,34 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **First result:** a dated exception queue with invoice/payment IDs, amount and currency, deadline or status, prior-contact evidence, proposed owner action, and drafts awaiting review. See the [illustrative queue](../../playbooks/agentic-engineering-platform/finance/finance-operations-review/examples/billing-exception-queue.json).
 - **Setup proof:** read one authorized billing record or export, verify the customer's invoice, refund, and contact policies, identify the owner, and review one queue item against source status. Stripe or Paddle is a provider choice, never a presumed connection.
 - **Later run:** re-read current payment/refund/dispute and prior-contact state, retain stable case IDs, and avoid a second follow-up or refund proposal for a resolved case. A real refund or message requires a separate authorized action.
+
+### Invoice Chasing (`invoice-chasing`)
+
+- **Use case:** decide which genuinely overdue customer invoices need an owner-reviewed follow-up. Install this pack on Billing Operations Coordinator when the same owner and access apply.
+- **First result:** a ranked invoice queue with current open balance, due date, partial payments or credits, prior and scheduled contact, source IDs, and an unsent next reminder. The [pack skill](../../frontend/src/products/work/billingPacks.ts) contains a fictional partial-payment example.
+- **Setup proof:** bind the exact billing account and mode, cutoff, invoice terms, quiet period and contact owner; re-read one current invoice plus payments and contact history; have the owner review the queue. Its nine-check file remains pending until verified in chat.
+- **Later run:** re-read payment and provider reminder state, keep a stable invoice/contact key, and suppress duplicate or premature reminders. Sending requires a separate approved route and receipt.
+
+### Failed Payment Recovery (`failed-payment-recovery`)
+
+- **Use case:** investigate a failed subscription payment and choose the next policy-safe action.
+- **First result:** a case brief that binds subscription, invoice, attempt, amount, failure, next retry, prior dunning, owner and unsent draft when contact is permitted.
+- **Setup proof:** probe a current authorized invoice and payment attempt, confirm the provider's retry state and the customer's contact policy, and review one proposed next step with the owner. A failed event alone is insufficient evidence of current state.
+- **Later run:** deduplicate by event and invoice, re-read payment and next-attempt state, and stop after recovery or policy exhaustion. No charge retry or message is activated by the pack.
+
+### Refund Review (`refund-review`)
+
+- **Use case:** prepare a decision on a customer refund request without silently issuing money.
+- **First result:** an exact-amount record with original payment, prior and pending refunds, remaining refundable amount, requested amount, currency, reason, policy, approver and unsent customer response.
+- **Setup proof:** match an authorized request to the current payment and refund records, reproduce the remaining-balance calculation, record approval limits, and have the owner review a real proposal.
+- **Later run:** re-read provider state and prior refunds before any action, retain a stable request and idempotency key, and mark processed only from a provider receipt. Refund writes are separately approved.
+
+### Dispute Review (`dispute-review`)
+
+- **Use case:** coordinate evidence and an owner decision for a specific payment dispute before its response deadline.
+- **First result:** a sourced case brief with current dispute status, payment ID, amount, deadline, relevant evidence, missing proof, owner and next review date.
+- **Setup proof:** read the current provider dispute and linked payment, verify deadline and prior submissions, inspect one authorized evidence source, and have the owner review gaps and privacy scope.
+- **Later run:** re-read status and deadline, retain evidence versions and submission receipts, and distinguish a staged packet from actual submission or a provider-observed outcome.
 
 ### Revenue & Close Analyst (`revenue-close-analyst`)
 

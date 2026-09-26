@@ -195,6 +195,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'intake-to-payables', from: 'intake', to: 'payables', artifact_type: 'document-intake-record/v1', required: true },
   ], setupChecks: ['goal_owner', 'document_scope', 'invoice_schema', 'duplicate_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'refund-request-to-reconciled-outcome', title: 'Refund Request to Reconciled Outcome', description: 'Review a SaaS customer refund against the exact payment and policy, then verify its provider and finance outcome without an implicit money action.', version: '0.1.0', category: 'Finance', order: 3, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'refund-decision/v1' },
+    { id: 'close', agent_playbook_id: 'revenue-close-analyst', required: true, output: 'refund-reconciliation/v1' },
+  ], handoffs: [
+    { id: 'billing-to-close', from: 'billing', to: 'close', artifact_type: 'refund-decision/v1', required: true },
+  ], setupChecks: ['goal_owner', 'request_scope', 'policy_amount', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.3.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

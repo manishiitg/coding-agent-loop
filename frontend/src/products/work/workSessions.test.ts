@@ -373,6 +373,43 @@ describe('createWorkSession', () => {
       getPlannerFileContent.mockReset()
     }
   })
+
+  it('adds multiple Billing packs to one Crew without replacing identity or completed setup', async () => {
+    const files = new Map<string, string>()
+    updatePlannerFile.mockImplementation(async (path: string, content: string) => { files.set(path, content); return {} })
+    getPlannerFileContent.mockImplementation(async (path: string) => {
+      const content = files.get(path)
+      if (content === undefined) throw { response: { status: 404 } }
+      return { data: { content } }
+    })
+    try {
+      const original = await createWorkSession('Billing Desk', 'Review customer billing issues.', '💳', 'billing-operations-coordinator')
+      const baseSetupPath = `${original.workspacePath}/templates/billing-operations-coordinator/TEMPLATE_SETUP.json`
+      const baseSetup = JSON.parse(files.get(baseSetupPath)!)
+      baseSetup.completed_steps = ['identity', 'skill']
+      files.set(baseSetupPath, JSON.stringify(baseSetup))
+      const withInvoices = await installWorkSessionTemplate(original, 'invoice-chasing')
+      const withRefunds = await installWorkSessionTemplate(withInvoices, 'refund-review')
+      const product = JSON.parse(files.get(`${original.workspacePath}/product.json`)!)
+      const runtime = JSON.parse(files.get(`${original.workspacePath}/workflow.json`)!)
+      expect(withRefunds.templates).toEqual([
+        { id: 'billing-operations-coordinator', version: 1 },
+        { id: 'invoice-chasing', version: 1 },
+        { id: 'refund-review', version: 1 },
+      ])
+      expect(product.identity).toEqual({ name: 'Billing Desk', icon: '💳', role: 'Subscription billing and payment operations coordinator' })
+      expect(runtime.capabilities.selected_skills).toEqual(['billing-operations-coordinator', 'invoice-chasing', 'refund-review'])
+      expect(files.get(baseSetupPath)).toBe(JSON.stringify(baseSetup))
+      for (const id of ['invoice-chasing', 'refund-review']) {
+        const setup = JSON.parse(files.get(`${original.workspacePath}/templates/${id}/TEMPLATE_SETUP.json`)!)
+        expect(setup.completed_steps).toEqual([])
+        expect(setup.checks).toHaveLength(9)
+      }
+    } finally {
+      updatePlannerFile.mockReset().mockResolvedValue({})
+      getPlannerFileContent.mockReset()
+    }
+  })
 })
 
 describe('deleteWorkSession', () => {

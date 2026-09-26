@@ -592,6 +592,41 @@ func TestCreateCrewProjectAppliesOperationsTemplateOnBuilderAction(t *testing.T)
 	}
 }
 
+func TestCreateCrewProjectAppliesBillingCapabilityPackOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"invoice-chasing", "failed-payment-recovery", "refund-review", "dispute-review"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Billing Operator",
+				Role: "Billing operations", Purpose: "Review a sourced billing case",
+				TemplateID: templateID, StepInstruction: "Return a source-linked decision for review.",
+				IdempotencyKey: "billing-pack-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Billing pack lacks %s", relative)
+				}
+			}
+			var setup map[string]interface{}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			completed, ok := setup["completed_steps"].([]interface{})
+			if !ok || len(completed) != 0 {
+				t.Fatalf("Billing pack setup unexpectedly completed: %+v", setup)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesMarketingTemplateOnBuilderAction(t *testing.T) {
 	for _, templateID := range []string{"competitor-intelligence-analyst", "campaign-performance-analyst", "growth-experiment-planner"} {
 		t.Run(templateID, func(t *testing.T) {

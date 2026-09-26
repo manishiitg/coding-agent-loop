@@ -54,7 +54,23 @@ function visit(node) {
   ts.forEachChild(node, visit)
 }
 visit(source)
-if (templates.length !== 5) throw new Error(`Expected five Finance Crew templates, found ${templates.length}`)
+if (templates.length !== 5) throw new Error(`Expected five core Finance Crew templates, found ${templates.length}`)
+
+const packSource = fs.readFileSync(path.join(frontendRoot, 'src/products/work/billingPacks.ts'), 'utf8')
+const compiledPacks = ts.transpileModule(packSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
+const { billingPacks } = await import('data:text/javascript;base64,' + Buffer.from(compiledPacks).toString('base64'))
+if (billingPacks.length !== 4) throw new Error(`Expected four Billing capability packs, found ${billingPacks.length}`)
+for (const pack of billingPacks) {
+  const setup = JSON.parse(pack.files[pack.setupPath])
+  if (setup.template_id !== pack.id || setup.template_version !== pack.version || setup.checks.length !== 9 || setup.completed_steps.length !== 0) {
+    throw new Error(`Invalid Billing pack setup for ${pack.id}`)
+  }
+  if (templates.some(item => item.id === pack.id)) throw new Error(`Duplicate Finance template ${pack.id}`)
+  templates.push({
+    id: pack.id, version: pack.version, name: pack.name, role: pack.role, purpose: pack.purpose,
+    selected_skills: pack.selectedSkills, files: pack.files,
+  })
+}
 
 const destination = path.join(repoRoot, 'playbooks/crew-agents/finance/catalog.json')
 const content = `${JSON.stringify({ schema_version: 1, agents: templates }, null, 2)}\n`

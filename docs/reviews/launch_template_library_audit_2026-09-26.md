@@ -10,7 +10,7 @@ Date: 2026-09-26. Scope: authored Crew and Automation Playbook library in this c
 | Reusable single-Crew setup | 63 generated Crew records with selected skill and pending chat checklist | Available locally; no customer setup is implied. |
 | Multi-Crew proposal and typed handoffs | 25 locally installable multi-Crew Playbooks inside 47 total packages; 30 contract suites pass `python3 playbooks/scripts/validate_playbooks.py` | Authored and mechanically checked. Builder must still insert blocking validation in an actual Workflow. |
 | Website Growth from proposal to measured result | Website Growth Loop v0.5.0, approved page, ship, distribution and traffic examples | Fictional complete route; source truth and a real site run remain unproved. |
-| Focused SEO review | SEO Intelligence v0.2.0, SEO Analyst → Search Opportunity Mapper, dated issue-to-question artifacts and rejected publication claim | Fictional typed route; real page/source and owner review remain unproved. |
+| Focused SEO review | SEO Intelligence v0.2.0, SEO Analyst → Search Opportunity Mapper, dated issue-to-question artifacts and rejected publication claim; mocked installer test copies its ten-check setup and validator | Fictional typed route; real Builder run, page/source and owner review remain unproved. |
 | SaaS finance collections, payables and refunds | Finance Operations Review, Subscription Receivable to Verified Outcome, Invoice Intake to Reviewed Payable, Refund Request to Reconciled Outcome | Exact-object fictional contracts; actual provider, bank and ledger integration remains customer-specific. |
 | Shopify operator journeys | Seven Shopify Crews and seven Automation Playbooks, with source and rejected examples | Fictional contracts; no live merchant run is proved. |
 | Production availability | Current branch is not the planned final Dominion deployment | Pending by user direction: deploy at the end. |
@@ -26,7 +26,7 @@ These are prioritized content gaps, not proof that the remaining skills are comp
 
 ## Legacy Playbooks still in the catalog
 
-The other **22 of 47** installable Playbook packages have no `agent_slots`, `SETUP.json`, or executable handoff suite. They remain Workflow guides in the same catalog; they are not yet equivalent to the 25 chat-led multi-Crew proposals. The Playbook picker now labels the two kinds separately and states that Workflow guides have no predefined Crew team or tracked setup checklist. This count excludes the example package under `playbooks/templates/`.
+The other **22 of 47** installable Playbook packages have no `agent_slots`, `SETUP.json`, or executable handoff suite. They remain Workflow guides in the same catalog; they are not yet equivalent to the 25 chat-led multi-Crew proposals. The Playbook picker now labels the two kinds separately and states that Workflow guides have no predefined Crew team or tracked setup checklist; an installer test confirms this for Basic Browser Setup. This count excludes the example package under `playbooks/templates/`.
 
 | Area | Packages needing a launch decision or deeper route |
 | --- | --- |

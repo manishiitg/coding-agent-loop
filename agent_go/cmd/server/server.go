@@ -624,6 +624,8 @@ type StreamingAPI struct {
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
 	workshopChatSessions sync.Map
+	// reportRunSessions: live window.report.run MCP bridge sessions (report_run.go).
+	reportRunSessions sync.Map
 
 	// Cron scheduler service for scheduled workflow executions
 	scheduler           *SchedulerService
@@ -2767,6 +2769,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
+	apiRouter.HandleFunc("/workflow/report-preview/run", api.handleReportRun).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 
 	// Generic AgentWorks chat defaults (skills, servers, secrets, browser).

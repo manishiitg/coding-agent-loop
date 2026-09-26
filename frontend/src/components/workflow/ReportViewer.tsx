@@ -68,6 +68,18 @@ async function readWorkspaceText(filepath: string): Promise<string | null> {
   }
 }
 
+// The endpoint answers a failed script with {error, stderr}; surface both so
+// the report (and whoever reads its error box) sees why, not just "422".
+function reportRunError(error: unknown): string {
+  const data = (error as { response?: { data?: unknown } })?.response?.data
+  if (data && typeof data === 'object') {
+    const body = data as { error?: string; stderr?: string }
+    if (body.error) return body.stderr ? `${body.error}\n${body.stderr}` : body.error
+  }
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  return error instanceof Error ? error.message : 'Script failed.'
+}
+
 function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi['sendChatMessage']): ReportDataApi {
   return useMemo(() => {
     const getText = async (path: string): Promise<string | null> => {
@@ -142,6 +154,14 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
         const response = await agentApi.updateReportFields(`${workspacePath}/db/db.sqlite`, table, rowId, fields)
         if (!response.success || !response.data) throw new Error(response.error || 'Update failed.')
         return { oldValues: response.data.old_values, newValues: response.data.new_values }
+      },
+      run: async (path: string, args?: unknown) => {
+        try {
+          const response = await api.post('/api/workflow/report-preview/run', { workspace: workspacePath, path, args: args ?? {} })
+          return response.data.data
+        } catch (error) {
+          throw new Error(reportRunError(error))
+        }
       },
     }
   }, [workspacePath, sendChatMessage])

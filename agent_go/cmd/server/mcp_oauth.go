@@ -28,7 +28,8 @@ var mcpOAuthScopes = []string{"workflows:read", "files:read", "runs:execute", "c
 func mcpOAuthURLs() (origin, resource string, ok bool) {
 	origin = strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_URL")), "/")
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !cliOAuthLoopback(u.Hostname()))) {
 		return "", "", false
 	}
 	return origin, origin + externalMCPPath, true
@@ -45,7 +46,7 @@ func mcpOAuthChallenge(w http.ResponseWriter) {
 func (api *StreamingAPI) handleMCPOAuthProtectedResource(w http.ResponseWriter, r *http.Request) {
 	origin, resource, ok := mcpOAuthURLs()
 	if !ok {
-		http.Error(w, "MCP OAuth requires a public HTTPS URL", http.StatusServiceUnavailable)
+		http.Error(w, "MCP OAuth requires a public HTTPS URL or configured loopback URL", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -59,7 +60,7 @@ func (api *StreamingAPI) handleMCPOAuthProtectedResource(w http.ResponseWriter, 
 func (api *StreamingAPI) handleMCPOAuthMetadata(w http.ResponseWriter, r *http.Request) {
 	origin, _, ok := mcpOAuthURLs()
 	if !ok {
-		http.Error(w, "MCP OAuth requires a public HTTPS URL", http.StatusServiceUnavailable)
+		http.Error(w, "MCP OAuth requires a public HTTPS URL or configured loopback URL", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

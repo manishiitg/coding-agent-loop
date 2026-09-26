@@ -1,7 +1,7 @@
-import { AskAIButton } from './AskAIButton'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
+import type { ReactNode } from 'react'
 
-interface WorkspaceViewActionsProps {
+export interface WorkspaceViewActionsProps {
   workspacePath: string | null
   message: string
   onRefresh: () => void | Promise<void>
@@ -9,25 +9,25 @@ interface WorkspaceViewActionsProps {
   refreshLabel?: string
   /** Ask AI routing override (Crew panes route to the project chat). */
   onAsk?: (message: string) => void | Promise<void>
+  walkthrough?: ReactNode
 }
 
 /**
- * The standard action pair shown in a right-side workspace view header.
- * Order is a product rule: Ask AI always left, refresh always right — every
- * right-pane header (report, files, inspectors, schedules, triggers) follows
- * it so the pair is predictable wherever it appears.
+ * The standard actions shown in a right-side workspace view header. Order is
+ * a product rule: walkthrough always left, refresh always right. The header
+ * reads the Ask AI config (workspacePath, message, onAsk) off this element's
+ * props and carries it into the walkthrough popup — Ask AI never renders in
+ * the row itself.
  */
 export function WorkspaceViewActions({
-  workspacePath,
-  message,
   onRefresh,
   refreshing = false,
   refreshLabel = 'Refresh view',
-  onAsk,
+  walkthrough,
 }: WorkspaceViewActionsProps) {
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <AskAIButton workspacePath={workspacePath} message={message} iconOnly onAsk={onAsk} />
+      {walkthrough}
       <WorkspaceViewIconButton label={refreshLabel} onClick={onRefresh} disabled={refreshing} spinning={refreshing} />
     </div>
   )

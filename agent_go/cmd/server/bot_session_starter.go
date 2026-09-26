@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -51,6 +50,14 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 		// tool boundary admits them without Slack's channel revalidation.
 		claims.Provider = "bot_owner"
 		return
+	}
+	if strings.TrimSpace(platform) == "slack" {
+		// A 1:1 DM whose sender the Slack service mapped to this account
+		// (slack_dm.go): the turn runs as that user, not as the route.
+		if dm, _ := reqMap["_trusted_slack_dm"].(bool); dm {
+			claims.Provider = slackDMProvider
+			return
+		}
 	}
 	grant, _ := reqMap["bot_route_grant"].(string)
 	grant = services.NormalizeBotRouteGrant(grant, "")
@@ -98,8 +105,10 @@ func botRouteProfileAccessForRequest(claims *UserClaims, req QueryRequest) (Work
 	if strings.TrimSpace(claims.BotRouteWorkflowID) != "" {
 		return WorkflowAccessNone, true
 	}
+	// A crew route saved before paths were made physical holds the logical
+	// form; the turn runs in the physical folder.
 	if strings.TrimSpace(claims.BotRouteWorkspacePath) == "" ||
-		filepath.Clean(claims.BotRouteWorkspacePath) != filepath.Clean(strings.TrimSpace(req.SelectedFolder)) {
+		!workspacePathsMatchForUser(claims.UserID, claims.BotRouteWorkspacePath, req.SelectedFolder) {
 		return WorkflowAccessNone, true
 	}
 	if strings.EqualFold(strings.TrimSpace(claims.BotRouteGrant), "owner") {
@@ -168,9 +177,8 @@ func botWorkflowAccessClaims(userID, userEmail string, route services.ChannelRou
 func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID string, route services.ChannelRoute) (bool, error) {
 	if strings.TrimSpace(route.ProfileID) != "" {
 		// Crew slugs are product-conversation routes, not workflow manifests.
-		// Resolve the project under the paired owner's workspace on every use
-		// so a deleted project or a slug pointing at another user's folder
-		// cannot continue to authorize WhatsApp messages.
+		// Resolve the project on every use so a deleted project, or a slug
+		// whose folder no longer holds that crew, stops authorizing messages.
 		if !strings.EqualFold(strings.TrimSpace(route.ProfileID), "work") ||
 			strings.TrimSpace(route.WorkflowID) != "" ||
 			strings.TrimSpace(route.ConversationKey) == "" ||
@@ -181,7 +189,12 @@ func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID
 		if err != nil {
 			return false, err
 		}
-		binding, err := resolveProductConversationBinding(ctx, strings.TrimSpace(userID), profile, route.ConversationKey)
+		if !userAllowedProduct(botWorkflowAccessClaims(strings.TrimSpace(userID), "", route), profile.Product) {
+			return false, nil
+		}
+		// Crews are read-only for everyone but their owner: resolve the
+		// project under whichever owner holds it, as the web chat does.
+		binding, _, err := resolveConversationBindingForUser(ctx, strings.TrimSpace(userID), profile, route.ConversationKey)
 		if err != nil {
 			return false, nil
 		}
@@ -467,7 +480,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 
 // botWorkflowTurn is the workflow adapter to the application-owned request
 // builder. Connector code supplies only normalized text, target and thread.
-func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, route services.ChannelRoute, thread services.ThreadID) (map[string]interface{}, error) {
+func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, route services.ChannelRoute, thread services.ThreadID, dmUserID string) (map[string]interface{}, error) {
 	manifest, found, err := ReadWorkflowManifest(ctx, route.WorkspacePath)
 	if err != nil {
 		return nil, err
@@ -478,19 +491,45 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	if api.scheduler == nil {
 		return nil, fmt.Errorf("shared conversation builder unavailable")
 	}
+	// A channel turn runs as the route's principal; a 1:1 DM as its sender.
+	// Either way the model and its credentials come from the workflow's own
+	// LLM settings (applyLLMAndSecretsToReqMap), so who asks never changes
+	// which account pays; the cost ledger records the sender as the user.
 	principalID := services.BotPrincipalIDForRoute(thread.Platform, route)
+	if strings.TrimSpace(dmUserID) != "" {
+		principalID = strings.TrimSpace(dmUserID)
+	}
 	req := api.scheduler.buildWorkshopRequest(ctx, &ScheduleContext{WorkspacePath: route.WorkspacePath, WorkflowID: route.WorkflowID, WorkflowLabel: manifest.Label, OwnerUserID: principalID, Capabilities: manifest.Capabilities, Schedule: WorkflowSchedule{Name: manifest.Label}, TriggerSource: "bot:" + thread.Platform})
 	req["query"] = query
-	req["bot_platform"] = thread.Platform
-	req["bot_channel_id"] = thread.ChannelID
-	req["bot_thread_ts"] = thread.ThreadTS
-	if thread.ConnectionID != "" {
-		req["bot_connection_id"] = thread.ConnectionID
-	}
+	services.ApplyBotThreadFields(req, thread.Platform, thread)
 	req["bot_route_grant"] = route.BotGrant
 	req["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
 	req["execution_options"].(map[string]interface{})["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
 	req["bot_send_full_details"] = route.SendFullDetails
 	delete(req, "disable_live_input_delivery")
 	return req, nil
+}
+
+// userWorkflowChat is the session a user's web Builder restores for the
+// workflow (handleGetWorkflowBuilderSession: their live Builder session,
+// else their latest saved Builder conversation), so a DM continues it.
+func (api *StreamingAPI) userWorkflowChat(ctx context.Context, userID string, route services.ChannelRoute) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ""
+	}
+	userCtx := internalBotRequestContext(ctx, userID)
+	workspacePath := strings.Trim(strings.TrimSpace(route.WorkspacePath), "/")
+	if live := api.findLiveWorkflowBuilderSession(userCtx, route.WorkflowID, workspacePath); live != nil {
+		return live.SessionID
+	}
+	restored, err := api.restoreLatestBuilderConversation(userCtx, route.WorkflowID, workspacePath)
+	if err != nil {
+		log.Printf("[BOT_ACCESS] user %s workflow chat lookup for %s: %v", userID, route.WorkflowID, err)
+		return ""
+	}
+	if restored == nil {
+		return ""
+	}
+	return restored.SessionID
 }

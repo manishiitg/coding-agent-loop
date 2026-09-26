@@ -364,7 +364,7 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                 </Card>
               )}
 
-              <GmailSetupGuide />
+              <GmailSetupGuide backend={gmailConfig.auth.backend} />
 
                 {gmailOAuthClientError && <StatusBanner tone="error">{gmailOAuthClientError}</StatusBanner>}
                 {newClientParseError && <StatusBanner tone="error">{newClientParseError}</StatusBanner>}

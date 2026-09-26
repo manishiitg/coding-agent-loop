@@ -153,6 +153,45 @@ func workspacePathExists(ctx context.Context, folderPath string) bool {
 // readFileFromWorkspace reads a file from the workspace API and returns its content as a string
 // Returns (content, true, nil) if file exists, (empty, false, nil) if file doesn't exist (404), or (empty, false, error) on error
 func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, error) {
+	return readFileFromWorkspaceQuery(ctx, filePath, "")
+}
+
+// readConversationTailFromWorkspace reads a chat conversation with only its
+// last n messages (plus history_total); never save the result back.
+func readConversationTailFromWorkspace(ctx context.Context, filePath string, n int) (string, bool, error) {
+	return readFileFromWorkspaceQuery(ctx, filePath, "tail="+strconv.Itoa(n))
+}
+
+// appendConversationHistoryInWorkspace adds messages to a chat conversation
+// and sets top-level fields, without rewriting the conversation.
+func appendConversationHistoryInWorkspace(ctx context.Context, filePath string, messages []json.RawMessage, patch map[string]interface{}) error {
+	noteWorkspaceMutation(filePath, false)
+	segments := strings.Split(filePath, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	body, err := json.Marshal(map[string]interface{}{"messages": messages, "patch": patch})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", getWorkspaceAPIURL()+"/api/documents/"+strings.Join(segments, "/")+"/append-history", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := workspaceHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(detail))
+	}
+	return nil
+}
+
+func readFileFromWorkspaceQuery(ctx context.Context, filePath, rawQuery string) (string, bool, error) {
 	// URL-encode the filepath segments
 	pathSegments := strings.Split(filePath, "/")
 	encodedSegments := make([]string, len(pathSegments))
@@ -163,6 +202,9 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 
 	// Read file from workspace API
 	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	if rawQuery != "" {
+		apiURL += "?" + rawQuery
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create request: %w", err)

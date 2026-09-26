@@ -3,7 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TooltipProvider } from "../../ui/tooltip";
-import type { SlackConnection } from "../../../services/api-types";
+import type { SlackConnection, SlackUsableBot } from "../../../services/api-types";
 import type { WorkflowRoute } from "./types";
 
 vi.mock("../../admin/SlackAdminPanel", () => ({
@@ -20,13 +20,18 @@ import { SlackSetup } from "./SlackSetup";
 const sharedBot: SlackConnection = { id: "slack_001", display_name: "AgentWorks", enabled: true, configured: true, is_default: true };
 const ownBot: SlackConnection = { id: "slack_own", display_name: "Support bot", enabled: true, configured: true, is_default: false, workspace_path: "Workflow/support" };
 
-function makeBots(overrides: { own?: SlackConnection | null; routes?: WorkflowRoute[]; canManageSlackDefault?: boolean } = {}) {
+const alphaBot: SlackUsableBot = { id: "slack_alpha", display_name: "Alpha bot", enabled: true, configured: true, workspace_path: "Workflow/alpha", owner_label: "Alpha", channel_routes: [] };
+
+function makeBots(overrides: {
+  own?: SlackConnection | null; routes?: WorkflowRoute[]; canManageSlackDefault?: boolean; shared?: SlackConnection | null;
+  myBots?: SlackUsableBot[]; newMyBotChannel?: string; addMyBotChannel?: (id: string) => Promise<void>;
+} = {}) {
   const noop = () => {};
   const asyncNoop = async () => null;
   return {
     readOnly: false,
     workflowId: "wf-support",
-    slackOriginal: { enabled: true, bot_mode: true, connections: [sharedBot, ...(overrides.own ? [overrides.own] : [])] },
+    slackOriginal: { enabled: true, bot_mode: true, connections: [...(overrides.shared === null ? [] : [overrides.shared ?? sharedBot]), ...(overrides.own ? [overrides.own] : [])] },
     loadSlack: asyncNoop,
     canManageSlackDefault: overrides.canManageSlackDefault ?? false,
     slackLoading: false,
@@ -43,6 +48,11 @@ function makeBots(overrides: { own?: SlackConnection | null; routes?: WorkflowRo
     newSlackChannel: "", setNewSlackChannel: noop, addSlackRoute: noop,
     routeSaving: null, myRoutes: overrides.routes ?? [], addError: {}, setAddError: noop,
     expandedChip: null, setExpandedChip: noop, removeRoute: async () => {}, updateRoute: async () => {},
+    myOtherBots: overrides.myBots ?? [],
+    myBotRoutesHere: (bot: SlackUsableBot) => bot.channel_routes.filter(route => route.workspace_path === "Workflow/support"),
+    newMyBotChannel: overrides.newMyBotChannel ?? "", setNewMyBotChannel: noop,
+    myBotSaving: null, myBotError: null, setMyBotError: noop,
+    addMyBotChannel: overrides.addMyBotChannel ?? (async () => {}), removeMyBotChannel: async () => {},
   } as unknown as React.ComponentProps<typeof SlackSetup>["bots"];
 }
 
@@ -72,6 +82,34 @@ it("asks one question and defaults a fresh workflow to its own bot", async () =>
   expect(radio(host, /Its own bot/).checked).toBe(true);
   expect(host.textContent).toContain("Save bot");
   expect(host.textContent).not.toContain("Add channel");
+});
+
+it("shows where to get each Slack token next to its field", async () => {
+  const host = await render(makeBots());
+  const botField = host.querySelector<HTMLInputElement>('input[placeholder="xoxb-..."]')?.parentElement?.parentElement;
+  const appField = host.querySelector<HTMLInputElement>('input[placeholder="xapp-..."]')?.parentElement?.parentElement;
+  expect(botField?.textContent).toContain("OAuth & Permissions → OAuth Tokens");
+  expect(botField?.textContent).toContain("Bot User OAuth Token");
+  expect(appField?.textContent).toContain("Basic Information → App-Level Tokens");
+  expect(appField?.textContent).toContain("connections:write");
+  expect(botField?.querySelector('a')?.getAttribute('href')).toBe('https://api.slack.com/apps');
+  expect(appField?.querySelector('a')?.getAttribute('href')).toBe('https://api.slack.com/apps');
+  expect(host.querySelector('summary')?.textContent).toContain('Where to get Slack tokens');
+});
+
+it("shows required scopes, optional scopes, and bot events without opening setup details", async () => {
+  const host = await render(makeBots());
+  const checklist = host.querySelector('[aria-label="Slack permissions and events"]')!;
+  const required = Array.from(checklist.querySelectorAll('ul code')).map(item => item.textContent);
+  expect(required).toEqual([
+    'app_mentions:read', 'channels:history', 'groups:history', 'channels:read', 'groups:read',
+    'chat:write', 'reactions:write', 'users:read', 'users:read.email',
+  ]);
+  expect(checklist.textContent).toContain('Optional bot scopes: files:read');
+  expect(checklist.textContent).toContain('chat:write.public');
+  expect(checklist.textContent).toContain('connections:write');
+  expect(checklist.textContent).toContain('app_mention message.channels message.groups');
+  expect(checklist.textContent).toContain('Reinstall the Slack app after changing scopes');
 });
 
 it("shows a configured own bot as a summary with no channel setup", async () => {
@@ -106,4 +144,93 @@ it("keeps shared bot settings for admins only", async () => {
   expect(member.querySelector('[data-testid="shared-bot-settings"]')).toBeNull();
   const admin = await render(makeBots({ routes, canManageSlackDefault: true }));
   expect(admin.querySelector('[data-testid="shared-bot-settings"]')).not.toBeNull();
+});
+
+it("offers a ready-made Slack app manifest named after the workflow", async () => {
+  const bots = { ...makeBots(), slackAppDefaultName: "Support Desk" } as React.ComponentProps<typeof SlackSetup>["bots"];
+  const host = await render(bots);
+  const section = host.querySelector('[aria-label="Create from manifest"]')!;
+  const manifest = JSON.parse(section.querySelector('pre')!.textContent || "");
+  expect(manifest.display_information.name).toBe("Support Desk");
+  expect(manifest.settings.socket_mode_enabled).toBe(true);
+  expect(section.textContent).toContain("From a manifest");
+  expect(section.textContent).toContain("Copy");
+  const nameInput = section.querySelector<HTMLInputElement>("#slack-manifest-name")!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(nameInput, "Ops Bot");
+    nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(JSON.parse(section.querySelector('pre')!.textContent || "").display_information.name).toBe("Ops Bot");
+});
+
+it("offers three answers: its own bot, one of my bots, and the shared bot", async () => {
+  const host = await render(makeBots());
+  const options = Array.from(host.querySelectorAll('input[name="slack-mode"]')).map(input => input.closest("label")?.textContent || "");
+  expect(options).toHaveLength(3);
+  expect(options[0]).toContain("Its own bot");
+  expect(options[1]).toContain("One of my bots");
+  expect(options[2]).toContain("Shared bot");
+});
+
+it("says ask an admin only for the platform shared bot", async () => {
+  const host = await render(makeBots({ shared: null }));
+  await act(async () => { radio(host, /One of my bots/).click(); });
+  expect(host.textContent).not.toContain("ask an admin");
+  expect(host.textContent).toContain("You have no other bots yet");
+  expect(host.textContent).toContain("Give another workflow or crew its own bot first");
+  // No shared bot is configured, so it is not offered at all.
+  expect(radio(host, /Shared bot/)).toBeUndefined();
+});
+
+it("adds a channel for this workflow on one of my bots", async () => {
+  const addMyBotChannel = vi.fn(async () => {});
+  const host = await render(makeBots({ myBots: [alphaBot], newMyBotChannel: "C0999999999", addMyBotChannel }));
+  await act(async () => { radio(host, /One of my bots/).click(); });
+  expect(host.textContent).toContain("Alpha bot");
+  expect(host.textContent).toContain("Set up for Alpha");
+  expect(host.textContent).not.toContain("ask an admin");
+  const add = Array.from(host.querySelectorAll("button")).find(button => button.textContent?.includes("Add channel"))!;
+  await act(async () => { add.click(); });
+  expect(addMyBotChannel).toHaveBeenCalledWith("slack_alpha");
+});
+
+it("opens on one of my bots when it already answers here, and lists those channels", async () => {
+  const sharing = { ...alphaBot, channel_routes: [
+    { channel_id: "C0111111111", workspace_path: "Workflow/support", label: "Support" },
+    { channel_id: "C0222222222", workspace_path: "Workflow/other", label: "Other" },
+  ] };
+  const host = await render(makeBots({ myBots: [sharing] }));
+  expect(radio(host, /One of my bots/).checked).toBe(true);
+  expect(host.textContent).toContain("C0111111111");
+  expect(host.textContent).not.toContain("C0222222222");
+});
+
+it("shows a save error once, beside Save bot, while the bot form is open", async () => {
+  const message = "Slack token already in use: this Slack app is already connected as 'Bot-2'";
+  const bots = { ...makeBots(), slackError: message } as React.ComponentProps<typeof SlackSetup>["bots"];
+  const host = await render(bots);
+  expect(host.textContent?.split(message).length).toBe(2);
+  const saveButton = Array.from(host.querySelectorAll("button")).find(b => /Save bot/.test(b.textContent || ""));
+  const formText = saveButton?.closest("section, div.space-y-4, form")?.textContent || "";
+  expect(formText).toContain(message);
+});
+
+it("offers the shared bot only when an admin has configured one", async () => {
+  const none = await render(makeBots({ shared: null }));
+  expect(none.textContent).not.toContain("Shared bot");
+  document.body.innerHTML = "";
+
+  const unconfigured = await render(makeBots({ shared: { ...sharedBot, configured: false } }));
+  expect(unconfigured.textContent).not.toContain("Shared bot");
+  document.body.innerHTML = "";
+
+  const configured = await render(makeBots());
+  expect(configured.textContent).toContain("Shared bot");
+});
+
+it("keeps the shared bot visible while this target has shared-bot channels", async () => {
+  const routes = [{ kind: "slack", channel_id: "C0123456789", workspace_path: "Workflow/support" }] as unknown as WorkflowRoute[];
+  const host = await render(makeBots({ shared: null, routes }));
+  expect(host.textContent).toContain("Shared bot");
 });

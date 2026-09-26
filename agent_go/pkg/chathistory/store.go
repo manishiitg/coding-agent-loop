@@ -15,6 +15,7 @@ package chathistory
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -29,6 +30,10 @@ const (
 )
 
 // BotConnectorConfig represents configuration for a bot connector platform.
+// ErrBotConnectorConfigNotFound means no connector config is saved under the
+// requested ID (e.g. no shared Slack bot, only workflow-owned Slack apps).
+var ErrBotConnectorConfigNotFound = errors.New("bot connector config not found")
+
 type BotConnectorConfig struct {
 	ID              string    `json:"id"`
 	Enabled         bool      `json:"enabled"`
@@ -115,4 +120,7 @@ type BotMetadata struct {
 	UserID      string `json:"user_id,omitempty"`
 	UserName    string `json:"user_name,omitempty"`
 	UserEmail   string `json:"user_email,omitempty"`
+	// DirectMessage: a 1:1 Slack DM whose sender the Slack service mapped
+	// to an AgentWorks account; its turns run as that account.
+	DirectMessage bool `json:"direct_message,omitempty"`
 }

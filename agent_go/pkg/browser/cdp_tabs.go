@@ -123,40 +123,81 @@ func sharedCDPFileLockPath(port int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("mcp-agent-builder-cdp-%d.lock", port))
 }
 
+// tabScope names one browser whose tabs are shared by several owners
+// (workflows or conversations). The same per-owner tab process -- selection,
+// labels/aliases, ownership records -- serves both the operator's shared CDP
+// Chrome (scope "cdp:<port>") and a managed headless agent-browser session
+// shared by a Crew's or workflow's conversations (scope "session:<name>").
+// Every key is "<scope>:<owner>[:<alias>]", so CDP keys stay exactly
+// "cdp:<port>:<owner>[:<alias>]" as before the generalisation.
+type tabScope string
+
+func cdpTabScope(port int) tabScope {
+	return tabScope(fmt.Sprintf("cdp:%d", port))
+}
+
+func (s tabScope) ownerKey(ownerID string) string {
+	return string(s) + ":" + strings.TrimSpace(ownerID)
+}
+
+func (s tabScope) aliasKey(ownerID, alias string) string {
+	return s.ownerKey(ownerID) + ":" + strings.TrimSpace(alias)
+}
+
+func (s tabScope) ownerPrefix(ownerID string) string {
+	return s.ownerKey(ownerID) + ":"
+}
+
+func (s tabScope) prefix() string {
+	return string(s) + ":"
+}
+
 func cdpTabSelectionKey(port int, ownerID string) string {
-	return fmt.Sprintf("cdp:%d:%s", port, strings.TrimSpace(ownerID))
+	return cdpTabScope(port).ownerKey(ownerID)
 }
 
 func cdpTabAliasKey(port int, ownerID, alias string) string {
-	return fmt.Sprintf("cdp:%d:%s:%s", port, strings.TrimSpace(ownerID), strings.TrimSpace(alias))
+	return cdpTabScope(port).aliasKey(ownerID, alias)
 }
 
-func getCDPTabSelection(port int, ownerID string) string {
+func getScopedTabSelection(scope tabScope, ownerID string) string {
 	cdpTabSelectionsMu.RLock()
 	defer cdpTabSelectionsMu.RUnlock()
-	return cdpTabSelections[cdpTabSelectionKey(port, ownerID)]
+	return cdpTabSelections[scope.ownerKey(ownerID)]
 }
 
-func setCDPTabSelection(port int, ownerID, tab string) {
+func setScopedTabSelection(scope tabScope, ownerID, tab string) {
 	tab = strings.TrimSpace(tab)
 	if tab == "" {
 		return
 	}
 	cdpTabSelectionsMu.Lock()
 	defer cdpTabSelectionsMu.Unlock()
-	cdpTabSelections[cdpTabSelectionKey(port, ownerID)] = tab
+	cdpTabSelections[scope.ownerKey(ownerID)] = tab
+}
+
+func clearScopedTabSelection(scope tabScope, ownerID string) {
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	delete(cdpTabSelections, scope.ownerKey(ownerID))
+}
+
+func getCDPTabSelection(port int, ownerID string) string {
+	return getScopedTabSelection(cdpTabScope(port), ownerID)
+}
+
+func setCDPTabSelection(port int, ownerID, tab string) {
+	setScopedTabSelection(cdpTabScope(port), ownerID, tab)
 }
 
 func clearCDPTabSelection(port int, ownerID string) {
-	cdpTabSelectionsMu.Lock()
-	defer cdpTabSelectionsMu.Unlock()
-	delete(cdpTabSelections, cdpTabSelectionKey(port, ownerID))
+	clearScopedTabSelection(cdpTabScope(port), ownerID)
 }
 
-func clearCDPTabSelectionsForPort(port int) {
-	prefix := fmt.Sprintf("cdp:%d:", port)
-	cdpTabSelectionsMu.Lock()
-	defer cdpTabSelectionsMu.Unlock()
+// clearScopedTabsLocked drops every owner's selection, alias, ownership and
+// recording record in one scope. Caller holds cdpTabSelectionsMu.
+func clearScopedTabsLocked(scope tabScope) {
+	prefix := scope.prefix()
 	for key := range cdpTabSelections {
 		if strings.HasPrefix(key, prefix) {
 			delete(cdpTabSelections, key)
@@ -177,6 +218,12 @@ func clearCDPTabSelectionsForPort(port int) {
 			delete(cdpRecordingTabs, key)
 		}
 	}
+}
+
+func clearCDPTabSelectionsForPort(port int) {
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	clearScopedTabsLocked(cdpTabScope(port))
 	delete(cdpActiveTabs, port)
 }
 
@@ -277,7 +324,7 @@ func clearCDPActiveTabForPort(port int) {
 // created, and removed when the tab is closed, so this approximates the
 // owner's live tab count.
 func countCDPTabAliasesForOwner(port int, ownerID string) int {
-	prefix := fmt.Sprintf("cdp:%d:%s:", port, strings.TrimSpace(ownerID))
+	prefix := cdpTabScope(port).ownerPrefix(ownerID)
 	cdpTabSelectionsMu.RLock()
 	defer cdpTabSelectionsMu.RUnlock()
 	count := 0
@@ -289,14 +336,18 @@ func countCDPTabAliasesForOwner(port int, ownerID string) int {
 	return count
 }
 
-func getCDPTabAlias(port int, ownerID, alias string) string {
+func getScopedTabAlias(scope tabScope, ownerID, alias string) string {
 	alias = strings.TrimSpace(alias)
 	if alias == "" || isCDPTabID(alias) {
 		return ""
 	}
 	cdpTabSelectionsMu.RLock()
 	defer cdpTabSelectionsMu.RUnlock()
-	return cdpTabAliases[cdpTabAliasKey(port, ownerID, alias)]
+	return cdpTabAliases[scope.aliasKey(ownerID, alias)]
+}
+
+func getCDPTabAlias(port int, ownerID, alias string) string {
+	return getScopedTabAlias(cdpTabScope(port), ownerID, alias)
 }
 
 func getCDPTabSelectionForPrompt(port int, ownerID string) string {
@@ -307,7 +358,7 @@ func getCDPTabSelectionForPrompt(port int, ownerID string) string {
 	return tab
 }
 
-func setCDPTabAlias(port int, ownerID, alias, tabID string) {
+func setScopedTabAlias(scope tabScope, ownerID, alias, tabID string) {
 	alias = strings.TrimSpace(alias)
 	tabID = strings.TrimSpace(tabID)
 	if alias == "" || tabID == "" || alias == tabID || isCDPTabID(alias) {
@@ -315,7 +366,11 @@ func setCDPTabAlias(port int, ownerID, alias, tabID string) {
 	}
 	cdpTabSelectionsMu.Lock()
 	defer cdpTabSelectionsMu.Unlock()
-	cdpTabAliases[cdpTabAliasKey(port, ownerID, alias)] = tabID
+	cdpTabAliases[scope.aliasKey(ownerID, alias)] = tabID
+}
+
+func setCDPTabAlias(port int, ownerID, alias, tabID string) {
+	setScopedTabAlias(cdpTabScope(port), ownerID, alias, tabID)
 }
 
 func clearCDPTabAlias(port int, ownerID, alias string) {
@@ -330,7 +385,7 @@ func clearCDPTabAlias(port int, ownerID, alias string) {
 	delete(cdpOwnedTabs, key)
 }
 
-func markCDPTabOwned(port int, ownerID, alias, tabID string) {
+func markScopedTabOwned(scope tabScope, ownerID, alias, tabID string) {
 	ownerID = strings.TrimSpace(ownerID)
 	alias = strings.TrimSpace(alias)
 	tabID = strings.TrimSpace(tabID)
@@ -342,11 +397,15 @@ func markCDPTabOwned(port int, ownerID, alias, tabID string) {
 	}
 	cdpTabSelectionsMu.Lock()
 	defer cdpTabSelectionsMu.Unlock()
-	cdpOwnedTabs[cdpTabAliasKey(port, ownerID, alias)] = cdpOwnedTab{Alias: alias, TabID: tabID}
+	cdpOwnedTabs[scope.aliasKey(ownerID, alias)] = cdpOwnedTab{Alias: alias, TabID: tabID}
 }
 
-func ownedCDPTabsForOwner(port int, ownerID string) []cdpOwnedTab {
-	prefix := fmt.Sprintf("cdp:%d:%s:", port, strings.TrimSpace(ownerID))
+func markCDPTabOwned(port int, ownerID, alias, tabID string) {
+	markScopedTabOwned(cdpTabScope(port), ownerID, alias, tabID)
+}
+
+func ownedScopedTabsForOwner(scope tabScope, ownerID string) []cdpOwnedTab {
+	prefix := scope.ownerPrefix(ownerID)
 	cdpTabSelectionsMu.RLock()
 	defer cdpTabSelectionsMu.RUnlock()
 	tabs := make([]cdpOwnedTab, 0)
@@ -358,10 +417,14 @@ func ownedCDPTabsForOwner(port int, ownerID string) []cdpOwnedTab {
 	return tabs
 }
 
-func isCDPTabOwnedByOwner(port int, ownerID, alias, tabID string) bool {
+func ownedCDPTabsForOwner(port int, ownerID string) []cdpOwnedTab {
+	return ownedScopedTabsForOwner(cdpTabScope(port), ownerID)
+}
+
+func isScopedTabOwnedByOwner(scope tabScope, ownerID, alias, tabID string) bool {
 	alias = strings.TrimSpace(alias)
 	tabID = strings.TrimSpace(tabID)
-	for _, owned := range ownedCDPTabsForOwner(port, ownerID) {
+	for _, owned := range ownedScopedTabsForOwner(scope, ownerID) {
 		if (alias != "" && owned.Alias == alias) || (tabID != "" && owned.TabID == tabID) {
 			return true
 		}
@@ -369,20 +432,20 @@ func isCDPTabOwnedByOwner(port int, ownerID, alias, tabID string) bool {
 	return false
 }
 
-// clearCDPTabStateForOwner removes selection, alias, active-tab, and ownership
-// state for one tab. The caller may identify the tab by either its workflow
-// label or the agent-browser tab ID returned when it was created.
-func clearCDPTabStateForOwner(port int, ownerID, tab string) {
-	ownerID = strings.TrimSpace(ownerID)
-	tab = strings.TrimSpace(tab)
-	if ownerID == "" || tab == "" {
-		return
-	}
-	prefix := fmt.Sprintf("cdp:%d:%s:", port, ownerID)
-	selectionKey := cdpTabSelectionKey(port, ownerID)
+func isCDPTabOwnedByOwner(port int, ownerID, alias, tabID string) bool {
+	return isScopedTabOwnedByOwner(cdpTabScope(port), ownerID, alias, tabID)
+}
 
-	cdpTabSelectionsMu.Lock()
-	defer cdpTabSelectionsMu.Unlock()
+// clearScopedTabStateLocked removes selection, alias and ownership state for
+// one tab of one owner, identified by either its label or its tab ID. It
+// returns every reference (label and tab ID) it cleared so a scope with an
+// extra active-tab record (CDP) can drop that too. Caller holds
+// cdpTabSelectionsMu.
+func clearScopedTabStateLocked(scope tabScope, ownerID, tab string) []string {
+	prefix := scope.ownerPrefix(ownerID)
+	selectionKey := scope.ownerKey(ownerID)
+	cleared := []string{tab}
+
 	selected := cdpTabSelections[selectionKey]
 	for key, tabID := range cdpTabAliases {
 		if !strings.HasPrefix(key, prefix) {
@@ -397,9 +460,7 @@ func clearCDPTabStateForOwner(port int, ownerID, tab string) {
 		if selected == alias || selected == tabID {
 			delete(cdpTabSelections, selectionKey)
 		}
-		if cdpActiveTabs[port] == alias || cdpActiveTabs[port] == tabID {
-			delete(cdpActiveTabs, port)
-		}
+		cleared = append(cleared, alias, tabID)
 	}
 	// Recording contexts are registered for crash-safe delayed cleanup without
 	// adding a public alias. Remove any such ownership record by its real tab ID
@@ -412,12 +473,28 @@ func clearCDPTabStateForOwner(port int, ownerID, tab string) {
 	if selected == tab {
 		delete(cdpTabSelections, selectionKey)
 	}
-	if cdpActiveTabs[port] == tab {
-		delete(cdpActiveTabs, port)
-	}
 	// A tab ID can be used as the alias when agent-browser did not return a
 	// separate label mapping. Remove that direct ownership record as well.
-	delete(cdpOwnedTabs, cdpTabAliasKey(port, ownerID, tab))
+	delete(cdpOwnedTabs, scope.aliasKey(ownerID, tab))
+	return cleared
+}
+
+// clearCDPTabStateForOwner removes selection, alias, active-tab, and ownership
+// state for one tab. The caller may identify the tab by either its workflow
+// label or the agent-browser tab ID returned when it was created.
+func clearCDPTabStateForOwner(port int, ownerID, tab string) {
+	ownerID = strings.TrimSpace(ownerID)
+	tab = strings.TrimSpace(tab)
+	if ownerID == "" || tab == "" {
+		return
+	}
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	for _, ref := range clearScopedTabStateLocked(cdpTabScope(port), ownerID, tab) {
+		if cdpActiveTabs[port] == ref {
+			delete(cdpActiveTabs, port)
+		}
+	}
 }
 
 func getCDPActiveTab(port int) string {

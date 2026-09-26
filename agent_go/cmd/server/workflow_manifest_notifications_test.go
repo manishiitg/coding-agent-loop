@@ -27,6 +27,25 @@ func TestMergeWorkflowCapabilitiesUpdatePreservesNotificationsForOlderClients(t 
 	}
 }
 
+func TestNotifySenderSaveReplacesLegacySummarySenders(t *testing.T) {
+	config := &WorkflowNotificationConfig{
+		RunSummaryGmailConnectionIDs:   []string{"gmail_001", "gmail_002"},
+		PulseSummaryGmailConnectionIDs: []string{"gmail_003"},
+		RunSummaryRecipients:           []string{"owner@example.com"},
+	}
+	setWorkflowNotificationSender(config, " gmail_004 ")
+	if config.GmailConnectionID != "gmail_004" || len(config.RunSummaryGmailConnectionIDs) != 0 || len(config.PulseSummaryGmailConnectionIDs) != 0 {
+		t.Fatalf("sender selection did not replace legacy overrides: %+v", config)
+	}
+	if len(config.RunSummaryRecipients) != 1 || config.RunSummaryRecipients[0] != "owner@example.com" {
+		t.Fatalf("saving sender changed recipients: %+v", config)
+	}
+	setWorkflowNotificationSender(config, "")
+	if config.GmailConnectionID != "" {
+		t.Fatalf("clearing sender should inherit account default: %+v", config)
+	}
+}
+
 func TestMergeWorkflowCapabilitiesUpdateCanDisableNotifications(t *testing.T) {
 	existing := WorkflowCapabilities{
 		Notifications: &WorkflowNotificationConfig{SlackWebhookSecretName: "SLACK_WEBHOOK"},

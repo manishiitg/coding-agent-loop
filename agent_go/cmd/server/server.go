@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -41,6 +42,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/clisecurity"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costobserver"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -623,6 +625,8 @@ type StreamingAPI struct {
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
 	workshopChatSessions sync.Map
+	// reportRunSessions: live window.report.run MCP bridge sessions (report_run.go).
+	reportRunSessions sync.Map
 
 	// Cron scheduler service for scheduled workflow executions
 	scheduler           *SchedulerService
@@ -861,9 +865,11 @@ type QueryRequest struct {
 	// the next cron message waits for turn completion instead of racing a tmux
 	// snapshot that may not have flipped to busy yet.
 	DisableLiveInputDelivery bool `json:"disable_live_input_delivery,omitempty"`
-	// KeepNativeSessionAlive keeps one native coding-CLI process alive while a
-	// scheduler sends its known consecutive turns (run → Pulse). Contract
-	// upgrades are manual Builder work and never belong to this sequence.
+	// KeepNativeSessionAlive was how a scheduler kept one native coding-CLI
+	// process alive across its consecutive turns (run → Pulse). Every
+	// chat-level turn now retains its CLI (codingAgentRequestAllowsPersistentInteractive),
+	// so it no longer changes the transport; kept for wire compatibility with
+	// callers that still send it.
 	KeepNativeSessionAlive bool `json:"keep_native_session_alive,omitempty"`
 	// PulseLifecycleTurn marks a scheduler-sent Pulse turn (Gate, review
 	// dispatch, Finalize). The main conversation keeps the Builder model on
@@ -1423,11 +1429,22 @@ func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
 func shouldTryRetainedDeliveryBeforeQueue(ctx context.Context, req QueryRequest, sessionID string) bool {
 	trigger := strings.ToLower(strings.TrimSpace(req.TriggeredBy))
 	claims := GetUserFromContext(ctx)
-	return !conversationTurnQueueExecution(ctx) && !req.DisableLiveInputDelivery &&
-		!req.IsAutoNotification && !req.PulseLifecycleTurn &&
-		(claims == nil || claims.AccessToken == nil) &&
-		!isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
-		strings.TrimSpace(req.BotPlatform) == "" && !strings.HasPrefix(trigger, "bot:") &&
+	if conversationTurnQueueExecution(ctx) || req.DisableLiveInputDelivery ||
+		req.IsAutoNotification || req.PulseLifecycleTurn ||
+		(claims != nil && claims.AccessToken != nil) {
+		return false
+	}
+	// A person's follow-up in a bot conversation (Slack DM or thread,
+	// WhatsApp) steers the running CLI, like a message in the web chat
+	// (user decision 2026-09-26: always steer with tmux). Workflow bot turns
+	// carry the schedule builder's "cron" trigger, so the platform, not the
+	// trigger, marks them. A Slack workflow trigger run is a direct webhook
+	// execution with its own session and keeps its turn boundary.
+	if strings.TrimSpace(req.BotPlatform) != "" && ctx.Value(directWebhookExecutionKey{}) == nil {
+		return true
+	}
+	return !isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
+		!strings.HasPrefix(trigger, "bot:") &&
 		(trigger == "" || trigger == "manual" || trigger == "interactive" || trigger == "workflow_builder")
 }
 
@@ -1647,6 +1664,7 @@ func init() {
 	ServerCmd.AddCommand(migrateSparkQuillCmd)
 	ServerCmd.AddCommand(migrateProductSecretsCmd)
 	ServerCmd.AddCommand(migrateDurableChatsCmd)
+	ServerCmd.AddCommand(dedupeChatHistoryCmd)
 }
 
 func runServer(cmd *cobra.Command, args []string) {
@@ -1859,6 +1877,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
 	}
 	migrateDurableChatsAtStartup(eventStateRoot)
+	dedupeChatHistoriesAtStartup(eventStateRoot)
 	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events-v2.sqlite"))
 	if err != nil {
 		log.Fatalf("Failed to initialize durable structured-event journal: %v", err)
@@ -1890,6 +1909,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	eventStore.SetEventAddedCallback(terminalEventObserver)
 	log.Printf("📡 EventStore retention: max %d events per session", maxSessionEvents)
+	startMemoryLog(eventStore)
 
 	// Initialize the operator-state store (bot connector configs + user
 	// secrets) and the authoritative global cost event database.
@@ -2128,6 +2148,8 @@ func runServer(cmd *cobra.Command, args []string) {
 		stoppedSessions:                     make(map[string]bool),
 		interruptedTurns:                    make(map[string]bool),
 	}
+	// Pulse Goal Work reaches other workflows and Crews through the external API.
+	pulsePlatformAPI = api
 	// Terminal Center's Formatted view and the runtime coordinator now consume
 	// the same accepted structured events. The terminal observer updates the
 	// durable pane snapshot first; retained-turn reconciliation then uses that
@@ -2359,6 +2381,7 @@ func runServer(cmd *cobra.Command, args []string) {
 			return
 		}
 		executorHandlers.HandlePerToolMCPRequest(w, r, server, tool)
+		api.recordMCPBridgeCall(strings.TrimSpace(r.Header.Get("X-Session-ID")), server, tool)
 	}
 
 	toolsRouter := router.PathPrefix("/tools").Subrouter()
@@ -2595,34 +2618,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
 	// Bot sessions use ONLY delegation tier config from DB for LLM selection — no server defaults needed
 	api.botManager = botManager
-	// Wire startSessionInternal after api is created (closure captures api)
-	botManager.SetStartSessionFunc(api.startSessionInternal)
-	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
-	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
-	botManager.SetResumeListFunc(api.listBotResumeTargets)
-	botManager.SetWorkflowAccessFunc(api.checkBotWorkflowAccess)
-	services.SetDedicatedSlackRouteFunc(api.dedicatedSlackRoute)
-	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
-		running := api.listRunningWorkflowExecutions(userID)
-		out := make([]services.BotRunningWorkflow, 0, len(running))
-		for _, wf := range running {
-			label := strings.TrimSpace(wf.PresetName)
-			if label == "" && wf.WorkspacePath != "" {
-				label = workflowNameFromWorkspacePath(wf.WorkspacePath)
-			}
-			out = append(out, services.BotRunningWorkflow{
-				WorkflowLabel:    label,
-				WorkspacePath:    wf.WorkspacePath,
-				Status:           wf.Status,
-				CurrentStepTitle: wf.CurrentStepTitle,
-				PhaseName:        wf.PhaseName,
-				Title:            wf.Title,
-				SessionID:        wf.SessionID,
-				StartedAt:        wf.StartedAt,
-			})
-		}
-		return out
-	})
+	// Every server hook (session start, routing, turn building) in one place,
+	// shared with the bot dry-run tests.
+	api.wireBotManager(botManager)
 	// Install the chat injector used by background-agent and workflow lifecycle
 	// messages. Human-input requests are intentionally not relayed through this
 	// path; users answer those directly in the correlated UI card.
@@ -2644,14 +2642,15 @@ func runServer(cmd *cobra.Command, args []string) {
 		})
 	}
 
-	// Register Slack as a bot connector when the platform switch is on or any
-	// owner-saved channel route exists. Per-message and per-route gates still
-	// silence unrouted channels while the platform switch is off.
+	// Register Slack as a bot connector when the platform switch is on, any
+	// owner-saved channel route exists, or any enabled workflow- or
+	// crew-owned Slack app exists (its own socket needs the handler).
+	// Per-message and per-route gates still silence unrouted channels while
+	// the platform switch is off.
 	if slackSvc != nil {
+		api.migrateCrewBotScopes(context.Background(), slackSvc)
 		botConfig, _ := chatStore.GetBotConnectorConfig(context.Background(), "slack")
-		if botConfig != nil && (botConfig.BotMode || services.SlackBotConfigHasRoutes(botConfig)) {
-			botManager.RegisterConnector(slackSvc)
-			slackSvc.StartListening(context.Background())
+		if slackBotConnectorWantedAtStartup(botConfig, slackSvc) && registerSlackBotConnector(botManager, slackSvc) {
 			log.Printf("✅ Slack bot mode enabled")
 		}
 	}
@@ -2692,11 +2691,6 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Register bot routes
 	BotRoutes(router, api)
-	// Product/profile bot routes are shared by Slack and WhatsApp. WhatsApp
-	// has extra default-profile routing below, but Slack profile routes need
-	// this handler even when WhatsApp is disabled.
-	botManager.SetProfileTurnFunc(api.botProfileTurn)
-	botManager.SetWorkflowTurnFunc(api.botWorkflowTurn)
 	virtualtools.SetSlackMessageHandler(api.sendSlackMessageFromTool)
 	virtualtools.SetSlackCLIHandler(api.slackCLIFromTool)
 	if slackSvc != nil {
@@ -2724,12 +2718,6 @@ func runServer(cmd *cobra.Command, args []string) {
 			return voiceManager.Transcribe(ctx, samples)
 		})
 	}
-	// Progressive text: while a bot turn runs, forward each completed
-	// assistant reply as its own message rather than waiting for the whole
-	// turn to finish — reads the same durable conversation_history the UI's
-	// own chat-restore path already trusts, kept current as the turn runs.
-	botManager.SetChatHistoryReader(botProgressiveChatHistoryReader)
-
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
 		api.updateSessionActivity(sessionID)
@@ -2783,6 +2771,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
+	apiRouter.HandleFunc("/workflow/report-preview/run", api.handleReportRun).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 
 	// Generic AgentWorks chat defaults (skills, servers, secrets, browser).
@@ -3632,6 +3621,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
+	api.clearBotOriginForOwnerTurn(r.Header.Get("X-Session-ID"), GetUserFromContext(r.Context()), req)
 	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
 		req.resolvedResumeTarget = target
 	}
@@ -3643,14 +3633,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// A workflow may keep durable read-only links in workflow.json. Merge those
 	// with one-message # references before the common authorization boundary so
 	// both forms receive identical access checks and folder guards.
-	req.WorkflowContextPaths = mergeDurableWorkflowContextPaths(r.Context(), req.SelectedFolder, req.WorkflowContextPaths)
-	contextPaths, contextReadPaths, contextErr := authorizeWorkflowContextPathsWithReadRoots(r.Context(), req.WorkflowContextPaths)
-	if contextErr != nil {
+	if contextErr := admitTurnContextPaths(r.Context(), &req); contextErr != nil {
 		http.Error(w, contextErr.Error(), http.StatusForbidden)
 		return
 	}
-	req.WorkflowContextPaths = contextPaths
-	req.authorizedWorkflowContextReadPaths = contextReadPaths
 
 	// Handle alias: Map Message to Query if Query is empty
 	if req.Query == "" && req.Message != "" {
@@ -3729,22 +3715,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// focus, per docs/design/agent_tool_surface_single_source.md).
 	currentUserIsReadOnly := workflowAccessForClaims(GetUserFromContext(r.Context())) == WorkflowAccessRead
 
-	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
-	resolvedProfile, err := api.resolveAgentProfileForQuery(r.Context(), &req, currentUserID, sessionID)
-	if err != nil {
-		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Workflow-phase payloads identify the workspace through their preset,
-	// not selected_folder (the client never sends it for these chats).
-	// Resolve it BEFORE access: otherwise conversationTargetAccess skips the
-	// manifest and answers from the account tier, so a manifest reader chats
-	// as Builder while every tool call fails the permission-drift guard
-	// once the folder is backfilled later in this handler.
-	api.backfillWorkflowPhaseFolder(r.Context(), &req)
-	access, accessErr := api.conversationTargetAccess(r.Context(), req)
-	if accessErr != nil {
-		http.Error(w, accessErr.Error(), http.StatusForbidden)
+	resolvedProfile, access, admitErr := api.admitQueryTarget(r.Context(), &req, currentUserID, sessionID)
+	if admitErr != nil {
+		status := http.StatusForbidden
+		if admitErr.invalidProfile {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, admitErr.Error(), status)
 		return
 	}
 	currentUserIsReadOnly = readOnlyForRequest(access, req)
@@ -4647,6 +4624,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Inject user ID into the workflow context
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
+		workflowCtx = costobserver.ContextWithSourcePlatform(workflowCtx, req.BotPlatform)
 		// Inject chat session ID so execute_shell_command can look up the session's
 		// working directory and folder guard config from the global session map.
 		// Without this, execution agents always get workspace root as their shell cwd.
@@ -5344,7 +5322,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		} else if workflowNativeAgentTools {
 			profileAgentToolsMode = "hybrid"
 		}
-		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
+		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req)
 		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, allowPersistentInteractive)
 		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive, musePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
@@ -6227,7 +6205,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[CHAT_POLICY] MCP management admission: mode=%s origin=%s allowed=%v", mcpPolicy.Mode, mcpPolicy.Origin, mcpPolicy.allows("mcp_management"))
+				logfWithContext(queryLogCtx, "[CHAT_POLICY] MCP management admission: mode=%s origin=%s allowed=%v inspect=%v", mcpPolicy.Mode, mcpPolicy.Origin, mcpPolicy.allows("mcp_management"), mcpPolicy.allows("mcp_inspection"))
 			}
 			if isToolBackedChat {
 				secretWorkflowPath := ""
@@ -7061,7 +7039,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if modeChangeConversationPath == "" && len(preModeChangeSnapshot) > 0 {
-					modeChangeConversationPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+					modeChangeConversationPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 					convData := map[string]interface{}{
 						"session_id":           sessionID,
 						"user_id":              currentUserID,
@@ -7145,6 +7123,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Inject user ID into the agent context
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
+		agentCtx = costobserver.ContextWithSourcePlatform(agentCtx, req.BotPlatform)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
 		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
 			virtualtools.RegisterSessionNotificationDestination(sessionID, dest)
@@ -7695,7 +7674,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				logPath := persistConversationPath
 				if strings.TrimSpace(logPath) == "" {
-					logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, persistSessionID, time.Now())
+					logPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, persistSessionID)
 				}
 				// Same guard as the shared persist path: a rebuild with fewer
 				// user turns than the file already holds is partial, and
@@ -9908,6 +9887,12 @@ func liveInputErrorProvesNoTarget(err error) bool {
 	if err == nil {
 		return false
 	}
+	// A running agent with no turn in flight cannot take the message (its
+	// steer queue drains only inside a turn), so start a new turn with it.
+	var deliveryErr *mcpagent.CodingAgentDeliveryError
+	if errors.As(err, &deliveryErr) && deliveryErr.Kind == mcpagent.DeliveryErrorKindNoSession {
+		return true
+	}
 	return strings.Contains(err.Error(), "session registered for owner") ||
 		strings.Contains(err.Error(), "session is closed")
 }
@@ -10070,6 +10055,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 				// Queueing is an accepted non-tmux submission. It is not evidence that
 				// the durable session is broken, so do not bypass mcpagent via tmux.
 				// Send accepted a non-CLI queue entry. Do not inject it again.
+				log.Printf("[QUERY->LIVE] Queued /api/query for injection session=%s provider=%s transport=%s status=%s: %.80s", sessionID, delivery.Provider, delivery.Transport, delivery.Status, message)
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.Status), "provider": string(delivery.Provider)})
 				return true
@@ -10086,6 +10072,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 		fallbackCancel()
 		if handled {
 			if err != nil {
+				log.Printf("[QUERY->LIVE] Retained-terminal fallback uncertain for session %s: %v", sessionID, err)
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
 			}
@@ -10095,6 +10082,7 @@ func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *ht
 			response := QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility, MessageID: messageID}
 			api.stampCodingAgentDeliveryTiming(r, &response, requestReceivedAt)
 			_ = json.NewEncoder(w).Encode(response)
+			log.Printf("[QUERY->LIVE] Delivered /api/query through retained-terminal fallback session=%s provider=%s transport=tmux: %.80s", sessionID, retainedProvider, message)
 			return true
 		}
 	}
@@ -10397,6 +10385,16 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		log.Printf("[LIVE INPUT] Live input unavailable for provider %s session %s: %v", mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider, sessionID, err)
+		// The agent refused because no turn is running to take the message:
+		// nothing was delivered, so this is definite, not uncertain. Start
+		// the next turn with it, as /api/query does (liveInputErrorProvesNoTarget).
+		if liveInputErrorProvesNoTarget(err) {
+			if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
+				return
+			}
+			http.Error(w, "No active foreground turn for this session", http.StatusConflict)
+			return
+		}
 		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 		return
 	}
@@ -11168,6 +11166,15 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			out[s.Name] = s.Value
 		}
 		return out
+	}
+	cfg.SecretsAttached = func(set map[string]string, removed []string) {
+		for name, value := range set {
+			virtualtools.SetSessionShellEnv(sessionID, "SECRET_"+name, value)
+		}
+		for _, name := range removed {
+			virtualtools.DeleteSessionShellEnv(sessionID, "SECRET_"+name)
+		}
+		log.Printf("[SECRETS] Synced %d attached / %d removed SECRET_* into live shell clients for session %s", len(set), len(removed), sessionID)
 	}
 
 	return cfg, nil
@@ -13205,4 +13212,44 @@ func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {
 		return "<empty>"
 	}
 	return fmt.Sprintf("%s/%s", config.Provider, config.ModelID)
+}
+
+// queryAdmissionError is a refusal from admitQueryTarget.
+type queryAdmissionError struct {
+	err            error
+	invalidProfile bool
+}
+
+func (e *queryAdmissionError) Error() string {
+	if e.invalidProfile {
+		return "Invalid agent profile request: " + e.err.Error()
+	}
+	return e.err.Error()
+}
+
+func (e *queryAdmissionError) Unwrap() error { return e.err }
+
+// admitQueryTarget resolves a turn's target and the caller's access to it:
+// saved chat config, the agent profile, the workflow-phase folder, then
+// conversationTargetAccess. handleQuery and the bot dry run
+// (bot_dry_run.go) share it, so a dry run admits exactly what a real turn
+// admits.
+func (api *StreamingAPI) admitQueryTarget(ctx context.Context, req *QueryRequest, currentUserID, sessionID string) (*resolvedAgentProfile, WorkflowAccessLevel, *queryAdmissionError) {
+	api.applySavedMultiAgentChatConfig(ctx, req, currentUserID)
+	resolvedProfile, err := api.resolveAgentProfileForQuery(ctx, req, currentUserID, sessionID)
+	if err != nil {
+		return nil, WorkflowAccessNone, &queryAdmissionError{err: err, invalidProfile: true}
+	}
+	// Workflow-phase payloads identify the workspace through their preset,
+	// not selected_folder (the client never sends it for these chats).
+	// Resolve it BEFORE access: otherwise conversationTargetAccess skips the
+	// manifest and answers from the account tier, so a manifest reader chats
+	// as Builder while every tool call fails the permission-drift guard
+	// once the folder is backfilled later in handleQuery.
+	api.backfillWorkflowPhaseFolder(ctx, req)
+	access, err := api.conversationTargetAccess(ctx, *req)
+	if err != nil {
+		return nil, WorkflowAccessNone, &queryAdmissionError{err: err}
+	}
+	return resolvedProfile, access, nil
 }

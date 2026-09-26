@@ -1673,7 +1673,14 @@ func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID str
 	currentUserID := GetUserIDFromContext(r.Context())
 	activeSession, exists := api.getActiveSession(sessionID)
 	if exists {
-		return sessionVisibleTo(activeSession.UserID, GetUserFromContext(r.Context()))
+		if sessionVisibleTo(activeSession.UserID, GetUserFromContext(r.Context())) {
+			return true
+		}
+		allowed := botSessionTerminalAllowed(r.Context(), activeSession)
+		if !allowed && activeSession.BotPlatform != "" {
+			log.Printf("[TERMINAL] bot session %s terminal denied for user=%s (needs Owner or Write on %s)", sessionID, currentUserID, activeSession.WorkspacePath)
+		}
+		return allowed
 	}
 	if api.eventStore == nil {
 		return currentUserID == GetDefaultUserID()
@@ -1683,6 +1690,26 @@ func (api *StreamingAPI) canAccessTerminalSession(r *http.Request, sessionID str
 		return owner == currentUserID
 	}
 	return currentUserID == GetDefaultUserID()
+}
+
+// botSessionTerminalAllowed lets the people who run a workflow open the
+// terminal of its Slack/WhatsApp bot sessions. Those sessions are owned by the
+// bot's own user, so the owner check alone left every human with a terminal
+// that 404ed and flipped back to the conversation (RTS 2026-09-25). The
+// terminal stream can type into the pane, so workflow readers (who may see the
+// run in the monitor) do not get it: Owner or Write access is required.
+func botSessionTerminalAllowed(ctx context.Context, session *ActiveSessionInfo) bool {
+	if session == nil ||
+		!isWorkflowBotHistory(ChatHistorySession{SessionID: session.SessionID, UserID: session.UserID, BotPlatform: session.BotPlatform}) ||
+		!strings.HasPrefix(strings.TrimSpace(session.WorkspacePath), "Workflow/") {
+		return false
+	}
+	claims := GetUserFromContext(ctx)
+	access, manifest := workflowAccessForWorkspacePath(ctx, claims, session.WorkspacePath)
+	if manifest == nil || manifest.ID != session.PresetQueryID || !userAllowedWorkflowID(claims, manifest.ID) {
+		return false
+	}
+	return access == WorkflowAccessOwner || access == WorkflowAccessWrite
 }
 
 func (api *StreamingAPI) canUseSessionIDForQuery(r *http.Request, sessionID string) bool {

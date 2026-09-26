@@ -239,8 +239,11 @@ type UpdateWorkflowManifestRequest struct {
 	// (back to the account default) while omission leaves them untouched.
 	RunNotificationRecipients   *[]string `json:"run_notification_recipients,omitempty"`
 	PulseNotificationRecipients *[]string `json:"pulse_notification_recipients,omitempty"`
-	// Per-summary Gmail senders. Pointers so an omitted field means "leave
-	// unchanged" while an explicit "" means "clear it and inherit the default".
+	// One sender for this workflow's Gmail notifications. Empty inherits the
+	// account default. Saving it clears legacy per-summary sender overrides.
+	NotificationGmailConnectionID *string `json:"notification_gmail_connection_id,omitempty"`
+	// Legacy per-summary sender overrides. New clients select one sender with
+	// NotificationGmailConnectionID, which clears these lists.
 	RunNotificationGmailConnectionIDs   *[]string `json:"run_notification_gmail_connection_ids,omitempty"`
 	PulseNotificationGmailConnectionIDs *[]string `json:"pulse_notification_gmail_connection_ids,omitempty"`
 	// NotificationInstructions is retained for older clients that still send a
@@ -339,6 +342,21 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	if level := workflowAccessForManifest(GetUserFromContext(r.Context()), manifest); level != WorkflowAccessOwner && level != WorkflowAccessWrite {
 		writeWorkflowPermissionDenied(w, "owner")
 		return
+	}
+	if req.NotificationGmailConnectionID != nil {
+		id := strings.TrimSpace(*req.NotificationGmailConnectionID)
+		if id != "" {
+			gmail, gmailErr := ensureGmailService()
+			if gmailErr != nil {
+				http.Error(w, gmailErr.Error(), http.StatusBadRequest)
+				return
+			}
+			conn, found := gmail.GetConnection(id)
+			if !found || !conn.Enabled {
+				http.Error(w, "Notify sender must be an enabled Gmail connection", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 	if req.KnowledgebaseSources != nil {
 		if err := workflowkb.Validate(stepworkflow.GetPromptDocsRoot(), req.WorkspacePath, *req.KnowledgebaseSources); err != nil {
@@ -466,6 +484,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	if req.RunNotificationInstructions != nil || req.PulseNotificationInstructions != nil ||
 		req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil ||
 		req.RunNotificationRecipients != nil || req.PulseNotificationRecipients != nil ||
+		req.NotificationGmailConnectionID != nil ||
 		req.RunNotificationGmailConnectionIDs != nil || req.PulseNotificationGmailConnectionIDs != nil {
 		runInstructions := ""
 		pulseInstructions := ""
@@ -482,6 +501,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 		if manifest.Capabilities.Notifications == nil && (runInstructions != "" || pulseInstructions != "" ||
 			req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil ||
 			req.RunNotificationRecipients != nil || req.PulseNotificationRecipients != nil ||
+			req.NotificationGmailConnectionID != nil ||
 			req.RunNotificationGmailConnectionIDs != nil || req.PulseNotificationGmailConnectionIDs != nil) {
 			manifest.Capabilities.Notifications = &WorkflowNotificationConfig{}
 		}
@@ -506,6 +526,9 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 			}
 			if req.PulseNotificationGmailConnectionIDs != nil {
 				manifest.Capabilities.Notifications.PulseSummaryGmailConnectionIDs = normalizeGmailConnectionIDs(*req.PulseNotificationGmailConnectionIDs)
+			}
+			if req.NotificationGmailConnectionID != nil {
+				setWorkflowNotificationSender(manifest.Capabilities.Notifications, *req.NotificationGmailConnectionID)
 			}
 		}
 	} else if req.NotificationInstructions != nil {
@@ -550,6 +573,12 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 		"manifest":       manifest,
 		"workspace_path": req.WorkspacePath,
 	})
+}
+
+func setWorkflowNotificationSender(config *WorkflowNotificationConfig, connectionID string) {
+	config.GmailConnectionID = strings.TrimSpace(connectionID)
+	config.RunSummaryGmailConnectionIDs = nil
+	config.PulseSummaryGmailConnectionIDs = nil
 }
 
 func normalizeWorkflowFolderGrants(requested, previous []workflowtypes.WorkflowFolderGrant) ([]workflowtypes.WorkflowFolderGrant, error) {

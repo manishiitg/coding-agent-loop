@@ -86,6 +86,37 @@ func (m *mockWorkspaceAPI) handleDocument(w http.ResponseWriter, r *http.Request
 	path := decodeWorkspacePath(strings.TrimPrefix(r.URL.Path, "/api/documents/"))
 
 	switch r.Method {
+	case http.MethodPost:
+		if !strings.HasSuffix(path, "/append-history") {
+			http.NotFound(w, r)
+			return
+		}
+		path = strings.TrimSuffix(path, "/append-history")
+		var body struct {
+			Messages []json.RawMessage          `json:"messages"`
+			Patch    map[string]json.RawMessage `json:"patch"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(m.files[path]), &record); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var history []json.RawMessage
+		_ = json.Unmarshal(record["conversation_history"], &history)
+		history = append(history, body.Messages...)
+		record["conversation_history"], _ = json.Marshal(history)
+		for key, value := range body.Patch {
+			record[key] = value
+		}
+		encoded, _ := json.Marshal(record)
+		m.files[path] = string(encoded)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 	case http.MethodGet:
 		m.mu.Lock()
 		content, ok := m.files[path]
@@ -93,6 +124,23 @@ func (m *mockWorkspaceAPI) handleDocument(w http.ResponseWriter, r *http.Request
 		if !ok {
 			http.NotFound(w, r)
 			return
+		}
+		if tail := r.URL.Query().Get("tail"); tail != "" {
+			n, _ := strconv.Atoi(tail)
+			var record map[string]json.RawMessage
+			if json.Unmarshal([]byte(content), &record) == nil {
+				var history []json.RawMessage
+				_ = json.Unmarshal(record["conversation_history"], &history)
+				total := len(history)
+				if n < len(history) {
+					history = history[len(history)-n:]
+				}
+				record["conversation_history"], _ = json.Marshal(history)
+				record["history_total"], _ = json.Marshal(total)
+				record["history_tail"] = json.RawMessage("true")
+				encoded, _ := json.Marshal(record)
+				content = string(encoded)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,

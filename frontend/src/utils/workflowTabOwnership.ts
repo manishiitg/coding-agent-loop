@@ -35,3 +35,43 @@ export function activeWorkflowTabIdForPreset(
   const tab = activeTabId ? tabs[activeTabId] : undefined
   return workflowTabBelongsToPreset(tab, activePresetId, tabs) ? activeTabId ?? undefined : undefined
 }
+
+type TabEventCounts = Record<string, ReadonlyArray<unknown> | undefined>
+
+/**
+ * The selected workflow's active tab already holds a last-known transcript in
+ * memory, so the pane can show it at once while the reconnect refreshes it.
+ */
+export function activeWorkflowTabHasCachedConversation(
+  activeTabId: string | null,
+  activePresetId: string | null,
+  tabs: Record<string, ChatTab>,
+  tabEvents: TabEventCounts,
+): boolean {
+  const tabId = activeWorkflowTabIdForPreset(activeTabId, activePresetId, tabs)
+  const sessionId = tabId ? tabs[tabId]?.sessionId : undefined
+  return !!sessionId && (tabEvents[sessionId]?.length ?? 0) > 0
+}
+
+/**
+ * The workflow's persistent Chat when its transcript is still in memory: the
+ * same tab resolveWorkflowTabForSession's no-session case settles on, picked
+ * the same way (most recently opened). Switching back to a workflow opens it
+ * immediately; the full session resolution then runs in the background and
+ * moves on only when it finds a different conversation.
+ */
+export function cachedWorkflowTabIdForPreset(
+  presetId: string,
+  tabs: Record<string, ChatTab>,
+  tabEvents: TabEventCounts,
+): string | undefined {
+  let best: ChatTab | undefined
+  for (const tab of Object.values(tabs)) {
+    const meta = tab.metadata
+    if (meta?.mode !== 'workflow' || meta.presetQueryId !== presetId) continue
+    if (meta.phaseId !== 'workflow-builder' || meta.isViewOnly === true) continue
+    if (!tab.sessionId || (tabEvents[tab.sessionId]?.length ?? 0) === 0) continue
+    if (!best || (tab.lastAccessedAt ?? tab.createdAt ?? 0) > (best.lastAccessedAt ?? best.createdAt ?? 0)) best = tab
+  }
+  return best?.tabId
+}

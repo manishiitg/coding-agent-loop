@@ -512,6 +512,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if workflowSessionID == "" {
 		workflowSessionID = agentSessionID
 	}
+	// The conversation that owns its own tab in a shared managed browser
+	// (session_tabs.go). CDP keeps its own per-port owner (cdpOwnerID).
+	sessionTabOwner := sessionTabOwnerID(agentSessionID, workflowSessionID)
 	if isCdpMode {
 		// Auto mode may become CDP after the surrounding request was assembled.
 		// Grant the host Downloads read path at the moment CDP is actually used,
@@ -656,7 +659,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			tracker.CountForAgent(agentSessionID), tracker.CountForWorkflow(workflowSessionID), tracker.Count())
 
 		// If closing, remove from tracker
-		if command == "close" || command == "quit" || command == "exit" {
+		if (command == "close" || command == "quit" || command == "exit") && !SessionHasOtherTabOwners(session, sessionTabOwner) {
 			log.Printf("[BROWSER_TRACKER] Closing browser: browser=%q agent=%q", session, agentSessionID)
 			defer tracker.Remove(session)
 		}
@@ -929,6 +932,20 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			log.Printf("[BROWSER] CDP: verified target tab %q before %q", selectedTab, command)
 		}
 	}
+	// Managed headless browser shared by several conversations (a Crew's or a
+	// workflow's): each conversation gets and keeps its own tab, selected before
+	// every command while AcquireBrowserAutomation above is held.
+	sessionTabNote := ""
+	if !isCdpMode {
+		routed, routeErr := e.routeSessionOwnerTab(ctx, session, sessionTabOwner, command, commandArgs, opts)
+		if routeErr != nil {
+			return "", routeErr
+		}
+		if routed.handled {
+			return routed.output, nil
+		}
+		sessionTabNote = routed.note
+	}
 
 	exclusiveFeature, exclusiveAction := cdpExclusiveFeatureAction(command, commandArgs)
 	if isCdpMode && exclusiveFeature == "video recording" && exclusiveAction == "start" {
@@ -1000,6 +1017,13 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		logPreKillDiagnostics(session)
 	}
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
+	if err != nil && isHeadless && strings.Contains(err.Error(), "timed out after") {
+		// The daemon is stuck behind the page: capture evidence straight from
+		// Chrome so the caller learns whether the page is busy or blocked.
+		if summary := captureHangDiagnostics(session, command); summary != "" {
+			err = fmt.Errorf("%w. Diagnosis: %s", err, summary)
+		}
+	}
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
 	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).
@@ -1300,6 +1324,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if recordingContextNote != "" {
 		output = strings.TrimSpace(output) + "\n\n" + recordingContextNote
 	}
+	if sessionTabNote != "" {
+		output = strings.TrimSpace(output) + "\n\n" + sessionTabNote
+	}
 
 	return output, nil
 }
@@ -1441,12 +1468,7 @@ func browserContextGuardPaths(ctx context.Context, key common.ContextKey) []stri
 // by itself indicate a dead session worth resetting, and does not touch
 // shouldRetryCDPTimeout's shared allowlist.
 func (e *Executor) listCDPTabs(ctx context.Context, session, cdpURL string, opts *ExecuteOptions) (string, error) {
-	args := []string{
-		"--session", session,
-		"tab",
-		"--cdp", cdpURL,
-		"--json",
-	}
+	args := cdpTabTarget(session, cdpURL).command("tab")
 	output, err := e.Client.ExecuteCommand(ctx, args, opts)
 	if err != nil && isGenuineCDPListingTimeout(err) {
 		log.Printf("[BROWSER] CDP tab list timed out for session %q, retrying once: %v", session, err)
@@ -1475,12 +1497,7 @@ func executeOptionsWithTimeout(opts *ExecuteOptions, timeout time.Duration) *Exe
 }
 
 func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string, opts *ExecuteOptions) (string, error) {
-	return e.Client.ExecuteCommand(ctx, []string{
-		"--session", session,
-		"tab", tab,
-		"--cdp", cdpURL,
-		"--json",
-	}, opts)
+	return e.Client.ExecuteCommand(ctx, cdpTabTarget(session, cdpURL).command("tab", tab), opts)
 }
 
 func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, ownerID, tab, command string) (string, error) {
@@ -2065,6 +2082,7 @@ func runCommand(name string, args ...string) (string, error) {
 // first try -- failed with "Failed to create a ProcessSingleton for your
 // profile directory" even though nothing was actually still running.
 func killSessionRuntimeFully(session string) {
+	clearSessionTabScope(session)
 	killSessionRuntime(session)
 	removeSessionFiles(session)
 	removeStaleChromeSingletonLock(session)

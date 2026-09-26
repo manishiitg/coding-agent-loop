@@ -281,19 +281,26 @@ func TestWorkflowChatNativeAgentToolsScope(t *testing.T) {
 	env := newTriggerLinkEnv(t)
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
 	chat := QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder", SelectedFolder: "Workflow/reports"}
-	if env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
-		t.Fatal("switch off: native tools must stay off")
+	// On by default: a workflow that never set the switch uses native tools.
+	if !env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
+		t.Fatal("interactive Builder chat must use native tools by default")
 	}
 	manifest, _, err := ReadWorkflowManifest(ctx, "Workflow/reports")
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest.Capabilities.NativeAgentTools = true
-	raw, _ := json.Marshal(manifest)
-	env.mock.mu.Lock()
-	env.mock.files[manifestPath("Workflow/reports")] = string(raw)
-	env.mock.mu.Unlock()
-
+	setSwitch := func(enabled bool) {
+		manifest.Capabilities.NativeAgentTools = &enabled
+		raw, _ := json.Marshal(manifest)
+		env.mock.mu.Lock()
+		env.mock.files[manifestPath("Workflow/reports")] = string(raw)
+		env.mock.mu.Unlock()
+	}
+	setSwitch(false)
+	if env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
+		t.Fatal("switch explicitly off: native tools must stay off")
+	}
+	setSwitch(true)
 	if !env.api.workflowChatNativeAgentTools(ctx, chat, "sess-1", false) {
 		t.Fatal("interactive Builder chat with the switch on must use native tools")
 	}

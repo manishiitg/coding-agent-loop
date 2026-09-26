@@ -20,8 +20,9 @@ describe('settings form kit adoption', () => {
     expect(slack).not.toContain('<button')
     expect(slack).not.toContain('<textarea')
     // The own-bot / shared-bot radio stays native (one ModeOption renders
-    // both): no RadioGroup in the kit.
-    expect(rawCount(slack)).toBe(1)
+    // both): no RadioGroup in the kit. The "One of my bots" picker is a
+    // native select, like the other settings dropdowns.
+    expect(rawCount(slack)).toBe(2)
   })
 
   it('builds Gmail from the shared kit with zero raw form elements', () => {
@@ -133,8 +134,8 @@ describe('settings form kit adoption', () => {
     expect(share).toContain("from '../ui/Button'")
     expect(share).not.toContain('<input')
     expect(share).not.toContain('<button')
-    // The person and role dropdowns stay native selects.
-    expect(rawCount(share)).toBe(2)
+    // The person, role and each person's role dropdowns stay native selects.
+    expect(rawCount(share)).toBe(3)
   })
 
   it('puts access tabs in the shared header with standard actions', () => {

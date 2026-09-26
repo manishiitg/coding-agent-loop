@@ -259,6 +259,48 @@ Manual delivery checks remain required even when token checks pass:
 Tokens cannot read event-subscription settings. Passing the connection test is
 not proof of end-to-end delivery.
 
+## Who a Slack turn runs as
+
+- **WhatsApp** runs as the paired user, in their own mode, and continues
+  their own chat: their crew chat, or the Builder chat the web restores for a
+  workflow. `@list` also shows other owners' crews under "Other crews
+  (read-only)"; those run in Run mode in the user's own reader chat.
+- **Channels, private channels and group DMs** are groups: the turn runs as
+  the route (the workflow or crew), always in Run mode. The sender is named in
+  the prompt (`From: <name> <email> (Slack)`) and kept as the audit actor.
+- **A 1:1 DM with a workflow's or crew's own bot** runs as the sender's
+  AgentWorks account, in that account's own mode: owner or editor gets the
+  full chat, a reader gets Run mode, anyone without access is refused. The
+  sender must be a full member of the app's Slack team (no guests, no Slack
+  Connect users), Slack must confirm the conversation is a 1:1 IM with them,
+  and their Slack email must match exactly one enabled account in
+  `users.json`. The query boundary and every tool call re-check the mapping.
+  One user, one chat: a DM continues the sender's own chat — for a crew, the
+  chat their web UI (and WhatsApp) continues; for a workflow, the Builder chat
+  their web UI restores — whichever DM thread it arrives in. The shared bot
+  does not take DMs.
+- **Replies and follow-ups.** In a 1:1 DM the bot replies directly (not in a
+  thread): top-level DM messages share one conversation keyed by the DM
+  channel (`slackThreadOption` skips `thread_ts` when the thread is the
+  channel). A reply made inside a DM thread is answered in that thread, in the
+  same chat. Channel threads are unchanged. In every bot conversation (DM,
+  channel thread, WhatsApp) a message sent while a turn runs steers the running
+  CLI, like the web chat; schedules, webhooks and Slack trigger runs queue.
+- **The agent's `slack` tool** has two modes. In an owner's full-mode chat
+  (web, WhatsApp, 1:1 DM) it takes any Slack Web API method (e.g.
+  `views.publish` to set the bot's App Home tab; the Slack tab has an "Ask AI
+  to publish the Home tab" button). In Run mode (channels, read-only users) it
+  keeps the channel-scoped read-and-reply allowlist, since anyone who can post
+  in a channel can steer the agent. The token stays backend-owned either way.
+
+DMs need the `im:history` and `im:read` scopes, the `message.im` event, and
+App Home → Messages Tab with "Allow users to send Slash commands and messages
+from the messages tab". The generated app manifest sets all of these;
+"Save & test" reports missing DM scopes without failing channel bots.
+
+Sources: `agent_go/cmd/server/services/slack_dm.go`,
+`agent_go/cmd/server/slack_dm.go`, `docs/design/bot_identity_model.md`.
+
 ## Slack workflow triggers
 
 Route owners can configure `human_message` or `trusted_app` triggers with

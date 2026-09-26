@@ -81,7 +81,11 @@ classification such as `insufficient_evidence`: those are not reasons to wait.
 Read the current plan, code and data now; if the fix is already in place, close
 it (`verified_no_change` with the check, or `changed_unverified` for a change
 you apply); if not, fix it. A due or failed Plan Drift is not a reason to leave
-an issue open either. Record truthful partial failure
+an issue open either, and neither is who filed it: an open workflow issue that
+Goal Work or another review filed is still this pass's to close. When it is a
+product or strategy choice rather than a defect, close it as the user's
+decision with the options ready, or reject it with the reason; never leave it
+open as "owned by strategy". Record truthful partial failure
 if a repair cannot be completed. Never launch an additional reviewer or Fixer.
 
 Validate changed contracts through the affected consumers. Record exact changed

@@ -7,7 +7,8 @@ import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { normalizeEventViewMode, useChatStore, waitForChatStoreHydration, type ChatTab } from '../../stores/useChatStore'
-import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { hasSavedWorkflowWorkspaceView, useWorkflowStore } from '../../stores/useWorkflowStore'
+import { loadWorkspaceLandingView } from './workspaceLandingView'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { resolveWorkflowHistoryPath } from '../../utils/workflowHistoryPath'
@@ -23,7 +24,7 @@ import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
 import { startRestoredTransportTerminal } from '../../utils/restoredTerminal'
 import { isInternalChildSession, isScheduledSession, shouldDiscoverWorkflowChatTab } from '../../utils/workflowSessionKinds'
-import { activeWorkflowTabIdForPreset } from '../../utils/workflowTabOwnership'
+import { activeWorkflowTabHasCachedConversation, activeWorkflowTabIdForPreset } from '../../utils/workflowTabOwnership'
 import { activateTab } from '../../utils/activateTab'
 import { findLatestRestorableWorkflowChatSession, isRestorableWorkflowChatSession, resolveLatestWorkflowChatAction } from '../../utils/latestWorkflowChat'
 import {
@@ -647,9 +648,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const canvasRef = useRef<WorkflowCanvasRef>(null)
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
+  // A background refresh of a transcript that is already on screen is not a
+  // load the user waits for, so the banner shows only while the tab is empty.
   const isActiveWorkflowSessionRestoring = useChatStore(state => {
     const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
-    return !!tab?.sessionId && (state.restoringWorkflowSessions[tab.sessionId] ?? 0) > 0
+    return !!tab?.sessionId &&
+      (state.restoringWorkflowSessions[tab.sessionId] ?? 0) > 0 &&
+      (state.tabEvents[tab.sessionId]?.length ?? 0) === 0
   })
   const revealWorkflowChat = useCallback((tabId: string) => {
     const chatStore = useChatStore.getState()
@@ -852,6 +857,23 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
 
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow' || !activePresetId || !workspacePath || hasSavedWorkflowWorkspaceView(activePresetId)) return
+    let cancelled = false
+    const presetId = activePresetId
+    void loadWorkspaceLandingView(workspacePath).then(landing => {
+      if (cancelled || useGlobalPresetStore.getState().activePresetIds.workflow !== presetId || hasSavedWorkflowWorkspaceView(presetId)) return
+      const view = landing === 'dashboard' ? 'report' : landing === 'plan' ? 'flow' : 'identity'
+      useAppStore.getState().setWorkspaceMinimized(true)
+      useWorkflowStore.setState({
+        workflowWorkspaceView: view,
+        showWorkspacePane: true,
+        ...(view === 'report' || view === 'flow' ? { lastCanvasView: view } : {}),
+      })
+    })
+    return () => { cancelled = true }
+  }, [activePresetId, selectedModeCategory, workspacePath])
+
   const activeWorkflowChatTabId = useChatStore(state => {
     const tabId = activeWorkflowTabIdForPreset(state.activeTabId, activePresetId, state.chatTabs)
     const tab = tabId ? state.chatTabs[tabId] : undefined
@@ -936,8 +958,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const workflowConversationKey = `${activePresetId || ''}:${workspacePath || ''}`
   const [resolvedWorkflowConversationKey, setResolvedWorkflowConversationKey] = useState('')
   const resolvedWorkflowConversationKeyRef = useRef('')
+  // A workflow seen earlier in this page keeps its transcript in memory. Show
+  // it at once; the reconnect below refreshes it in the background.
+  const activeTabHasCachedWorkflowConversation = useChatStore(state =>
+    activeWorkflowTabHasCachedConversation(state.activeTabId, activePresetId, state.chatTabs, state.tabEvents)
+  )
   const isWorkflowConversationResolving = Boolean(
-    activePresetId && resolvedWorkflowConversationKey !== workflowConversationKey,
+    activePresetId &&
+    resolvedWorkflowConversationKey !== workflowConversationKey &&
+    !activeTabHasCachedWorkflowConversation,
   )
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(
@@ -1320,6 +1349,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             )
             .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
+        // These reads are independent. Start them together: run one after
+        // another they put three server round trips in front of the chat.
+        const runningWorkflowsPromise = agentApi.listRunningWorkflows()
+          .then(response => response, () => null)
+        const latestHistoryPromise = workspacePath
+          ? agentApi.listChatHistorySessions(5, 0, workspacePath, 'chat')
+            .then(history => ({ sessions: history.sessions || [] as ChatHistorySession[] }), (error: unknown) => ({ error }))
+          : undefined
+
         // 1. Get active (running) sessions from in-memory cache
         //    Include both 'workflow' (execution) and 'workflow_phase' (workflow builder, plan-improvement)
         const activeSessions = await useChatStore.getState().getActiveSessions()
@@ -1353,16 +1391,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Build a combined list — active sessions first, then recent DB sessions (deduped)
         const activeSessionIds = new Set(activeWorkflowSessions.map(s => s.session_id))
         const runningWorkflowsBySession = new Map<string, RunningWorkflowInfo>()
-        try {
-          const response = await agentApi.listRunningWorkflows()
-          if (cancelled) return
-          for (const running of response.running || []) {
-            if (running.session_id) {
-              runningWorkflowsBySession.set(running.session_id, running)
-            }
+        // The running registry is an enhancement here; active sessions still
+        // restore below when it fails.
+        const runningResponse = await runningWorkflowsPromise
+        if (cancelled) return
+        for (const running of runningResponse?.running || []) {
+          if (running.session_id) {
+            runningWorkflowsBySession.set(running.session_id, running)
           }
-        } catch {
-          /* Running registry is an enhancement here; active sessions still restore below. */
         }
         const sessionsToRestore: Array<{
           sessionId: string
@@ -1392,6 +1428,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // through only when its persisted chat tab already binds it to the
         // current preset (so reload doesn't drop a tab the user has been using).
         const chatTabsById = useChatStore.getState().chatTabs
+        // Registry misses are looked up per session. Issue those lookups
+        // together rather than one round trip per loop iteration.
+        const registryLookups = new Map(activeWorkflowSessions
+          .filter(s => !runningWorkflowsBySession.has(s.session_id) && shouldDiscoverWorkflowChatTab({
+            sessionId: s.session_id,
+            triggeredBy: s.triggered_by,
+            botPlatform: s.bot_platform,
+          }, Object.values(chatTabsById).some(tab =>
+            tab.sessionId === s.session_id && tab.metadata?.presetQueryId === activePresetId
+          )))
+          .map(s => [s.session_id, agentApi.getRunningWorkflow(s.session_id).then(running => running, () => undefined)] as const))
         for (const s of activeWorkflowSessions) {
           const registryRunning = runningWorkflowsBySession.get(s.session_id)
           const scheduledSession = isScheduledSession({
@@ -1415,15 +1462,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             continue
           }
           let belongsToPreset = isLiveWorkflowSessionForPreset(s, activePresetId, workspacePath)
-          try {
-            const running = registryRunning || await agentApi.getRunningWorkflow(s.session_id)
-            if (running.preset_query_id) {
-              belongsToPreset = running.preset_query_id === activePresetId
-            } else if (workspacePath && running.workspace_path) {
-              belongsToPreset = normalizeWorkflowPath(running.workspace_path) === normalizeWorkflowPath(workspacePath)
-            }
-          } catch {
-            /* registry miss — fall through to persisted-tab check below */
+          // A registry miss falls through to the persisted-tab check below.
+          const running = registryRunning || await registryLookups.get(s.session_id)
+          if (running?.preset_query_id) {
+            belongsToPreset = running.preset_query_id === activePresetId
+          } else if (workspacePath && running?.workspace_path) {
+            belongsToPreset = normalizeWorkflowPath(running.workspace_path) === normalizeWorkflowPath(workspacePath)
           }
           if (!belongsToPreset) {
             const persistedTab = Object.values(chatTabsById).find(
@@ -1487,11 +1531,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Hoisted: the latest-first activation below reuses this list, and
         // fetches it itself when live sessions skip this block entirely.
         let historySessions: ChatHistorySession[] | undefined
-        if (!hasLiveInteractiveSession && workspacePath) {
+        if (!hasLiveInteractiveSession && latestHistoryPromise) {
           try {
-            const history = await agentApi.listChatHistorySessions(5, 0, workspacePath, 'chat')
+            const history = await latestHistoryPromise
             if (cancelled) return
-            historySessions = history.sessions || []
+            if ('error' in history) throw history.error
+            historySessions = history.sessions
             const latestSavedChat = findLatestRestorableWorkflowChatSession(historySessions)
             if (latestSavedChat && !queuedSessionIds.has(latestSavedChat.session_id)) {
               queuedSessionIds.add(latestSavedChat.session_id)
@@ -1753,9 +1798,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           const store = useChatStore.getState()
           if (activeWorkflowTabIdForPreset(store.activeTabId, activePresetId, store.chatTabs)) {
             try {
-              if (!historySessions && workspacePath) {
-                const history = await agentApi.listChatHistorySessions(5, 0, workspacePath, 'chat')
-                if (!cancelled) historySessions = history.sessions || []
+              if (!historySessions && latestHistoryPromise) {
+                const history = await latestHistoryPromise
+                if ('error' in history) throw history.error
+                if (!cancelled) historySessions = history.sessions
               }
               if (cancelled) return
               const latestStore = useChatStore.getState()
@@ -1832,7 +1878,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
     }
 
-    const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
+    // No settle delay: the chat pane stays hidden until this resolves, and
+    // `cancelled` already drops a run superseded by a newer selection.
+    const timeoutId = setTimeout(reconnectWorkflowTabs, 0)
     return () => {
       cancelled = true
       clearTimeout(timeoutId)
@@ -2207,6 +2255,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [showRunningDrawer, setShowChatArea])
 
+  // These slots own their subscriptions. Reusing their elements lets the
+  // memoized workspace host ignore chat-only WorkflowLayout renders.
+  const chatTabsSlot = useMemo(() => showChatArea ? <WorkflowChatTabs embedded /> : undefined, [showChatArea])
+  const workshopPanel = useMemo(() => workspacePath ? (
+    <AutomationHubPanel
+      key={`${activePresetId || 'workflow'}:${workspacePath}`}
+      entityType="workflow"
+      workspacePath={workspacePath}
+      workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
+      chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
+    />
+  ) : undefined, [activePresetId, workspacePath])
+
   // No preset selected state
   if (!activeWorkflowPreset && !workspacePath) {
     return (
@@ -2246,16 +2307,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // first grid item. Spanning a non-existent second column would otherwise
       // leave the full-width chat occupying only half of a desktop viewport.
       sharedToolbar={showChatArea && workspacePaneVisible}
-      chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded /> : undefined}
-      workshopPanel={workspacePath ? (
-        <AutomationHubPanel
-          key={`${activePresetId || 'workflow'}:${workspacePath}`}
-          entityType="workflow"
-          workspacePath={workspacePath}
-          workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
-          chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
-        />
-      ) : undefined}
+      chatTabsSlot={chatTabsSlot}
+      workshopPanel={workshopPanel}
       paneClassName={layout.canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}

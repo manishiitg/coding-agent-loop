@@ -1373,3 +1373,25 @@ describe('product side-channel events', () => {
     expect(selectTerminalEvents([question], null, [])).toEqual([])
   })
 })
+
+// RTS rtslatency, Cursor over tmux: the confirmation of a steered question and
+// its whole one-chunk reply arrived in one batch. The backend dates the
+// question no later than the reply it held (equal time, journal order breaks
+// the tie); the reply must render after the question as the newest row.
+describe('steered question and one-chunk reply in one batch', () => {
+  const sessionId = 'aa7480bf'
+  const main = { execution_id: `main:${sessionId}`, execution_kind: 'main_agent', session_id: sessionId }
+  const reply = 'No. The plan was **not** updated for crews.'
+  const batch: PollingEvent[] = [
+    evt({ ...main, id: 'user-message-2fcd5415', type: 'user_message', timestamp: '2026-09-25T12:11:15.900Z', data: { content: 'did you update the plan' } }),
+    evt({ ...main, id: 'user:2fcd5415', sequence: 514, type: 'user_message', timestamp: '2026-09-25T12:11:20.963898417Z', data: { data: { content: 'did you update the plan', role: 'user' } } }),
+    evt({ ...main, id: 'observer:chunk', sequence: 515, type: 'streaming_chunk', timestamp: '2026-09-25T12:11:20.963898417Z', data: { type: 'streaming_chunk', data: { content: reply, chunk_index: 1, is_tool_call: false, source: 'transcript' } } }),
+    evt({ ...main, id: 'observer:completion', sequence: 516, type: 'unified_completion', timestamp: '2026-09-25T12:11:20.963927538Z', data: { type: 'unified_completion', data: { final_result: reply, status: 'completed' } } }),
+  ]
+
+  it('renders the reply after its question, as the newest row', () => {
+    const items = buildTranscriptItems(selectTerminalEvents(batch, null))
+    const rows = items.map(item => item.kind === 'event' ? item.event.type : item.kind)
+    expect(rows).toEqual(['user_message', 'unified_completion'])
+  })
+})

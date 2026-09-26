@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	pkgevents "github.com/manishiitg/mcpagent/events"
 )
 
 // A steered message is journalled when the CLI confirms it took the message,
@@ -15,6 +17,14 @@ import (
 // belong to that answer and pass through; an idle session holds immediately.
 
 var deferredSteerHoldTimeout = 20 * time.Second
+
+// deferredSteerInFlightCap bounds the wait while the session is still
+// answering the previous message. A CLI takes a message sent mid-answer only
+// when that answer ends, which can take minutes; the 20s timeout above starts
+// at that end, not at the send. Counting from the send wrote the second
+// message into the middle of the first answer (msg1, msg2, rest of reply1,
+// reply2) although the CLI ran msg1 -> reply1 -> msg2 -> reply2.
+var deferredSteerInFlightCap = 30 * time.Minute
 
 type pendingSteer struct {
 	event   Event
@@ -65,10 +75,21 @@ func (es *EventStore) BeginDeferredSteer(sessionID string, user Event) {
 		state.holds[sessionID] = hold
 	}
 	hold.pending = append(hold.pending, &pendingSteer{event: user})
+	es.armSteerHoldTimerLocked(sessionID, hold)
+}
+
+// armSteerHoldTimerLocked (re)starts the hold's timeout: the short one once
+// the in-flight answer has ended, the long cap while it is still streaming.
+// Callers hold state.mu.
+func (es *EventStore) armSteerHoldTimerLocked(sessionID string, hold *deferredSteerHold) {
 	if hold.timer != nil {
 		hold.timer.Stop()
 	}
-	hold.timer = time.AfterFunc(deferredSteerHoldTimeout, func() { es.timeoutSteerHold(sessionID) })
+	wait := deferredSteerHoldTimeout
+	if !hold.boundaryPassed {
+		wait = deferredSteerInFlightCap
+	}
+	hold.timer = time.AfterFunc(wait, func() { es.timeoutSteerHold(sessionID) })
 }
 
 // CompleteDeferredSteer writes the user row at the CLI's ack (unless a timeout
@@ -99,6 +120,7 @@ func (es *EventStore) CompleteDeferredSteer(sessionID string, user Event) {
 		}
 	}
 	remaining := len(hold.pending)
+	user = datedBeforeHeldAnswer(user, hold.held)
 	state.mu.Unlock()
 	_ = es.addEventUnheld(sessionID, user)
 	if remaining == 0 {
@@ -121,9 +143,7 @@ func (es *EventStore) timeoutSteerHold(sessionID string) {
 		if !pending.written {
 			pending.written = true
 			state.timedOut[steerKey(sessionID, pending.event.ID)] = true
-			event := pending.event
-			event.Timestamp = time.Now()
-			users = append(users, event)
+			users = append(users, datedBeforeHeldAnswer(UserMessageAt(pending.event, time.Now()), hold.held))
 		}
 	}
 	hold.pending = nil
@@ -132,6 +152,44 @@ func (es *EventStore) timeoutSteerHold(sessionID string) {
 		_ = es.addEventUnheld(sessionID, user)
 	}
 	es.releaseSteerHold(sessionID, hold)
+}
+
+// UserMessageAt dates a user row (envelope, agent event and message payload)
+// at the given moment.
+func UserMessageAt(event Event, at time.Time) Event {
+	event.Timestamp = at
+	if event.Data != nil {
+		agentEvent := *event.Data
+		agentEvent.Timestamp = at
+		if message, ok := agentEvent.Data.(*pkgevents.UserMessageEvent); ok && message != nil {
+			copied := *message
+			copied.Timestamp = at
+			agentEvent.Data = &copied
+		}
+		event.Data = &agentEvent
+	}
+	return event
+}
+
+// datedBeforeHeldAnswer keeps the user row's time no later than the first
+// held answer row. The row is dated at the ack, but a held answer row keeps
+// the time it was produced, which can precede the ack (Cursor writes its chat
+// store only once output begins). The chat orders the main conversation by
+// timestamp, so an ack-dated question sorted below its own reply: the reply was
+// processed but rendered above the question, never as the newest row. Equal
+// times fall back to journal sequence, where the user row comes first.
+// Callers hold state.mu.
+func datedBeforeHeldAnswer(user Event, held []Event) Event {
+	var earliest time.Time
+	for _, event := range held {
+		if !event.Timestamp.IsZero() && (earliest.IsZero() || event.Timestamp.Before(earliest)) {
+			earliest = event.Timestamp
+		}
+	}
+	if earliest.IsZero() || !user.Timestamp.After(earliest) {
+		return user
+	}
+	return UserMessageAt(user, earliest)
 }
 
 func (es *EventStore) releaseSteerHold(sessionID string, hold *deferredSteerHold) {
@@ -187,6 +245,7 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 	if hold == nil || !answerRow {
 		if hold != nil && ends && !hold.boundaryPassed {
 			hold.boundaryPassed = true
+			es.armSteerHoldTimerLocked(sessionID, hold)
 		}
 		return false
 	}
@@ -199,6 +258,7 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 		// Rows up to the in-flight answer's end belong to that answer.
 		if ends {
 			hold.boundaryPassed = true
+			es.armSteerHoldTimerLocked(sessionID, hold)
 		}
 		return false
 	}

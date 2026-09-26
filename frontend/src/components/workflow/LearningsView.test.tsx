@@ -11,11 +11,14 @@ type MarkdownRendererProps = {
   onWorkspaceLinkClick?: (filepath: string, displayPath: string) => boolean | void
 }
 
+// The view's imports (the LLM store) also read getApiBaseUrl at load time.
 vi.mock('../../services/api', () => ({
   agentApi: {
     getPlannerFiles: vi.fn(),
     getPlannerFileContent: vi.fn(),
   },
+  getApiBaseUrl: () => '',
+  getAuthToken: () => null,
 }))
 
 vi.mock('../ui/MarkdownRenderer', () => ({

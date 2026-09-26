@@ -1004,10 +1004,8 @@ export interface WhatsAppStatus {
   own_jid: string
   qr_available: boolean
   qr_expires_at?: string
-  /** Linked phones/numbers for this Runloop account. slot "" is the primary. */
+  /** The account's linked phone (one WhatsApp per account). */
   devices?: WhatsAppDevice[]
-  /** Which device a scan would pair right now (primary until paired, else the next extra). */
-  next_device?: WhatsAppNextDevice
   pairing_active?: boolean
   pairing_started_at?: string
   pairing_error?: string
@@ -1025,22 +1023,13 @@ export interface WhatsAppStatus {
 }
 
 export interface WhatsAppDevice {
-  /** Device slot; "" is the primary. */
+  /** Always "": an account links one phone. */
   slot: string
-  /** User-visible name for this WhatsApp person/number. */
   label?: string
   paired: boolean
   connected: boolean
   own_jid?: string
   qr_available: boolean
-}
-
-export interface WhatsAppNextDevice {
-  /** Slot name for the device that will be paired next. */
-  slot: string
-  label?: string
-  qr_available: boolean
-  qr_expires_at?: string
 }
 
 export interface SlackConfig {
@@ -1064,6 +1053,32 @@ export interface SlackConnection {
   is_default: boolean
   workspace_path?: string  // Owning workflow/project; empty = platform-managed
   profile_id?: string  // Agent profile for product scopes; empty = workflow/platform
+}
+
+// One channel route on a workflow's or crew's own bot: that channel answers
+// for another workflow or crew the bot's owner can write.
+export interface SlackBotChannelRoute {
+  channel_id: string
+  workspace_path: string
+  profile_id?: string
+  label?: string
+}
+
+// A workflow's or crew's own bot the caller manages ("One of my bots").
+// Never carries tokens.
+export interface SlackUsableBot {
+  id: string
+  display_name: string
+  enabled: boolean
+  configured: boolean
+  workspace_path: string
+  profile_id?: string
+  owner_label?: string
+  channel_routes: SlackBotChannelRoute[]
+}
+
+export interface SlackUsableBotsResponse {
+  bots: SlackUsableBot[]
 }
 
 export interface SlackConnectionsResponse {
@@ -1114,6 +1129,17 @@ export interface SlackTestResponse {
   success: boolean
   message: string
   test_id?: string  // Unique ID for polling test replies
+}
+
+// What a mention of a Slack app would do, without posting or running
+// (POST /connections/{id}/dry-run).
+export interface SlackDryRunResponse {
+  admitted: boolean
+  /** How an admitted turn runs: channels always "run"; a 1:1 DM in its sender's own mode. */
+  mode?: 'full' | 'run'
+  reason?: string
+  replies?: string[]
+  destination?: string
 }
 
 export interface SlackTestReplyResponse {
@@ -1740,6 +1766,8 @@ export interface CostAggregate {
   cache_write_tokens: number
   total_cost_usd: number
   call_count: number
+  // LLM calls without a known price are excluded from total_cost_usd.
+  unpriced_call_count?: number
   // Sum of time spent waiting for LLM generations. This deliberately excludes
   // tool execution and queue time, so it is not a workflow wall-clock duration.
   llm_generation_duration_ms?: number
@@ -1786,17 +1814,57 @@ export interface CostOverviewAggregate extends CostAggregate {
   provider_actual_cost_usd?: number
   subscription_shadow_cost_usd?: number
   token_estimate_cost_usd?: number
-  unpriced_call_count?: number
 }
 
 export interface CostOverviewItem extends CostOverviewAggregate {
-  // Workflow/<name>, a Crew root, or "other" (chats and unattributed spend).
+  // Workflow/<name>, a Crew/product project root, or "other".
   id: string
-  kind: 'workflow' | 'crew' | 'other'
+  kind: 'workflow' | 'crew' | 'product' | 'other'
   name: string
   owner_id?: string
   by_scope?: Record<string, CostAggregate>
   by_model?: Record<string, CostAggregate>
+  by_user?: CostOverviewActor[]
+  by_bot?: CostOverviewBot[]
+  by_mcp?: CostOverviewMCP[]
+}
+
+export interface CostOverviewUser extends CostOverviewAggregate {
+  id: string
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+  by_work?: CostOverviewWork[]
+}
+
+export interface CostOverviewActor extends CostOverviewAggregate {
+  id: string
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+}
+
+export interface CostOverviewWork extends CostOverviewAggregate {
+  id: string
+  kind: CostOverviewItem['kind']
+  name: string
+  by_scope?: Record<string, CostAggregate>
+  by_model?: Record<string, CostAggregate>
+}
+
+export interface CostOverviewBot extends CostOverviewAggregate {
+  id: string
+  name: string
+  workflow: string
+  platform: string
+  user_id: string
+}
+
+export interface CostOverviewMCP {
+  server: string
+  calls: number
+  unpriced_calls: number
+  recorded_cost_usd: number
 }
 
 export interface CostOverview {
@@ -1806,6 +1874,9 @@ export interface CostOverview {
   by_provider: Record<string, CostAggregate>
   by_model: Record<string, CostAggregate>
   items: CostOverviewItem[]
+  by_user?: CostOverviewUser[]
+  by_bot?: CostOverviewBot[]
+  by_mcp?: CostOverviewMCP[]
   includes_other: boolean
 }
 
@@ -3052,10 +3123,7 @@ export interface WorkflowNotificationAccountChannelInfo {
   default_sender?: string
   /** Which configured connection default_sender belongs to. */
   default_sender_connection_id?: string
-  /**
-   * Connections a workflow may send from. Fewer than two entries means there
-   * is nothing to choose and the picker stays hidden.
-   */
+  /** Connections available to the Notify sender picker. */
   sender_choices?: WorkflowNotificationSenderChoice[]
 }
 
@@ -3083,8 +3151,9 @@ export interface WorkflowNotificationInfoResponse {
   pulse_summary_channels?: string[]
   // Who each summary is emailed to. Empty means the account default recipient.
   run_summary_recipients?: string[]
-  /** Which Gmail account(s) each summary sends FROM. Several entries deliver
-   *  the summary once per account; absent means inherit the default. */
+  /** One sender selected for this workflow's Notify emails; empty inherits the account default. */
+  gmail_connection_id?: string
+  /** Legacy per-summary sender overrides; Notify now selects one sender. */
   run_summary_gmail_connection_ids?: string[]
   pulse_summary_gmail_connection_ids?: string[]
   pulse_summary_recipients?: string[]
@@ -3368,6 +3437,7 @@ export interface WorkflowCapabilities {
   slack_connection_id?: string
   // Builder and Run-mode chats use the coding CLI's own read/search, skills,
   // todos and subagents (agent_tools hybrid). Steps and automations never do.
+  // On unless explicitly false (see utils/nativeAgentTools).
   native_agent_tools?: boolean
 }
 
@@ -3488,9 +3558,10 @@ export interface UpdateWorkflowManifestRequest {
   // omit the field to leave it unchanged.
   run_notification_recipients?: string[]
   pulse_notification_recipients?: string[]
-  // Which Gmail account(s) each summary is sent FROM. Several entries fan the
-  // summary out, one delivery per account. Send an empty array to clear back to
-  // the account default; omit the field to leave it unchanged.
+  /** One sender for this workflow's Notify emails. Empty inherits the account default. */
+  notification_gmail_connection_id?: string
+  // Legacy per-summary sender overrides. New Notify settings use
+  // notification_gmail_connection_id and clear these lists.
   run_notification_gmail_connection_ids?: string[]
   pulse_notification_gmail_connection_ids?: string[]
   notification_instructions?: string

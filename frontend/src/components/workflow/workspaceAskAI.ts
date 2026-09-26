@@ -21,7 +21,7 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   pulse: "Tell me what Pulse is and how it can help me. Explain in plain words, then ask what I want to review or act on.",
   backup: "Help me set up or change backup for this workflow. Explain the current state and ask what should be backed up and where.",
   publish: "Help me publish this workflow. Explain its current publishing state and ask which target and release process I want.",
-  notify: "Help me change this workflow's notifications. Explain the current setup and ask which events, channels, and recipients I want.",
+  notify: "Help me change this workflow's notifications. Explain the current setup, including the Gmail sender, and ask which events, channels, sender, and recipients I want.",
   access: "Help me understand or change access to this workflow. Explain the current permissions and ask who should have which level of access.",
   playbooks: "Help me choose and use an AgentWorks playbook for this workflow. Ask what outcome I need, compare relevant playbooks, and explain the setup before changing anything.",
   mcp: "Help me add an app connection or a skill for this workflow. Ask what I want to connect or which capability it needs, then help me set it up.",
@@ -64,7 +64,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<IntegrationTabId, { label: string; 
   },
   cli: {
     label: 'Integrations · Connect',
-    summary: "Help me connect the command line or an AI assistant to this installation. Explain browser sign-in, the login command, and the MCP bridge, and ask what I want to do first.",
+    summary: "Help me connect an AI agent to this installation through MCP. Explain the HTTP MCP URL and browser sign-in, and ask which AI app I use.",
   },
 }
 

@@ -56,9 +56,13 @@ func TestHandleAgentBrowserBrokersRecordingAcrossStartAndStop(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		mu.Lock()
-		requests = append(requests, got)
-		mu.Unlock()
+		// Per-conversation tab selection (session_tabs.go) adds `tab` calls
+		// before each command; this test is about the record commands only.
+		if strings.Contains(got.Command, " record ") {
+			mu.Lock()
+			requests = append(requests, got)
+			mu.Unlock()
+		}
 		_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{Stdout: `{"success":true}`, ExitCode: 0}})
 	}))
 	defer server.Close()

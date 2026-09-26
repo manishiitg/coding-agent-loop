@@ -91,3 +91,21 @@ func TestCompletionClearsEveryAcceptedMessageReaction(t *testing.T) {
 		t.Fatalf("follow-up acknowledgement left behind: %#v", c.removed)
 	}
 }
+
+// The final message is the answer the web chat shows, not the answer with the
+// turn's running narration in front of it.
+func TestFinalReplyReplacesStreamedNarration(t *testing.T) {
+	ctx := context.Background()
+	c := &replyBoundaryConnector{}
+	f := NewBotEventFilter(c, ThreadID{Platform: "slack"}, "session", "", "user")
+	f.processEvent(ctx, replyChunk("I'll check the AWS logs.\n\nSwitching to us-east-2.\n\nLogs show a LiveKit disconnect at 21:56.", false))
+	f.flushStreamingMessage(ctx, "Logs show a LiveKit disconnect at 21:56.")
+	if len(c.updates) == 0 || c.updates[len(c.updates)-1] != "reply-1:Logs show a LiveKit disconnect at 21:56." {
+		t.Fatalf("final message kept the narration: sent=%#v updates=%#v", c.sent, c.updates)
+	}
+	updates := len(c.updates)
+	f.flushStreamingMessage(ctx, "Logs show a LiveKit disconnect at 21:56.")
+	if len(c.updates) != updates {
+		t.Fatal("an identical final message must not be re-sent")
+	}
+}

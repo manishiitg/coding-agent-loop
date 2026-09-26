@@ -168,7 +168,7 @@ describe('CreateWorkProjectDialog', () => {
     })
     expect(container.textContent).toContain('exports work first')
     await act(async () => { (container!.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement).click() })
-    expect(onCreate).toHaveBeenCalledWith('Spend & Payables Coordinator', expect.stringContaining('Review bills'), '🧮', 'spend-payables-coordinator')
+    expect(onCreate).toHaveBeenCalledWith('Spend & Payables Coordinator', expect.stringContaining('Review proposed purchases, bills and spend'), '🧮', 'spend-payables-coordinator')
     await act(async () => { root.unmount() })
   })
 

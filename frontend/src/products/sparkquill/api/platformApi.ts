@@ -342,29 +342,23 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     // QR request names the profile (and where photos land — the inbox the
     // attach button already uses, so process-file files them); the status
     // poll repairs a pairing made before the default existed.
-    whatsappStatus: async (opts) => {
+    whatsappStatus: async () => {
       const s = await request<{
         paired?: boolean; connected?: boolean; own_jid?: string
         qr_available?: boolean; qr_expires_at?: string
         default_profile_id?: string
-        devices?: { slot: string; paired: boolean; connected: boolean; own_jid?: string }[]
-        next_device?: { slot?: string; qr_available?: boolean; qr_expires_at?: string }
-      }>('GET', `/api/whatsapp/status${opts?.addAnother ? '?device=next' : ''}`)
+      }>('GET', '/api/whatsapp/status')
       if (s.paired && s.default_profile_id !== PARENT_PROFILE) {
         await request('PUT', '/api/whatsapp/default-profile', { profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER }).catch(() => undefined)
       }
-      // Every linked phone (one per parent); the QR is always for the phone
-      // a scan would pair next, so "add another parent" needs no extra step.
-      const devices = s.devices ?? (s.paired && s.own_jid ? [{ slot: '', paired: true, connected: s.connected === true, own_jid: s.own_jid }] : [])
-      const pairing = s.next_device ?? { qr_available: s.qr_available, qr_expires_at: s.qr_expires_at }
+      // One WhatsApp per account: the linked phone, or the QR to link it.
       return {
-        accounts: devices.filter((d) => d.paired && d.own_jid).map((d) => ({ jid: (d.own_jid ?? '').replace(/@.*$/, ''), connected: d.connected })),
-        pairing: { qr_available: pairing.qr_available === true, qr_expires_at: pairing.qr_expires_at },
+        accounts: s.paired && s.own_jid ? [{ jid: s.own_jid.replace(/@.*$/, ''), connected: s.connected === true }] : [],
+        pairing: { qr_available: s.qr_available === true, qr_expires_at: s.qr_expires_at },
       }
     },
-    whatsappPairImageUrl: (nonce, addAnother) => {
+    whatsappPairImageUrl: (nonce) => {
       const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, size: '384', n: String(nonce) })
-      if (addAnother) params.set('device', 'next')
       // An <img> cannot send a header; the platform accepts the token as a
       // query parameter, the same way rawUrl does.
       params.set('token', store.get() ?? '')

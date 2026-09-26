@@ -44,8 +44,20 @@ hand those off once and keep your pass on the goal.
      sources.
    - **Binding constraints** — a `soul.md` constraint that appears to cost the
      goal (see Challenging constraints).
+   - **Already done elsewhere** — another workflow or a Crew on this platform
+     may already have what this goal needs: leads, research, results, code, a
+     skill, or a Crew whose functions do the job. Look with `search_platform`
+     (`list_workflows` / `list_crews` with a query, then read what fits)
+     before building it again, and name the source in your item.
 4. **Do the work.** Pick 1–3 bounded items with the best expected effect on the
-   primary goal and complete them now, within your permission levels. Examples:
+   primary goal and complete them now, within your permission levels. When the
+   goal is **far behind** (the primary metric's progress in `get_goal_metrics`
+   is at or near zero, or well short of where its target date needs it), take
+   up to 5 items, prefer those that produce a real outcome in this pass over
+   research and plans, and name the single biggest blocker. When a permission
+   level is that blocker (for example every outcome needs an outward send that
+   is set to ask), make one decision asking the user to raise it, with the
+   evidence. Examples:
    a researched prospect or audience list, a drafted post series on an untested
    angle, a competitor teardown with concrete moves, an extra run of an existing
    route against new targets. Record each with
@@ -76,7 +88,14 @@ hand those off once and keep your pass on the goal.
    new followers came from), the run length or sample needed, and a stop
    rule. Name all of them; do not defer them to later formalization. Prepare it; running it goes
    through the Run level and any new outward action through the Outward level.
-5. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
+5. **Say when to come back.** When the primary goal is far behind, say so
+   plainly in your result reason and name the next moment worth checking. When
+   the primary goal is behind and you have
+   work ready or results maturing within hours, say in your result reason
+   when the next pass would be useful (for example "check replies at 18:00");
+   the finalizer schedules the next Pulse from it, as soon as six hours out.
+   When the goal is on track and nothing is waiting, say so.
+6. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
    `reason` is the short user-facing result: what you did for them, what needs
    them, and any constraint you are challenging. A pass with nothing worth doing
    says so honestly; do not invent work. Do not repeat an unchanged idea just to
@@ -102,7 +121,7 @@ prepare it fully and create a decision so the user's part is one approval.
 | Level | What you may do |
 |---|---|
 | Prepare | Always. Research, analysis, drafts, lists and plans written under `pulse/work/<YYYY-MM-DD>/`. |
-| Run | When `auto`: run existing workflow steps or routes yourself (`execute_step`, `run_full_workflow`) when that directly advances the goal, within every constraint. When `ask`: prepare it and create a decision asking the user to run it. |
+| Run | When `auto`: run existing workflow steps or routes yourself (`execute_step`, `run_full_workflow`) when that directly advances the goal, within every constraint, and have a Crew do bounded work for it (`ask_platform_crew`). When `ask`: prepare it and create a decision asking the user to run it. |
 | Outward | Posting, sending, commenting or contacting anyone beyond what existing steps normally do. When `auto`: do it yourself with the workflow's own accounts and tools, within soul.md limits and the workflow's caps and dedupe records; verify it landed and record it where the workflow records its own actions. When `ask`: prepare it fully and create a decision (`needs_user`). Never purchase or spend money yourself. |
 | Change the workflow | Plan, step and schedule edits. When `auto`: make them yourself with the typed Builder tools (they are recorded, and Plan Drift reviews dependents next pass); never delete steps or schedules. When `ask`: propose the change with an exact ready patch through a decision; the existing decision flow applies it after approval. soul.md goals and constraints are never yours to edit at any level: challenge them. |
 

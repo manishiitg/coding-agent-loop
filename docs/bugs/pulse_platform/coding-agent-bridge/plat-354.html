@@ -991,6 +991,38 @@ native journal from the beginning, including rows committed while the server
 was down. Native sequence IDs let the chat journal discard already persisted
 events. A restore test verifies that a completed background task is replayed
 without waiting for another foreground turn.</p>
+<h3 id="muse-slow-first-prompt-intake">Muse slow first-prompt intake (2026-09-25)</h3>
+<p><strong>Symptom:</strong> the first prompt of a new Muse tmux session failed with
+<code>muse prompt delivery unconfirmed after durable intake wait; last discovery
+error: no muse session log has a matching intake record since &lt;launch&gt;</code>.
+The platform marked the turn failed and restarted the session, but Muse accepted
+the prompt moments later and ran the whole turn unseen. Pulse lost its first
+step on every Muse workflow (Plan Drift in fix runs, the Gate in one full Pulse).</p>
+<p><strong>Evidence:</strong> Muse's own <code>session.jsonl</code> shows the delay
+between session start and <code>runtime.user_intent.accepted</code>:</p>
+<ul>
+<li>jobsearch fix run, session <code>01a0d6b8…</code>: session started 09:29:40,
+prompt accepted 09:30:45 (+66s); the adapter gave up at 09:30:44. Muse then worked
+the turn until 09:52.</li>
+<li>hetznerssh fix run, 2026-09-24: session started 17:44:34, prompt accepted
+17:46:49 (+135s).</li>
+<li>upwork fix run, 2026-09-24: same failure message on its first turn.</li>
+</ul>
+<p><strong>Cause:</strong> <code>museWaitIntake</code> waited a fixed 60s for the
+intake record. A cold Muse session can need over two minutes before it accepts
+its first prompt.</p>
+<p><strong>Fix:</strong> after 60s, if Muse has already written a session log for
+this workdir since the turn started (<code>museSessionStartedSince</code>), the wait
+extends to 5 minutes; with no session at all it still fails at 60s
+(<code>multi-llm-provider-go/pkg/adapters/musecli/musecli_interactive_turn.go</code>,
+unit test <code>TestMuseSessionStartedSinceSeesAStartedSessionForTheWorkdir</code>).
+Not yet live-verified: confirm on the next Muse Pulse fix run that the first step
+completes and no duplicate turn runs.</p>
+<p><strong>Related, not fixed here:</strong> after that failure, the jobsearch
+scheduled session <code>schedule-cron--d13c74ea_1790304931282532000</code> retried a
+closed session every ~5s ("AskWithHistory failed: session is closed", 6,000+ times
+from 09:29 onward): the background synthetic-turn retry never stops for a closed
+session.</p>
 <h3>Later phase: native multiple-choice UI</h3>
 <ul>
 <li>A live Muse turn asking three questions in one <code>request_user_input</code> call

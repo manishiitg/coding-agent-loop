@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -233,6 +234,11 @@ type SlackService struct {
 	interactionHandler BotInteractionHandler
 	botID              string
 	botUserID          string // Bot's own Slack user ID (for stripping @mentions)
+	teamID             string // The app's own Slack team; DMs as a user need the sender in it
+
+	// dmSenderLookup reads a DM sender and conversation from Slack; tests
+	// replace it (nil = the Slack API).
+	dmSenderLookup func(ctx context.Context, userID, channelID string) (SlackDMSender, error)
 
 	// Message deduplication — prevents processing the same Slack event twice
 	seenMessages   map[string]time.Time
@@ -311,10 +317,7 @@ func (s *SlackService) SendUserNotification(ctx context.Context, message string,
 			nil,
 		),
 	}
-	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
-	if threadTS != "" {
-		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
-	}
+	postOpts := append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, slackThreadOption(channelID, threadTS)...)
 
 	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "user_notification", body, 1, len(blocks))
 	_, timestamp, err := s.client.PostMessageContext(ctx, channelID, postOpts...)
@@ -623,10 +626,7 @@ func (s *SlackService) SendFeedbackNotification(
 		slack.NewTextBlockObject("mrkdwn", footerText, false, false),
 	))
 
-	postOpts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
-	if threadTS != "" {
-		postOpts = append(postOpts, slack.MsgOptionTS(threadTS))
-	}
+	postOpts := append([]slack.MsgOption{slack.MsgOptionBlocks(blocks...)}, slackThreadOption(channelID, threadTS)...)
 
 	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "notification", message, 1, len(blocks))
 
@@ -1214,6 +1214,9 @@ type SlackConnectionInput struct {
 
 // CreateSlackConnection adds a registry entry with a server-minted ID.
 func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackConnectionInput) (SlackConnection, error) {
+	if err := ValidateBotScope(input.WorkspacePath, input.ProfileID); err != nil {
+		return SlackConnection{}, err
+	}
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	if input.DisplayName == "" {
 		return SlackConnection{}, fmt.Errorf("slack connection display_name is required")
@@ -1225,6 +1228,9 @@ func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackCon
 		return SlackConnection{}, err
 	}
 	return s.modifySlackRegistry(ctx, func(cfg *SlackConfig) (SlackConnection, error) {
+		if err := slackTokensInUse(cfg, "", input.BotToken, input.AppToken); err != nil {
+			return SlackConnection{}, err
+		}
 		taken := make(map[string]bool, len(cfg.Connections))
 		for _, conn := range cfg.Connections {
 			taken[conn.ID] = true
@@ -1241,6 +1247,37 @@ func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackCon
 		cfg.Connections = append(cfg.Connections, conn)
 		return conn, nil
 	})
+}
+
+// ErrSlackTokenInUse refuses a Slack token that another connection already
+// uses. Slack delivers each Socket Mode event over only one of an app's open
+// connections, so one app saved on two connections (e.g. two workflows)
+// would answer each mention from a random one of them.
+var ErrSlackTokenInUse = errors.New("slack token already in use")
+
+// slackTokensInUse reports a bot or app token already used by a connection
+// other than exceptID, naming where it is connected.
+func slackTokensInUse(cfg *SlackConfig, exceptID, botToken, appToken string) error {
+	botToken, appToken = strings.TrimSpace(botToken), strings.TrimSpace(appToken)
+	for _, other := range cfg.Connections {
+		if other.ID == exceptID {
+			continue
+		}
+		sameBot := botToken != "" && strings.TrimSpace(other.BotToken) == botToken
+		sameApp := appToken != "" && strings.TrimSpace(other.AppToken) == appToken
+		if !sameBot && !sameApp {
+			continue
+		}
+		where := "the shared platform bot"
+		switch {
+		case other.ProfileID != "" && other.WorkspacePath != "":
+			where = "the Crew at " + other.WorkspacePath
+		case other.WorkspacePath != "":
+			where = "the workflow " + other.WorkspacePath
+		}
+		return fmt.Errorf("%w: this Slack app is already connected as %q (%s). Each Slack app can be connected once; to serve several workflows with one bot, keep it on one of them and pick it under \"One of my bots\" on the others, or use the shared bot with channel routes", ErrSlackTokenInUse, other.DisplayName, where)
+	}
+	return nil
 }
 
 // UpdateSlackConnection edits one registry entry. Empty or masked tokens
@@ -1272,9 +1309,86 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 			if err := validateSlackConnectionTokens(conn.BotToken, conn.AppToken); err != nil {
 				return SlackConnection{}, err
 			}
+			if err := slackTokensInUse(cfg, conn.ID, conn.BotToken, conn.AppToken); err != nil {
+				return SlackConnection{}, err
+			}
 			conn.Enabled = input.Enabled
-			conn.WorkspacePath = strings.TrimSpace(input.WorkspacePath)
-			conn.ProfileID = strings.TrimSpace(input.ProfileID)
+			nextPath, nextProfile := strings.TrimSpace(input.WorkspacePath), strings.TrimSpace(input.ProfileID)
+			if err := ValidateBotScope(nextPath, nextProfile); err != nil {
+				return SlackConnection{}, err
+			}
+			if !SameSlackScopePath(nextPath, conn.WorkspacePath) || nextProfile != conn.ProfileID {
+				// Channel routes were granted by the old scope's owner; a
+				// rescoped app must not keep answering for their destinations.
+				// Repairing a crew path's form (logical to physical) is not a
+				// rescope and keeps them.
+				conn.ChannelRoutes = nil
+			}
+			conn.WorkspacePath = nextPath
+			conn.ProfileID = nextProfile
+			cfg.Connections[i] = conn
+			return conn, nil
+		}
+		return SlackConnection{}, fmt.Errorf("slack connection %q not found", connID)
+	})
+}
+
+// ErrSlackChannelRouted refuses a channel route that would replace another
+// destination's route on the same connection: one channel answers for one
+// destination per app.
+var ErrSlackChannelRouted = errors.New("slack channel already routed")
+
+// SetSlackConnectionChannelRoute adds (route != nil) or removes (route == nil)
+// one channel route on a scoped connection. Adding a channel that already
+// routes to another destination fails with ErrSlackChannelRouted; the
+// caller removes it first. Authorization is the caller's job.
+func (s *SlackService) SetSlackConnectionChannelRoute(ctx context.Context, connID, channelID string, route *SlackConnectionRoute) (SlackConnection, error) {
+	connID = strings.TrimSpace(connID)
+	channelID = NormalizeSlackChannelID(channelID)
+	if connID == "" || channelID == "" {
+		return SlackConnection{}, fmt.Errorf("slack connection id and channel id are required")
+	}
+	return s.modifySlackRegistry(ctx, func(cfg *SlackConfig) (SlackConnection, error) {
+		for i, conn := range cfg.Connections {
+			if conn.ID != connID {
+				continue
+			}
+			if strings.TrimSpace(conn.WorkspacePath) == "" {
+				return SlackConnection{}, fmt.Errorf("the shared platform bot routes channels in Access > Slack, not here")
+			}
+			existing, found := conn.ChannelRoutes[channelID]
+			if route == nil {
+				if !found {
+					return SlackConnection{}, fmt.Errorf("channel %s has no route on this bot", channelID)
+				}
+				delete(conn.ChannelRoutes, channelID)
+				cfg.Connections[i] = conn
+				return conn, nil
+			}
+			next := *route
+			next.WorkspacePath = strings.TrimSpace(next.WorkspacePath)
+			next.ProfileID = strings.TrimSpace(next.ProfileID)
+			if next.WorkspacePath == "" {
+				return SlackConnection{}, fmt.Errorf("a route needs a destination workflow or crew project")
+			}
+			if err := ValidateBotScope(next.WorkspacePath, next.ProfileID); err != nil {
+				return SlackConnection{}, err
+			}
+			if next.SameDestination(conn.WorkspacePath, conn.ProfileID) {
+				return SlackConnection{}, fmt.Errorf("this bot already answers for its own %s in every channel", map[bool]string{true: "crew", false: "workflow"}[next.ProfileID != ""])
+			}
+			if found {
+				if existing.SameDestination(next.WorkspacePath, next.ProfileID) {
+					return SlackConnection{}, fmt.Errorf("channel %s already answers for this destination on this bot", channelID)
+				}
+				return SlackConnection{}, fmt.Errorf("%w: channel %s on this bot already answers for %s; remove that route first", ErrSlackChannelRouted, channelID, existing.WorkspacePath)
+			}
+			routes := make(map[string]SlackConnectionRoute, len(conn.ChannelRoutes)+1)
+			for key, value := range conn.ChannelRoutes {
+				routes[key] = value
+			}
+			routes[channelID] = next
+			conn.ChannelRoutes = routes
 			cfg.Connections[i] = conn
 			return conn, nil
 		}
@@ -1622,6 +1736,13 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	if s.handleConfiguredSlackTrigger(ev) {
 		return
 	}
+	// A 1:1 DM with the bot (channel_type "im"): every message, top-level or
+	// in a thread, is addressed to the bot. Group DMs ("mpim") are groups
+	// and take the channel path below.
+	if ev.ChannelType == "im" {
+		s.handleSlackDirectMessage(ev)
+		return
+	}
 
 	// Only process thread replies (not bot messages)
 	if ev.BotID != "" || ev.ThreadTimeStamp == "" || ev.ThreadTimeStamp == ev.TimeStamp {
@@ -1652,7 +1773,7 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	// Detect colleague tags on the raw text: route/file enrichment below
 	// may append text, and stripping (mention path) removes tags.
 	tagsAnotherUser := slackMessageTagsAnotherUser(text, s.botUserID)
-	userEmail := s.resolveUserEmail(userID)
+	userName, userEmail := s.resolveSlackUser(userID)
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), userID, userEmail, channelID, threadTS, text, isThreadReply)
 	if handled {
 		return
@@ -1662,7 +1783,7 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	s.messageHandler(BotIncomingMessage{
 		Platform:          "slack",
 		UserID:            userID,
-		UserName:          userID,
+		UserName:          userName,
 		UserEmail:         userEmail,
 		ChannelID:         channelID,
 		ConnectionID:      s.connectionID,
@@ -1846,6 +1967,7 @@ func (s *SlackService) resolveBotIdentity() {
 	if err == nil {
 		s.botUserID = authResp.UserID
 		s.botID = authResp.BotID
+		s.teamID = authResp.TeamID
 		log.Printf("[SLACK_BOT] Bot user ID resolved: %s", s.botUserID)
 	}
 }
@@ -1986,9 +2108,10 @@ func (s *SlackService) SendThreadMessage(ctx context.Context, threadID ThreadID,
 		)
 		_, ts, err := s.client.PostMessageContext(ctx,
 			threadID.ChannelID,
-			slack.MsgOptionText(part, false),
-			slack.MsgOptionBlocks(sectionBlock),
-			slack.MsgOptionTS(threadID.ThreadTS),
+			append([]slack.MsgOption{
+				slack.MsgOptionText(part, false),
+				slack.MsgOptionBlocks(sectionBlock),
+			}, slackThreadOption(threadID.ChannelID, threadID.ThreadTS)...)...,
 		)
 		if err != nil {
 			return lastTS, fmt.Errorf("failed to post thread message: %w", err)
@@ -2046,8 +2169,7 @@ func (s *SlackService) SendThreadMessageWithBlocks(ctx context.Context, threadID
 
 	_, ts, err := s.client.PostMessageContext(ctx,
 		threadID.ChannelID,
-		slack.MsgOptionBlocks(slackBlocks...),
-		slack.MsgOptionTS(threadID.ThreadTS),
+		append([]slack.MsgOption{slack.MsgOptionBlocks(slackBlocks...)}, slackThreadOption(threadID.ChannelID, threadID.ThreadTS)...)...,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to post thread message with blocks: %w", err)
@@ -2127,26 +2249,22 @@ func (s *SlackService) GetThreadHistory(ctx context.Context, threadID ThreadID) 
 
 	var history []ThreadMessage
 	for _, msg := range msgs {
-		isBot := msg.BotID != "" || (s.botUserID != "" && msg.User == s.botUserID)
+		isSelf := (s.botUserID != "" && msg.User == s.botUserID) || (s.botID != "" && msg.BotID == s.botID)
+		isBot := msg.BotID != "" || isSelf
 
-		// Parse timestamp
-		ts := time.Now()
-		if msg.Timestamp != "" {
-			// Slack timestamps are Unix epoch with fractional seconds
-			parts := strings.SplitN(msg.Timestamp, ".", 2)
-			if len(parts) >= 1 {
-				var sec int64
-				fmt.Sscanf(parts[0], "%d", &sec)
-				ts = time.Unix(sec, 0)
-			}
+		ts, ok := parseSlackTS(msg.Timestamp)
+		if !ok {
+			ts = time.Now()
 		}
 
 		history = append(history, ThreadMessage{
 			UserID:    msg.User,
-			UserName:  msg.User, // Slack API returns user ID; resolving display names would need users.info
-			Text:      msg.Text,
+			UserName:  slackMessageAuthorName(msg), // humans: user ID (resolving display names needs users.info); apps: app name
+			Text:      slackMessageText(msg),
 			Timestamp: ts,
 			IsBot:     isBot,
+			IsSelf:    isSelf,
+			TS:        msg.Timestamp,
 		})
 	}
 
@@ -2212,26 +2330,47 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
 
-	userEmail := s.resolveUserEmail(ev.User)
-	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, text, isThreadReply)
+	userName, userEmail := s.resolveSlackUser(ev.User)
+	msg, handled := s.mentionMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, ev.TimeStamp, text, isThreadReply)
 	if handled {
 		return
 	}
-	s.messageHandler(BotIncomingMessage{
+	msg.UserName = userName
+	s.messageHandler(msg)
+}
+
+// mentionMessage builds the bot message for a Slack mention, with the route
+// this app resolves for the channel attached. handled reports a message the
+// route already answered (e.g. a blocked sender). The app-mention handler and
+// the bot dry run (DryRunMention) share it.
+func (s *SlackService) mentionMessage(ctx context.Context, userID, userEmail, channelID, threadTS, messageTS, text string, isThreadReply bool) (BotIncomingMessage, bool) {
+	text, presetRoute, handled := s.routeSlackWorkflowMessage(ctx, userID, userEmail, channelID, threadTS, text, isThreadReply)
+	if handled {
+		return BotIncomingMessage{}, true
+	}
+	return BotIncomingMessage{
 		Platform:       "slack",
-		UserID:         ev.User,
-		UserName:       ev.User,
+		UserID:         userID,
+		UserName:       userID,
 		UserEmail:      userEmail,
-		ChannelID:      ev.Channel,
+		ChannelID:      channelID,
 		ConnectionID:   s.connectionID,
 		ThreadTS:       threadTS,
 		Text:           text,
-		MessageTS:      ev.TimeStamp,
+		MessageTS:      messageTS,
 		Timestamp:      time.Now(),
 		IsThreadReply:  isThreadReply,
 		IsMention:      true,
 		PresetWorkflow: presetRoute,
-	})
+	}, false
+}
+
+// DryRunMention builds the message a mention of this app in channelID by
+// userEmail would produce, on a fresh synthetic thread. blocked reports a
+// sender the route refuses.
+func (s *SlackService) DryRunMention(ctx context.Context, userEmail, channelID, text string) (msg BotIncomingMessage, blocked bool) {
+	threadTS := fmt.Sprintf("dryrun.%d", time.Now().UnixNano())
+	return s.mentionMessage(ctx, "dry-run", strings.TrimSpace(userEmail), strings.ToUpper(strings.TrimSpace(channelID)), threadTS, threadTS, text, false)
 }
 
 // slackUserMentionTag matches Slack user tags (<@U123>, <@U123|label>).
@@ -2319,22 +2458,30 @@ func (s *SlackService) slackUserDisplayName(userID string) string {
 // resolveUserEmail looks up a Slack user's email via users.info API.
 // Returns empty string on failure (non-fatal).
 func (s *SlackService) resolveUserEmail(userID string) string {
+	_, email := s.resolveSlackUser(userID)
+	return email
+}
+
+// resolveSlackUser returns the sender's display name (userID when Slack has
+// none or the lookup fails) and profile email, from one users.info call.
+func (s *SlackService) resolveSlackUser(userID string) (name, email string) {
 	if s.client == nil || userID == "" {
-		return ""
+		return userID, ""
 	}
 	user, err := s.client.GetUserInfo(userID)
 	if err != nil {
-		log.Printf("[SLACK_BOT] Failed to resolve email for user %s: %v", userID, err)
-		return ""
+		log.Printf("[SLACK_BOT] Failed to resolve user %s: %v", userID, err)
+		return userID, ""
 	}
-	return user.Profile.Email
+	name = firstNonEmptyString(user.Profile.DisplayName, user.Profile.RealName, user.RealName, user.Name, userID)
+	return name, user.Profile.Email
 }
 
 // resolveSlackRoute routes a message that arrived on this listener: a
 // dedicated (scoped) app serves its own destination, a shared app follows
 // the channel route.
 func (s *SlackService) resolveSlackRoute(ctx context.Context, channelID string) *ChannelRoute {
-	return ResolveSlackRoute(ctx, s.connectionID, func() *ChannelRoute {
+	return ResolveSlackRoute(ctx, s.connectionID, channelID, func() *ChannelRoute {
 		return s.resolveSlackChannelWorkflow(channelID)
 	})
 }
@@ -2578,13 +2725,24 @@ func (s *SlackService) GetConfig() *SlackConfig {
 	return &config
 }
 
+// slackThreadOption threads a post under threadTS, unless there is no thread
+// or the thread is the whole conversation: a 1:1 DM runs as one chat whose
+// thread id is the DM channel itself, and its replies post directly.
+func slackThreadOption(channelID, threadTS string) []slack.MsgOption {
+	threadTS = strings.TrimSpace(threadTS)
+	if threadTS == "" || threadTS == strings.TrimSpace(channelID) {
+		return nil
+	}
+	return []slack.MsgOption{slack.MsgOptionTS(threadTS)}
+}
+
 // PostRouteMessage makes exactly one Slack post, preserving the root timestamp.
 // Route scope, durable idempotency and references are owned by the application.
 func (s *SlackService) PostRouteMessage(ctx context.Context, channel, thread, message string) (string, error) {
 	if s.client == nil || !s.IsEnabled() {
 		return "", fmt.Errorf("Slack connector unavailable")
 	}
-	_, ts, err := s.client.PostMessageContext(ctx, channel, slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false), slack.MsgOptionTS(thread))
+	_, ts, err := s.client.PostMessageContext(ctx, channel, append([]slack.MsgOption{slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false)}, slackThreadOption(channel, thread)...)...)
 	return ts, err
 }
 

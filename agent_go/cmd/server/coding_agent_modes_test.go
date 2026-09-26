@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -134,8 +135,8 @@ func TestCodingAgentUsesStructuredTransportForChat(t *testing.T) {
 		{name: "Claude interactive chat uses tmux", provider: "claude-code", interactive: true},
 		{name: "Codex interactive chat uses tmux", provider: "codex-cli", interactive: true},
 		{name: "Pi interactive chat uses tmux", provider: "pi-cli", interactive: true},
-		{name: "non-interactive Cursor uses structured JSON", provider: "cursor-cli", wantStructured: true},
-		{name: "non-interactive Claude uses structured JSON", provider: "claude-code", wantStructured: true},
+		{name: "non-retained Cursor uses structured JSON", provider: "cursor-cli", wantStructured: true},
+		{name: "non-retained Claude uses structured JSON", provider: "claude-code", wantStructured: true},
 		{name: "API provider is not a structured coding CLI", provider: "openai"},
 	}
 	for _, tc := range tests {
@@ -149,26 +150,24 @@ func TestCodingAgentUsesStructuredTransportForChat(t *testing.T) {
 
 func TestCodingAgentRequestAllowsPersistentInteractive(t *testing.T) {
 	tests := []struct {
-		name      string
-		req       *QueryRequest
-		sessionID string
-		want      bool
+		name string
+		req  *QueryRequest
+		want bool
 	}{
-		{name: "ordinary user chat", req: &QueryRequest{AgentMode: "multi-agent"}, sessionID: "chat-1", want: true},
-		{name: "ordinary workflow builder chat", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder"}, sessionID: "builder-chat-1", want: true},
-		{name: "scheduled workflow builder phase is not interactive", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder", TriggeredBy: "cron"}, sessionID: "schedule-builder-1"},
-		{name: "scheduled trigger", req: &QueryRequest{TriggeredBy: "cron"}, sessionID: "chat-1"},
-		{name: "scheduled session id", req: &QueryRequest{}, sessionID: "schedule-manual--123"},
-		{name: "scheduled consecutive turns retain native CLI", req: &QueryRequest{TriggeredBy: "cron", KeepNativeSessionAlive: true}, sessionID: "schedule-manual--123", want: true},
-		{name: "background child", req: &QueryRequest{ParentSessionID: "parent-1"}, sessionID: "child-1"},
-		{name: "background child never retains native CLI", req: &QueryRequest{ParentSessionID: "parent-1", KeepNativeSessionAlive: true}, sessionID: "schedule-manual--123"},
-		{name: "typed pulse stage", req: &QueryRequest{SessionKind: "pulse_reviewer"}, sessionID: "review-1"},
-		{name: "converted schedule keeps identity and becomes persistent", req: &QueryRequest{UserInteractiveContinuation: true}, sessionID: "schedule-manual--123", want: true},
-		{name: "auto notification cannot promote schedule", req: &QueryRequest{UserInteractiveContinuation: true, IsAutoNotification: true}, sessionID: "schedule-manual--123"},
+		{name: "ordinary user chat", req: &QueryRequest{AgentMode: "multi-agent"}, want: true},
+		{name: "ordinary workflow builder chat", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder"}, want: true},
+		{name: "scheduled turn uses tmux", req: &QueryRequest{TriggeredBy: "cron"}, want: true},
+		{name: "scheduled workflow builder phase uses tmux", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder", TriggeredBy: "cron"}, want: true},
+		{name: "webhook trigger uses tmux", req: &QueryRequest{TriggeredBy: "webhook"}, want: true},
+		{name: "bot turn uses tmux", req: &QueryRequest{TriggeredBy: "bot"}, want: true},
+		{name: "background child uses tmux", req: &QueryRequest{ParentSessionID: "parent-1"}, want: true},
+		{name: "auto notification uses tmux", req: &QueryRequest{IsAutoNotification: true}, want: true},
+		{name: "typed runtime stage stays structured", req: &QueryRequest{SessionKind: "pulse_reviewer"}},
+		{name: "nil request", req: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := codingAgentRequestAllowsPersistentInteractive(tt.req, tt.sessionID); got != tt.want {
+			if got := codingAgentRequestAllowsPersistentInteractive(tt.req); got != tt.want {
 				t.Fatalf("allows persistent = %v, want %v", got, tt.want)
 			}
 		})
@@ -352,12 +351,22 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 
 	sessionID := "queued-delivery-session"
 	runningAgent := testCodingAgent(llm.ProviderOpenAI, "gpt-5")
+	delivered := 0
 	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
 		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
 		agentCancelMux:   sync.RWMutex{},
+		// A turn in flight takes the message into its queue (an idle agent
+		// refuses it; see TestHandleLiveInputMessageIdleAgentRefusalIsDefinite).
+		internalUserMessageDeliveryHandler: func(_ context.Context, gotAgent *mcpagent.Agent, req mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			delivered++
+			if gotAgent != runningAgent || req.Message != "send this through delivery" {
+				t.Fatalf("delivery = agent %p message %q, want the running agent and the message", gotAgent, req.Message)
+			}
+			return mcpagent.UserMessageDeliveryResult{DeliveryStatus: mcpagent.UserMessageDeliveryStatusQueuedForInjection}, nil
+		},
 	}
 
 	body := bytes.NewBufferString(`{"message":"send this through delivery"}`)
@@ -376,6 +385,33 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 	if response.DeliveryStatus != "queued_for_injection" {
 		t.Fatalf("delivery_status = %q, want queued_for_injection", response.DeliveryStatus)
+	}
+	if delivered != 1 {
+		t.Fatalf("delivered %d times, want once through agent delivery", delivered)
+	}
+}
+
+// An agent with no turn running refuses a live message (nothing delivered).
+// That is definite: with no previous request to start a turn from, the
+// answer is a plain 409 — never "delivery uncertain", which would block
+// sending the message again.
+func TestHandleLiveInputMessageIdleAgentRefusalIsDefinite(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+	sessionID := "idle-agent-session"
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: testCodingAgent(llm.ProviderOpenAI, "gpt-5")},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", bytes.NewBufferString(`{"message":"hello again"}`))
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+	api.handleLiveInputMessage(rr, req)
+	if rr.Code != http.StatusConflict || strings.Contains(rr.Body.String(), "delivery_uncertain") {
+		t.Fatalf("idle agent refusal = %d %s, want a definite 409", rr.Code, rr.Body.String())
 	}
 }
 
@@ -860,6 +896,8 @@ func TestLiveInputErrorProvesNoTarget(t *testing.T) {
 		{"muse pool miss", errors.New("failed to submit live input to muse-cli: no active Muse interactive session registered for owner session s"), true},
 		{"claude pool miss", errors.New("failed to submit live input to claude-code: no active Claude Code tmux session registered for owner session s"), true},
 		{"closed turn session", errors.New("session is closed"), true},
+		{"idle agent refuses its steer queue", fmt.Errorf("deliver: %w", &mcpagent.CodingAgentDeliveryError{Kind: mcpagent.DeliveryErrorKindNoSession, Provider: "claude-code", Reason: "no turn is running"}), true},
+		{"other typed delivery error", &mcpagent.CodingAgentDeliveryError{Kind: mcpagent.DeliveryErrorKindTimeout}, false},
 		{"mid-send failure", errors.New("send-keys to tmux pane failed mid-write"), false},
 		{"timeout", errors.New("delivery_timed_out waiting for ack"), false},
 	}

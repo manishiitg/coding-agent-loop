@@ -1208,6 +1208,23 @@ func TestNotificationRouteFromSelections(t *testing.T) {
 	}
 }
 
+func TestNotifyUsesOnlyOneConfiguredGmailSender(t *testing.T) {
+	dest := &services.NotificationDestination{
+		Gmail:                        &services.GmailDest{ConnectionIDs: []string{"gmail_default"}},
+		RunSummaryGmailConnectionIDs: []string{"gmail_run"},
+	}
+	if got, err := notificationSenderForKind(dest, "run_summary"); err != nil || got != "gmail_run" {
+		t.Fatalf("run sender = %q, %v", got, err)
+	}
+	if got, err := notificationSenderForKind(dest, "pulse_summary"); err != nil || got != "gmail_default" {
+		t.Fatalf("pulse sender = %q, %v", got, err)
+	}
+	dest.RunSummaryGmailConnectionIDs = []string{"gmail_run", "gmail_other"}
+	if _, err := notificationSenderForKind(dest, "run_summary"); err == nil {
+		t.Fatal("legacy multi-sender Notify setting must not fan out")
+	}
+}
+
 type testProductInteractionEmitter struct {
 	testHumanFeedbackEmitter
 	kind    string

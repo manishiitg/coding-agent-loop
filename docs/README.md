@@ -50,6 +50,7 @@ this is the complete map.
 - [Pulse review visibility](pulse-review-visibility.md)
 - [Workflow improvement through Pulse](pulse-workflow-improvement-system.md)
 - [Reusable report data and widgets](report-metric-widgets.md)
+- [Live report data from scripts (`window.report.run`)](report-live-data.md)
 - [Secrets](secrets.md)
 - [Setup Consolidation](setup-consolidation.md)
 - [Workspace UI Design Guidelines](ui-design-guidelines.md)
@@ -126,7 +127,7 @@ this is the complete map.
 
 ### Getting Started ([index](getting-started/README.md))
 
-- [AgentWorks CLI and MCP](getting-started/agentworks-cli-mcp.md)
+- [Connect an AI agent with MCP](getting-started/agentworks-cli-mcp.md)
 - [Build Your First Workflow](getting-started/first-workflow.md)
 - [Testing workflow changes alongside a running AgentWorks](getting-started/isolated-workflow-testing.md)
 

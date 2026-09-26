@@ -305,3 +305,26 @@ func TestMuseIsObservedButNeverUpdated(t *testing.T) {
 		t.Fatalf("calls=%d muse=%+v", calls, r)
 	}
 }
+
+func TestVanishedExecutableIsRecheckedBeforeTheDailyCheck(t *testing.T) {
+	m, now, bin := fixture(t)
+	calls := 0
+	m.Install = fakeUpdater("2", &calls)
+	check(t, m)
+	if calls != 4 {
+		t.Fatalf("update calls=%d, want 4", calls)
+	}
+	*now = now.Add(time.Hour)
+	check(t, m)
+	if calls != 4 {
+		t.Fatalf("an intact install was rechecked early: calls=%d", calls)
+	}
+	if err := os.Remove(filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Hour)
+	check(t, m)
+	if calls != 5 {
+		t.Fatalf("a vanished claude executable was not rechecked: calls=%d, want 5", calls)
+	}
+}

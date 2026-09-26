@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"path"
@@ -90,20 +92,6 @@ func whatsappEngineFor(profile agentprofiles.Profile, conversation ProductConver
 		return options[0], true
 	}
 	return agentprofiles.ProviderOption{}, false
-}
-
-// whatsappConversationBinding picks the conversation a WhatsApp turn runs
-// in. The account's primary phone talks in a singleton profile's main
-// conversation — the one its app shows. An extra phone (another parent's)
-// gets that profile's own separate conversation, keyed by the device, so one
-// parent's replies never appear on the other's phone. A keyed profile's
-// conversation (an activity) is the same from every phone.
-func whatsappConversationBinding(ctx context.Context, userID string, profile agentprofiles.Profile, conversationKey, deviceSlot string) (productConversationBinding, error) {
-	deviceSlot = strings.TrimSpace(deviceSlot)
-	if deviceSlot != "" && strings.EqualFold(strings.TrimSpace(profile.Runtime.Conversation.Mode), agentprofiles.ConversationModeSingleton) {
-		return resolveIsolatedProductBinding(ctx, userID, profile, "whatsapp-"+deviceSlot, profile.Name+" (WhatsApp "+deviceSlot+")")
-	}
-	return resolveProductConversationBinding(ctx, userID, profile, conversationKey)
 }
 
 func whatsappWorkspaceUserID(userID string) string {
@@ -199,7 +187,20 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
-	binding, err := whatsappConversationBinding(ctx, workspaceUserID, profile, conversationKey, msg.DeviceSlot)
+	// A crew reached by a 1:1 Slack DM or by WhatsApp runs in the sender's
+	// own chat of it (their reader chat when someone else owns it).
+	if msg.PresetProfile != nil && strings.EqualFold(profile.ID, "work") && ((msg.Platform == "slack" && msg.DirectMessage) || msg.Platform == "whatsapp") {
+		return api.senderProfileTurn(ctx, userID, profile, conversationKey, msg, threadID)
+	}
+	// In a multi-chat project (a crew) a Slack thread is its own chat (a
+	// separate native session and history), not the project's main
+	// conversation: that main chat is the owner's, and every thread sharing
+	// it mixed colleagues' questions into one context (RTS 2026-09-26).
+	// WhatsApp, and single-conversation products, keep the main conversation.
+	if msg.Platform == "slack" && msg.PresetProfile != nil && conversationKey != "" && strings.TrimSpace(threadID.ThreadTS) != "" && profileHasProjectChats(profile) {
+		conversationKey = slackThreadConversationKey(conversationKey, threadID)
+	}
+	binding, err := resolveProductConversationBinding(ctx, workspaceUserID, profile, conversationKey)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
 	}
@@ -216,6 +217,42 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 			return nil, "", false, err
 		}
 	}
+	return productBotTurnRequest(ctx, workspaceUserID, profile, conversation, msg, threadID)
+}
+
+// senderProfileTurn runs a crew turn from a 1:1 Slack DM or WhatsApp in the
+// sender's own chat of the crew: the conversation their web chat continues,
+// found exactly as the web resolves it (resolveAgentProfileConversation).
+// One user, one chat: every DM thread or WhatsApp message continues it; an
+// owner's is the crew's own chat, a reader's is their reader chat in their
+// own registry.
+func (api *StreamingAPI) senderProfileTurn(ctx context.Context, senderID string, profile agentprofiles.Profile, conversationKey string, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
+	userID := strings.TrimSpace(senderID)
+	if !IsMultiUserMode() {
+		userID = GetDefaultUserID()
+	}
+	if userID == "" {
+		return nil, "", false, fmt.Errorf("the sender has no AgentWorks account")
+	}
+	binding, owned, err := resolveConversationBindingForUser(ctx, userID, profile, conversationKey)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
+	}
+	if owned {
+		if err := initializeProductConversationWorkspace(ctx, userID, profile, binding); err != nil {
+			return nil, "", false, err
+		}
+	}
+	conversation, err := defaultProductConversationRegistryStore().resolveOrCreate(ctx, userID, profile, binding, "")
+	if err != nil {
+		return nil, "", false, fmt.Errorf("open %s conversation: %w", profile.Name, err)
+	}
+	return productBotTurnRequest(ctx, userID, profile, conversation, msg, threadID)
+}
+
+// productBotTurnRequest builds a bot turn in a resolved product
+// conversation, with the engine the conversation is bound to.
+func productBotTurnRequest(ctx context.Context, workspaceUserID string, profile agentprofiles.Profile, conversation ProductConversationRecord, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
 	input := AgentProfileChatRequest{Message: msg.Text}
 	if conversation.ProjectLLMConfig == nil {
 		if option, ok := whatsappEngineFor(profile, conversation); ok {
@@ -240,10 +277,35 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	}
 	// The channel prompt (WhatsApp's markup subset) applies to this turn only;
 	// the app's own turns in the same conversation send no bot_platform.
-	reqMap["bot_platform"] = msg.Platform
+	services.ApplyBotThreadFields(reqMap, msg.Platform, threadID)
 	reqMap["triggered_by"] = "bot:" + msg.Platform
-	if threadID.ChannelID != "" {
-		reqMap["bot_channel_id"] = threadID.ChannelID
-	}
 	return reqMap, conversation.SessionID, true, nil
+}
+
+// slackThreadConversationKey names a Slack thread's own chat in a keyed
+// project: "<project>:slack-<hash>", the multi-chat key form the project
+// binding already resolves to the same project folder and permissions.
+func slackThreadConversationKey(projectKey string, thread services.ThreadID) string {
+	project, _, _ := strings.Cut(strings.TrimSpace(projectKey), ":")
+	sum := sha256.Sum256([]byte(thread.ConnectionID + "|" + thread.ChannelID + "|" + thread.ThreadTS))
+	return project + ":slack-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// sameProjectConversation reports whether key is the route's project
+// conversation or one of that project's own chats ("<project>:<suffix>").
+func sameProjectConversation(routeKey, key string) bool {
+	routeKey, key = strings.TrimSpace(routeKey), strings.TrimSpace(key)
+	if routeKey == key {
+		return true
+	}
+	project, _, _ := strings.Cut(routeKey, ":")
+	return project != "" && strings.HasPrefix(key, project+":")
+}
+
+// profileHasProjectChats reports a keyed project profile (a crew), whose
+// projects hold several chats ("<project>:<suffix>").
+func profileHasProjectChats(profile agentprofiles.Profile) bool {
+	conversation := profile.Runtime.Conversation
+	return strings.EqualFold(strings.TrimSpace(conversation.Mode), agentprofiles.ConversationModeKeyed) &&
+		strings.EqualFold(strings.TrimSpace(conversation.KeyType), agentprofiles.ConversationKeyTypeProject)
 }

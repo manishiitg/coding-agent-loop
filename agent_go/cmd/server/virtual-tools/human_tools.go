@@ -636,15 +636,21 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 			dest.Gmail.Email = strings.Join(routedTo, ", ")
 		}
 	}
-	if senders := summarySendersForKind(dest, notificationKind); len(senders) > 0 {
-		if dest.Gmail == nil {
-			dest.Gmail = &services.GmailDest{}
-		}
-		dest.Gmail.ConnectionIDs = senders
-	}
 	routedChannels := summaryChannelsForKind(dest, notificationKind)
 	if len(routedChannels) > 0 {
 		excludeChannels = append(excludeChannels, excludedNotificationChannels(routedChannels)...)
+	}
+	if !containsNotificationChannel(excludeChannels, "gmail") {
+		sender, err := notificationSenderForKind(dest, notificationKind)
+		if err != nil {
+			return "", err
+		}
+		if sender != "" {
+			if dest.Gmail == nil {
+				dest.Gmail = &services.GmailDest{}
+			}
+			dest.Gmail.ConnectionIDs = []string{sender}
+		}
 	}
 
 	expectedGmail := gmailEnabled() || containsNotificationChannel(routedChannels, "gmail") || gc != nil ||
@@ -835,7 +841,9 @@ func summaryRecipientsForKind(dest *services.NotificationDestination, kind strin
 	}
 }
 
-// summarySenderForKind picks which Gmail account sends this notification kind.
+// notificationSenderForKind picks the one Gmail account that sends a Notify
+// message. Workflow and Builder Gmail actions use their own connection_id and
+// are not restricted by this notification setting.
 //
 // The FROM counterpart to summaryRecipientsForKind, and deliberately a separate
 // function: one decides which mailbox sends, the other who receives, and a
@@ -843,9 +851,9 @@ func summaryRecipientsForKind(dest *services.NotificationDestination, kind strin
 //
 // Precedence: the per-summary sender, then the workflow-wide one, then "" which
 // means inherit the account default connection.
-func summarySendersForKind(dest *services.NotificationDestination, kind string) []string {
+func notificationSenderForKind(dest *services.NotificationDestination, kind string) (string, error) {
 	if dest == nil {
-		return nil
+		return "", nil
 	}
 	var perSummary []string
 	switch kind {
@@ -855,12 +863,18 @@ func summarySendersForKind(dest *services.NotificationDestination, kind string) 
 		perSummary = dest.PulseSummaryGmailConnectionIDs
 	}
 	if len(perSummary) > 0 {
-		return append([]string(nil), perSummary...)
+		if len(perSummary) > 1 {
+			return "", fmt.Errorf("Notify has multiple Gmail senders configured for %s; select one sender in Notify settings", kind)
+		}
+		return strings.TrimSpace(perSummary[0]), nil
 	}
 	if dest.Gmail != nil && len(dest.Gmail.ConnectionIDs) > 0 {
-		return append([]string(nil), dest.Gmail.ConnectionIDs...)
+		if len(dest.Gmail.ConnectionIDs) > 1 {
+			return "", fmt.Errorf("Notify has multiple Gmail senders configured; select one sender in Notify settings")
+		}
+		return strings.TrimSpace(dest.Gmail.ConnectionIDs[0]), nil
 	}
-	return nil
+	return "", nil
 }
 
 func excludedNotificationChannels(allowed []string) []string {

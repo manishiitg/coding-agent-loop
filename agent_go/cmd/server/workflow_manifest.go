@@ -239,7 +239,7 @@ const (
 	pulseScheduleModeSelf  = "self"
 	pulseScheduleModeFixed = "fixed"
 
-	defaultPulseMinIntervalHours = 24
+	defaultPulseMinIntervalHours = 6
 	defaultPulseMaxIntervalHours = 168
 	// defaultPulseFirstRunHour is the local hour of a workflow's first
 	// self-scheduled Pulse when it has not yet chosen a time itself.
@@ -633,8 +633,21 @@ type WorkflowCapabilities struct {
 	// search, skills, todos and subagents; shell and file changes stay on
 	// AgentWorks tools. Interactive chats of owners and editors only: step
 	// agents, schedules, webhooks, bots and read-only users keep
-	// AgentWorks-only tools.
-	NativeAgentTools bool `json:"native_agent_tools,omitempty"`
+	// AgentWorks-only tools. On by default: nil means on and only an explicit
+	// false turns it off. Read it through NativeAgentToolsEnabled.
+	NativeAgentTools *bool `json:"native_agent_tools,omitempty"`
+}
+
+// NativeAgentToolsEnabled reports the "Native agent tools" switch, which is on
+// unless it was explicitly turned off.
+func (c WorkflowCapabilities) NativeAgentToolsEnabled() bool {
+	return nativeAgentToolsEnabled(c.NativeAgentTools)
+}
+
+// nativeAgentToolsEnabled applies the on-by-default rule shared by workflows
+// and crew projects.
+func nativeAgentToolsEnabled(setting *bool) bool {
+	return setting == nil || *setting
 }
 
 // WorkflowNotificationConfig contains only safe references. Credential values
@@ -681,14 +694,9 @@ type WorkflowNotificationConfig struct {
 	// delivering. An identifier, never a secret.
 	GmailConnectionID string `json:"gmail_connection_id,omitempty"`
 
-	// Per-summary senders. These say which account(s) each summary is sent
-	// FROM, the counterpart to RunSummaryRecipients / PulseSummaryRecipients
-	// saying where it goes TO.
-	//
-	// A LIST, following the RunSummarySlackWebhookSecretNames precedent: naming
-	// several senders fans that summary out, delivering it once per account, so
-	// the same run summary can go out from both a work and a personal mailbox.
-	// Empty falls back to GmailConnectionID, then to the account default.
+	// Legacy per-summary sender overrides. New Notify settings save one
+	// GmailConnectionID and clear these fields. A legacy list with multiple
+	// senders is refused at delivery rather than sending duplicate messages.
 	RunSummaryGmailConnectionIDs   []string `json:"run_summary_gmail_connection_ids,omitempty"`
 	PulseSummaryGmailConnectionIDs []string `json:"pulse_summary_gmail_connection_ids,omitempty"`
 

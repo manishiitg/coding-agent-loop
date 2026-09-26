@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/productschedule"
@@ -459,4 +460,25 @@ func isSharedProjectBinaryContent(raw string) bool {
 		head = head[:8192]
 	}
 	return strings.IndexByte(head, 0) >= 0
+}
+
+// whatsappOtherCrews lists other owners' crews for a WhatsApp pairing's @list
+// and @switch: the same crews the Crew UI lists for this user, read-only.
+func (api *StreamingAPI) whatsappOtherCrews(ctx context.Context, userID string) []services.WhatsAppOtherCrew {
+	userID = strings.TrimSpace(userID)
+	if api == nil || api.agentProfiles == nil || userID == "" {
+		return nil
+	}
+	claims := botWorkflowAccessClaims(userID, "", services.ChannelRoute{})
+	profile, err := api.agentProfiles.Resolve("work", 0, userID)
+	if err != nil || !userAllowedProduct(claims, profile.Product) {
+		return nil
+	}
+	var crews []services.WhatsAppOtherCrew
+	for _, ownerID := range crewProjectOwnerCandidates(userID) {
+		for _, row := range listSharedProjectsForOwner(ctx, claims, profile, ownerID) {
+			crews = append(crews, services.WhatsAppOtherCrew{ID: row.ID, Title: firstNonEmptyTrimmed(row.Title, row.Name), OwnerName: row.OwnerUsername, WorkspacePath: row.WorkspacePath})
+		}
+	}
+	return crews
 }

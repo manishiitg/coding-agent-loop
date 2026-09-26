@@ -13,6 +13,8 @@ import {
   type WorkflowNotificationInfo,
   type WorkflowNotificationState,
 } from '../../services/workflow-notifications'
+import { workflowManifestApi } from '../../services/api'
+import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { formatNotificationStateLabel } from './notificationStatus'
 import NotificationInstructions from './NotificationInstructions'
 import { AskAIButton } from './AskAIButton'
@@ -47,6 +49,10 @@ export default function WorkflowNotificationView({
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowNotificationInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [senderSelection, setSenderSelection] = useState('')
+  const [senderSaving, setSenderSaving] = useState(false)
+  const [senderError, setSenderError] = useState<string | null>(null)
+  const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
 
   const load = useCallback(async () => {
     if (!workspacePath && !loadInfo) return
@@ -55,6 +61,7 @@ export default function WorkflowNotificationView({
     try {
       const next = loadInfo ? await loadInfo() : await loadWorkflowNotificationInfo(workspacePath as string)
       setInfo(next)
+      setSenderSelection(next.runSummaryGmailConnectionIds.length || next.pulseSummaryGmailConnectionIds.length ? '__legacy__' : (next.gmailConnectionId || ''))
       onStateLoaded?.(next.effectiveState)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load notification status')
@@ -62,6 +69,26 @@ export default function WorkflowNotificationView({
       setLoading(false)
     }
   }, [loadInfo, onStateLoaded, workspacePath])
+
+  const saveSender = async (connectionId: string) => {
+    if (!workspacePath || !canWriteWorkflow || senderSaving) return
+    const previous = senderSelection
+    setSenderSelection(connectionId)
+    setSenderSaving(true)
+    setSenderError(null)
+    try {
+      await workflowManifestApi.updateWorkflowManifest({
+        workspace_path: workspacePath,
+        notification_gmail_connection_id: connectionId,
+      })
+      await load()
+    } catch (saveError) {
+      setSenderSelection(previous)
+      setSenderError(saveError instanceof Error ? saveError.message : 'Failed to save Notify sender')
+    } finally {
+      setSenderSaving(false)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -84,6 +111,7 @@ export default function WorkflowNotificationView({
   const gmailBlocked = info?.gmail?.blocked_recipients || []
   const gmailSender = info?.gmail?.default_sender?.trim() || ''
   const gmailSenderChoices = info?.gmail?.sender_choices || []
+  const hasLegacySenders = Boolean(info && (info.runSummaryGmailConnectionIds.length || info.pulseSummaryGmailConnectionIds.length))
   const scopeName = info?.scopeLabel || workspacePath?.split('/').filter(Boolean).pop() || 'Workflow'
   const senderLabel = (id: string) => {
     const choice = gmailSenderChoices.find(entry => entry.id === id)
@@ -92,8 +120,8 @@ export default function WorkflowNotificationView({
   // Run and Pulse have separate content/routing policies. Both always remain
   // visible in Activity; external delivery follows their saved instructions
   // (the default is new-and-important changes only).
-  // Read-only: /notify in chat is the one place these are set (user decision
-  // 2026-09-03 -- the editable form here duplicated it and read as clutter).
+  // Summary content and recipients remain edited through /notify in chat.
+  // The single Notify sender is selected directly above these summaries.
   const summaries = info ? [
     {
       key: 'run',
@@ -184,7 +212,7 @@ export default function WorkflowNotificationView({
                     </div>
                     <div className={rowClass}>
                       <span className={labelClass}><Mail className="h-3.5 w-3.5 text-violet-500" />Gmail</span>
-                      {gmailSender ? <span className={`${chipFrom} font-mono`} title="Sends from">{gmailSender}</span> : <span className={chipMuted}>No sending account</span>}
+                      <span className={chipMuted}>Account default From: {gmailSender || 'none'}</span>
                       {gmailDefault
                         ? <span className={`${chipTo} font-mono`} title="Default recipients">→ {gmailDefault}</span>
                         : gmailReady && <span className={chipMuted}>no default recipient</span>}
@@ -199,6 +227,32 @@ export default function WorkflowNotificationView({
                           {gmailChecking ? 'Checking…' : gmailReady ? 'Connected' : 'Not connected'}
                         </span>
                       </span>
+                    </div>
+                    <div className={rowClass}>
+                      <label htmlFor="workflow-notify-sender" className={labelClass}><Mail className="h-3.5 w-3.5 text-violet-500" />Notify From</label>
+                      <select
+                        id="workflow-notify-sender"
+                        aria-label="Notify Gmail sender"
+                        value={senderSelection}
+                        onChange={event => { void saveSender(event.target.value) }}
+                        disabled={!workspacePath || !canWriteWorkflow || senderSaving}
+                        title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined}
+                        className="min-w-0 max-w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="">Use account default{gmailSender ? ` — ${gmailSender}` : ' — none configured'}</option>
+                        {hasLegacySenders && <option value="__legacy__" disabled>Older Run/Pulse sender settings</option>}
+                        {senderSelection && senderSelection !== '__legacy__' && !gmailSenderChoices.some(choice => choice.id === senderSelection) &&
+                          <option value={senderSelection} disabled>Unavailable: {senderSelection}</option>}
+                        {gmailSenderChoices.map(choice => (
+                          <option key={choice.id} value={choice.id} disabled={!choice.ready}>
+                            {choice.email || choice.display_name || choice.id}{choice.ready ? '' : ' — unavailable'}
+                          </option>
+                        ))}
+                      </select>
+                      {senderSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Saving sender" />}
+                      <span className="text-xs text-muted-foreground">One account for Notify. Workflow and Builder Gmail actions choose independently.</span>
+                      {hasLegacySenders && <span className={chipWarn}>Older Run/Pulse sender overrides are active; choose one account to replace them.</span>}
+                      {senderError && <span role="alert" className="text-xs text-destructive">{senderError}</span>}
                     </div>
                     {overrides.length > 0 && (
                       <div className={rowClass}>

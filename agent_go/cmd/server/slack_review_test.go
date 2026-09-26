@@ -500,12 +500,18 @@ func TestSlackProfileTurnUsesWebConversationWithoutWhatsApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bot, sid, handled, err := api.botProfileTurn(context.Background(), "bot-route", services.BotIncomingMessage{Platform: "slack", UserID: "external-sender", Text: "hello", PresetProfile: &services.ProfileRoute{ProfileID: profile.ID, ConversationKey: "main", WorkspaceUserID: "alice"}}, services.ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1.2"})
+	bot, sid, handled, err := api.botProfileTurn(context.Background(), "bot-route", services.BotIncomingMessage{Platform: "slack", UserID: "external-sender", Text: "hello", PresetProfile: &services.ProfileRoute{ProfileID: profile.ID, ConversationKey: "main", WorkspaceUserID: "alice"}}, services.ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1.2", ConnectionID: "slack_own"})
 	if err != nil || !handled || sid != conversation.SessionID {
 		t.Fatalf("Slack binding: %s %v %v", sid, handled, err)
 	}
+	// The arrival app identifies a crew's own bot at revalidation.
+	if bot["bot_connection_id"] != "slack_own" || bot["bot_thread_ts"] != "1.2" {
+		t.Fatalf("Slack crew turn lost its arrival app or thread: %v %v", bot["bot_connection_id"], bot["bot_thread_ts"])
+	}
 	delete(bot, "bot_platform")
 	delete(bot, "bot_channel_id")
+	delete(bot, "bot_connection_id")
+	delete(bot, "bot_thread_ts")
 	delete(bot, "triggered_by")
 	delete(bot, "_trusted_resume_target")
 	expected, err := queryRequestToMap(web)
@@ -621,5 +627,34 @@ func TestSlackEmailBlockTakesEffectOnNextTurn(t *testing.T) {
 	claims.SlackTrustedApp = true
 	if _, err := api.revalidateExecutionPrincipal(ctx, req); err != nil {
 		t.Fatalf("trusted app treated as human: %v", err)
+	}
+}
+
+// A workflow's own Slack app works with no shared Slack bot saved at all
+// (RTS 2026-09-25: the turn failed with "bot connector config not found:
+// slack" and Slack showed "You don't currently have access").
+func TestSlackOwnAppTurnNeedsNoSharedConnectorConfig(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{ProfileID: "work", ConversationKey: "acme", WorkspacePath: "Chats/Work/projects/acme", WorkspaceUserID: "alice", BotGrant: "run"}
+	services.SetDedicatedSlackRouteFunc(func(_ context.Context, connectionID, _ string) (*ChannelRoute, bool) {
+		if connectionID != "own-app" {
+			return nil, false
+		}
+		owned := route
+		return &owned, true
+	})
+	t.Cleanup(func() { services.SetDedicatedSlackRouteFunc(nil) })
+	api := &StreamingAPI{chatStore: store}
+	claims := botRouteUserClaims("synthetic", route)
+	req := QueryRequest{AgentProfileID: "work", AgentProfileConversationKey: "acme", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C777", BotConnectionID: "own-app", BotUserID: "sender-a"}
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err != nil {
+		t.Fatalf("own-app turn rejected without a shared connector config: %v", err)
+	}
+	req.BotConnectionID = "shared-app"
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("an unrouted shared-app channel must still be refused, err = %v", err)
 	}
 }

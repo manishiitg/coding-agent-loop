@@ -8,6 +8,7 @@ import type { UserCommand } from '../types/commands'
 import type { CommandDefinition } from './types'
 import type { ModeCategory } from '../stores/useModeStore'
 import { setUserCommands } from './registry'
+import { renderCommandPrompt } from './commandPrompt'
 
 type CommandMode = Exclude<ModeCategory, null>
 let commandLoadGeneration = 0
@@ -45,13 +46,7 @@ function toCommandDefinition(uc: UserCommand): CommandDefinition {
     modes,
     source: 'user',
     execute: (ctx) => {
-      let prompt = uc.content
-      if (ctx.beforeSlash) {
-        prompt = prompt.replace(/\{\{context\}\}/g, ctx.beforeSlash)
-      } else {
-        prompt = prompt.replace(/\{\{context\}\}/g, '')
-      }
-      prompt = prompt.trim()
+      const prompt = renderCommandPrompt(uc.content, ctx.beforeSlash ?? '')
       if (prompt) {
         ctx.onSubmit(prompt)
       }

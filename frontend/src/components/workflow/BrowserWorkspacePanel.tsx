@@ -1,9 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { cloneElement, isValidElement, useState, type ReactNode } from 'react'
 import { Button } from '../ui/Button'
 import { Settings2, X } from 'lucide-react'
 import BrowserAutomationSettings, { type BrowserAutomationMode } from '../BrowserAutomationSettings'
 import WorkflowLiveBrowser from './WorkflowLiveBrowser'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
+import { WorkspaceViewActions, type WorkspaceViewActionsProps } from './WorkspaceViewActions'
+import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
 
 interface BrowserWorkspacePanelProps {
   workspacePath: string | null
@@ -46,12 +48,24 @@ export function BrowserWorkspacePanel({
   scopeNoun = 'workflow',
 }: BrowserWorkspacePanelProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const walkthrough = <WorkspacePanelGuideButton topic="Browser" />
+  const guidedAssistantControl = isValidElement<WorkspaceViewActionsProps>(assistantControl) && assistantControl.type === WorkspaceViewActions
+    ? cloneElement(assistantControl, {
+      walkthrough: cloneElement(walkthrough, {
+        ask: {
+          workspacePath: assistantControl.props.workspacePath,
+          message: assistantControl.props.message,
+          onAsk: assistantControl.props.onAsk,
+        },
+      }),
+    })
+    : <>{assistantControl}{walkthrough}</>
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col">
-      <WorkflowLiveBrowser workspacePath={workspacePath} scopeNoun={scopeNoun} toolbar={<>
+      <WorkflowLiveBrowser workspacePath={workspacePath} scopeNoun={scopeNoun} showGuide={false} toolbar={<>
         <WorkspaceViewIconButton label="Browser settings" icon={Settings2} onClick={() => setSettingsOpen(value => !value)} />
-        {assistantControl}
+        {guidedAssistantControl}
       </>} />
       {settingsOpen && (
         <div

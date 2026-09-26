@@ -42,11 +42,15 @@ efficiency belong to Architecture; product direction belongs to Strategic.
 
 `plan_drift_review` is event-triggered, not cadenced: it becomes due whenever
 any canonical plan step has no `drift_review` record at all, or has one with
-`needs_review == true` — flagged by the same hook that flags
-`description_reviewed` stale on any persisted plan-step field change (this
-includes a title-only edit; nothing is classified as cosmetic). It is not
-about time passing; it is about a step's configuration having moved since it
-was last checked.
+`needs_review == true` — flagged whenever a persisted plan-step field change
+can affect what the step outputs, depends on, validates, or routes to
+(context_dependencies, context_output, items, messages, validation_schema,
+routes, and the like; see `planDriftMaterialFieldNames`). A title- or
+description-only edit does not flag it (2026-09-26: description-only edits
+were the single largest share of live workflows' unreviewed changelog
+backlog, so every plan edit made this due). It is not about time passing; it
+is about a step's configuration having moved in a way that can affect a
+dependent since it was last checked.
 
 This is a **stale flag**, not a null-and-rebuild: a flagged step's prior
 review (`checks`, `reviewed_at`, `reviewed_by`, `reviewed_through_change_id`)
@@ -360,8 +364,8 @@ reason). Pass `reviewed_through_change_id` as the latest
 `planning/changelog/` `change_id` you actually read for this step, so the
 next review resumes exactly where this one left off. This call always fully
 replaces the step's prior evidence. It clears `needs_review` only when every
-check is `pass` or `fixed`; any `fail` keeps Plan Drift due and therefore keeps
-the other review modules deferred on later Pulse cycles. There is no partial update.
+check is `pass` or `fixed`; any `fail` keeps Plan Drift due, which keeps
+Architecture deferred on later Pulse cycles. There is no partial update.
 
 ### 7. Close out
 

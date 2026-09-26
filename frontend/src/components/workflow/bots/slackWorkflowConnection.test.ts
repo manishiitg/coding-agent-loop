@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveWorkflowSlackConnection, selectedWorkflowSlackReady } from './slackWorkflowConnection'
+import { resolveWorkflowSlackConnection, sameBotWorkspacePath, selectedWorkflowSlackReady } from './slackWorkflowConnection'
 import type { SlackConnection } from '../../../services/api-types'
 
 const entry = (overrides: Partial<SlackConnection> & { id: string }): SlackConnection => ({
@@ -60,5 +60,19 @@ describe('Workflow Slack connection resolution', () => {
     expect(otherProfile.own).toBeNull()
     const workflowView = resolveWorkflowSlackConnection(projectConns, projectPath, undefined, 'slack_001')
     expect(workflowView.own).toBeNull()
+  })
+})
+
+describe('crew bot scope', () => {
+  it('matches the physical stored path with the crew UI logical path', () => {
+    expect(sameBotWorkspacePath('_users/u1/Chats/Work/projects/sde', 'Chats/Work/projects/sde')).toBe(true)
+    expect(sameBotWorkspacePath('Chats/Work/projects/sde', 'Chats/Work/projects/other')).toBe(false)
+    expect(sameBotWorkspacePath('', '')).toBe(false)
+  })
+
+  it('finds a crew bot saved under the physical path as the crew own bot', () => {
+    const bot = entry({ id: 'slack_sde', workspace_path: '_users/u1/Chats/Work/projects/sde', profile_id: 'work' })
+    const selection = resolveWorkflowSlackConnection([bot], 'Chats/Work/projects/sde', 'slack_sde', undefined, 'work')
+    expect(selection.own?.id).toBe('slack_sde')
   })
 })

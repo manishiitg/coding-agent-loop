@@ -117,8 +117,10 @@ func (api *StreamingAPI) handleExternalPlugin(w http.ResponseWriter, r *http.Req
 		externalError(w, http.StatusUnauthorized, "unauthorized", "Sign in to AgentWorks.")
 		return
 	}
+	// mcpOAuthURLs also admits a loopback URL (local MCP sign-in); a plugin
+	// is installed elsewhere, so it needs the public HTTPS URL.
 	origin, resource, ok := mcpOAuthURLs()
-	if !ok {
+	if !ok || !strings.HasPrefix(origin, "https://") {
 		externalError(w, http.StatusServiceUnavailable, "plugin_unavailable", "The Cowork plugin requires a configured public HTTPS URL.")
 		return
 	}

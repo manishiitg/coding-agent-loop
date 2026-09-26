@@ -11,12 +11,16 @@ and Run. Reading a reference does not grant its tools or write permissions.
 - `soul/soul.md` defines the objective, success criteria, and explicit durable
   constraints. Keep it Markdown; implementation choices are revisable.
 - `learnings/_global/SKILL.md` describes HOW to operate the workflow's target
-  systems. Read it first when present. For a known scripted step, inspect
+  systems, and `learnings/<step-id>/` holds what each step learned. Read the
+  global file first, then the folders of the steps involved. For a known scripted step, inspect
   `<script-dir>/main.py` for its proven behavior before inventing another
   implementation. In Run, do not edit either artifact.
 - `knowledgebase/context/context.md` contains user-owned business rules and
   examples. For discovered knowledge, read `knowledgebase/notes/_index.json`
-  and only the relevant notes, not the whole knowledgebase.
+  and only the relevant notes, not the whole knowledgebase. Attached shared
+  knowledge bases (listed under "Attached knowledge bases", read with
+  `$WORKFLOW_KB_<ALIAS>/notes/_index.json`) hold other workflows' facts;
+  check them before saying you don't know.
 - `db/README.md` defines tables, keys, merge rules, and producer/consumer
   ownership. Query current facts with `query_workflow_db`.
   {{if ne .WorkshopMode "run"}}Use the `stores` reference before designing or

@@ -627,6 +627,15 @@ func (s *Store) MarkTurnRunning(terminalID string) (Snapshot, bool) {
 	snapshot.CloseReason = ""
 	snapshot.ClosesAt = nil
 	snapshot.RetentionSeconds = 0
+	// A live-attach transcript ("tmux_stream") is only the output a viewer saw
+	// while it was attached. The new turn's output is not in it, so it can no
+	// longer own the settled scrollback: without this, every later settled
+	// detail read kept serving the transcript from the last attach and the
+	// product terminal view froze on an old turn. A viewer attached during this
+	// turn re-persists a fresh transcript (and the marker) when it detaches.
+	if strings.EqualFold(strings.TrimSpace(snapshot.ContentSource), "tmux_stream") {
+		snapshot.ContentSource = "tmux_capture"
+	}
 	snapshot.ChunkIndex++
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot

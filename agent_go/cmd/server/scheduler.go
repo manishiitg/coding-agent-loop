@@ -504,6 +504,12 @@ func (s *SchedulerService) tickLoop(ctx context.Context) {
 			// Then fix runs: a short Technical Review+Fix pass for a workflow
 			// with something to fix, instead of waiting for the full Pulse.
 			go func() {
+				// One launcher pass at a time: overlapping ticks could each
+				// see room under maxConcurrentPulseRuns and both start a run.
+				if !pulseLauncherMu.TryLock() {
+					return
+				}
+				defer pulseLauncherMu.Unlock()
 				s.launchDuePulses(context.Background())
 				s.launchDueFixRuns(context.Background())
 			}()
@@ -1483,7 +1489,11 @@ func (s *SchedulerService) triggerPulseRun(workspacePath, triggerSource, fixReas
 	for i := range manifest.Schedules {
 		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
 	}
-	workflowRuntimeKeys = append(workflowRuntimeKeys, runtimeKey)
+	// A full Pulse and a fix run have different keys; each must see the other,
+	// or both start on the same workflow and work the same issues at once.
+	workflowRuntimeKeys = append(workflowRuntimeKeys,
+		workflowScheduleRuntimeKey(workspacePath, manualWorkflowPulseScheduleID),
+		workflowScheduleRuntimeKey(workspacePath, pulseFixRunScheduleID))
 	runID := uuid.NewString()
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(runtimeKey)
@@ -2732,10 +2742,10 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			} else if planDriftDue {
 				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
 			}
-			// Plan Drift is a prerequisite for platform upkeep: Architecture and
-			// Technical resume on the next Pulse cycle rather than judging a plan
-			// already known to drift. Goal Work still runs (without its Run
-			// permission, enforced in the background review scope).
+			// Plan Drift is a prerequisite for Architecture only, which resumes
+			// on the next Pulse cycle rather than judging a plan already known
+			// to drift. Technical and Goal Work still run after it (Goal Work
+			// without its Run permission, enforced in the background review scope).
 			for _, module := range pulsemodules.PostDriftExecutionOrder() {
 				if planDriftDue && !pulsemodules.RunsWhileDriftDue(module) {
 					continue
@@ -3478,7 +3488,22 @@ func validatePulseTechnicalRepairDrain(ctx context.Context, workspacePath, pulse
 		return fmt.Errorf("read actionable Pulse repair backlog: %w", err)
 	}
 	if remaining > 0 {
-		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s) routed to it or new since the previous Pulse; the repair drain is incomplete", remaining)
+		// Name them: an unnamed count let a pass leave the same issue
+		// untouched run after run (upwork PUL-2B0668E4, filed by Goal Work,
+		// skipped as "strategy-owned" by 4 fix runs in one night).
+		left := ""
+		if issues, listErr := stepworkflow.ListPulseActionableWorkflowIssues(ctx, workspacePath); listErr == nil && len(issues) > 0 {
+			ids := make([]string, 0, len(issues))
+			for i, issue := range issues {
+				if i == 10 {
+					ids = append(ids, fmt.Sprintf("and %d more", len(issues)-10))
+					break
+				}
+				ids = append(ids, issue.ID)
+			}
+			left = " (" + strings.Join(ids, ", ") + ")"
+		}
+		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s)%s without a recorded outcome; the repair drain is incomplete. Every one is this pass's, whichever review filed it: fix and verify it, reject it with the reason, or turn it into a decision for the user, and record that with record_pulse_result", remaining, left)
 	}
 	return nil
 }

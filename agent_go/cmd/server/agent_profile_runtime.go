@@ -106,6 +106,12 @@ func cleanAgentProfileWorkspace(raw, userID string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("selected_folder must stay inside the workspace")
 	}
+	// A shared crew root is reachable only as a verified crew binding
+	// (resolveCrewProjectBinding), never as a free-form selected folder:
+	// unlike _users/<id>/, its location says nothing about who may use it.
+	if clean == crewSharedRootName || strings.HasPrefix(clean, crewSharedRootName+"/") {
+		return "", fmt.Errorf("selected_folder must be a crew you can open")
+	}
 	if clean == "_users" || strings.HasPrefix(clean, "_users/") {
 		owner := strings.TrimPrefix(clean, "_users")
 		owner = strings.TrimPrefix(owner, "/")
@@ -341,8 +347,10 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		// The crew's "Native agent tools" switch. Resolve returned a copy, so
 		// this changes only this request's profile; the session key hashes the
 		// definition, so toggling relaunches the coding CLI. Owners only:
-		// readers keep AgentWorks-only tools.
-		if crewOwned && crew.Binding.ProjectNativeAgentTools {
+		// readers keep AgentWorks-only tools. Hybrid needs an allowlist tool
+		// policy (agentprofiles validation); the switch is on by default, so a
+		// profile without one keeps AgentWorks-only tools instead of failing.
+		if crewOwned && crew.Binding.ProjectNativeAgentTools && profile.ToolPolicy.IsAllowlist() {
 			profile.Runtime.AgentTools.Mode = "hybrid"
 		}
 		if !crewOwned {
@@ -717,19 +725,24 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
-	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		var input QueryRequest
 		if len(req) > 0 {
 			input = req[0]
 		}
 		active, _ := api.getActiveSession(sessionID)
-		policy := resolveWorkflowChatPolicy(sessionID, input, active, false)
-		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", policy.Origin == "interactive" && registerWorkUIAllowed(input)); err != nil {
+		policy := resolveWorkflowChatPolicy(sessionID, input, active, readOnly)
+		// Run mode keeps the Slack read tool, as a workflow's Run chat does:
+		// a crew answering in Slack reads its own thread (a bot turn's tool
+		// is held to the channel and destination it arrived on). Changing
+		// the bot's setup needs write access in the app.
+		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", !readOnly && policy.Origin == "interactive" && registerWorkUIAllowed(input), !readOnly); err != nil {
 			return err
 		}
-
-		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
-			return err
+		if !readOnly {
+			if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
+				return err
+			}
 		}
 	}
 	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {

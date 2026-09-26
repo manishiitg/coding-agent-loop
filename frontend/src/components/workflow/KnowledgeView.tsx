@@ -53,6 +53,7 @@ export default function KnowledgeView({ workspacePath, plan }: KnowledgeViewProp
       <WorkspaceViewHeader
         icon={BookOpen}
         title="Knowledge"
+        helpTopic={`Knowledge · ${tabLabel}`}
         subtitle="What this workflow has learned, its notes, and its stored records."
         actions={(
           <WorkspaceViewActions

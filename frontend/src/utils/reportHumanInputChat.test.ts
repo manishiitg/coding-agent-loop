@@ -118,7 +118,7 @@ describe('Pulse decision chat routing', () => {
     expect(message).toContain('choose the best supported option')
     expect(message).toContain('do not invent one or take an unsafe action')
     expect(message).toContain('call answer_human_input_request')
-    expect(message).toContain('Do not mark the decision consumed yourself.')
+    expect(message).toContain('apply the answer as the tool result describes')
     expect(message).toContain('Archive older entries [option_id=archive] — Nothing is lost.')
   })
 

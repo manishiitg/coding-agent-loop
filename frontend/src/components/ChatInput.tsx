@@ -1,4 +1,5 @@
 import { referenceTag, removeReferenceTags, textMentionsReference } from '../utils/referenceTags'
+import { CHAT_FOCUS_COMPOSER_EVENT } from '../utils/workspacePaneChat'
 import { routeForQueuedMessage, splitQueuedMessages } from '../utils/queuedMessageDelivery'
 import { askAIDisplayText } from '../utils/askAIMessage'
 import { resolvePiModelGroup } from '../utils/llmDisplay'
@@ -1509,6 +1510,21 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // A pane that pre-fills the composer (e.g. Ask in chat on a decision) asks
+  // it to take focus with the caret at the end, ready for the user's words.
+  useEffect(() => {
+    const focusComposer = () => {
+      const textarea = textareaRef.current
+      // Several tabs' composers can be mounted; only the visible one takes it.
+      if (!textarea || textarea.offsetParent === null) return
+      textarea.focus()
+      const end = textarea.value.length
+      textarea.setSelectionRange(end, end)
+    }
+    window.addEventListener(CHAT_FOCUS_COMPOSER_EVENT, focusComposer)
+    return () => window.removeEventListener(CHAT_FOCUS_COMPOSER_EVENT, focusComposer)
+  }, [])
+
   const fileUploadInputRef = useRef<HTMLInputElement>(null)
 
   const uploadFilesToChatRef = useRef<(files: File[]) => Promise<void>>(async () => {})

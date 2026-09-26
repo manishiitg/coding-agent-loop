@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 )
 
@@ -74,6 +75,7 @@ func authorizeWorkflowContextPathsWithReadRoots(ctx context.Context, paths []str
 		folder := strings.TrimSuffix(strings.TrimSpace(raw), "/")
 		parts := strings.Split(folder, "/")
 		if strings.ContainsAny(folder, "\\\x00") {
+			logContextDenial(claims, folder, "invalid characters")
 			return nil, nil, denied
 		}
 		if seen[folder] {
@@ -85,26 +87,32 @@ func authorizeWorkflowContextPathsWithReadRoots(ctx context.Context, paths []str
 		}
 		readRoot, validShape := contextReferenceReadRoot(userID, folder)
 		if !validShape {
+			logContextDenial(claims, folder, "not a workflow or crew path")
 			return nil, nil, denied
 		}
 		switch {
 		case len(parts) == 2 && parts[0] == "Workflow" && parts[1] != "" && parts[1] != "." && parts[1] != "..":
 			if _, err := authorizeWorkflowContextPaths(ctx, []string{folder}); err != nil {
+				logContextDenial(claims, folder, "workflow not readable by this user")
 				return nil, nil, denied
 			}
 		case (len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != "..") || isOtherOwnerCrewPath(parts):
 			if claims == nil || strings.TrimSpace(claims.UserID) == "" {
+				logContextDenial(claims, folder, "no user for a crew attachment")
 				return nil, nil, denied
 			}
 			rawManifest, exists, err := readFileFromWorkspace(ctx, readRoot+"/product.json")
 			if err != nil || !exists {
+				logContextDenial(claims, folder, "crew has no product.json")
 				return nil, nil, denied
 			}
 			var manifest productProjectManifest
 			if json.Unmarshal([]byte(rawManifest), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") || strings.TrimSpace(manifest.ID) == "" {
+				logContextDenial(claims, folder, "crew product.json is not a Work crew")
 				return nil, nil, denied
 			}
 		default:
+			logContextDenial(claims, folder, "unsupported attachment path")
 			return nil, nil, denied
 		}
 		seen[folder] = true
@@ -141,4 +149,54 @@ func isOtherOwnerCrewPath(parts []string) bool {
 		}
 	}
 	return true
+}
+
+// admitTurnContextPaths merges a turn's saved workflow links with its
+// one-message # references and authorizes them, recording the allowed paths
+// and their read roots on req. handleQuery and the bot dry run share it.
+func admitTurnContextPaths(ctx context.Context, req *QueryRequest) error {
+	req.WorkflowContextPaths = mergeDurableWorkflowContextPaths(ctx, req.SelectedFolder, req.WorkflowContextPaths)
+	contextPaths, contextReadPaths, err := authorizeWorkflowContextPathsWithReadRoots(workflowContextAuthorizationContext(ctx), req.WorkflowContextPaths)
+	if err != nil {
+		return err
+	}
+	req.WorkflowContextPaths = contextPaths
+	req.authorizedWorkflowContextReadPaths = contextReadPaths
+	return nil
+}
+
+// workflowContextAuthorizationContext is the identity a turn's attachments
+// are checked against. A bot turn runs on its resource owner's behalf (the
+// crew or trigger owner, execution_principal.go), and the attachments saved on
+// that crew are the owner's context: they are checked as the owner, so a crew
+// answering in Slack has the same attached context as in the owner's web chat
+// (user decision 2026-09-26). Every other turn is checked as its caller.
+func workflowContextAuthorizationContext(ctx context.Context) context.Context {
+	claims := GetUserFromContext(ctx)
+	if claims == nil || claims.ExecutionPrincipal == nil {
+		return ctx
+	}
+	ownerID := strings.TrimSpace(claims.ExecutionPrincipal.ResourceOwnerID)
+	if ownerID == "" {
+		return ctx
+	}
+	owner := &UserClaims{UserID: ownerID, Username: ownerID}
+	if record := directoryUserFor(ownerID, "", ""); record != nil {
+		owner.Username = record.Username
+		owner.Email = record.Email
+	}
+	return context.WithValue(ctx, UserContextKey, owner)
+}
+
+// logContextDenial records which attachment refused a turn and why; the
+// user-facing error is deliberately generic.
+func logContextDenial(claims *UserClaims, folder, reason string) {
+	userID, principal := "", ""
+	if claims != nil {
+		userID = claims.UserID
+		if claims.ExecutionPrincipal != nil {
+			principal = claims.ExecutionPrincipal.Kind
+		}
+	}
+	log.Printf("[CONTEXT_ACCESS] attachment %q refused for user=%s principal=%s: %s", folder, userID, principal, reason)
 }

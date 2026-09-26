@@ -96,7 +96,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		}
 	}
 	log.Printf("[CHAT_POLICY] session=%s mode=%s origin=%s capabilities=%v", sessionID, policy.Mode, policy.Origin, policy.Capabilities)
-	mcpManagement := policy.allows("mcp_management") && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder && syntheticReq.AgentProfileID == ""
+	mcpManagement := (policy.allows("mcp_management") || policy.allows("mcp_inspection")) && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder && syntheticReq.AgentProfileID == ""
 	if mcpManagement {
 		if err := api.registerMCPToolsForChat(definitionAgent, policy, nil); err != nil {
 			return err

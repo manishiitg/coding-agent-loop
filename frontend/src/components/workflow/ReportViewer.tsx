@@ -24,6 +24,8 @@ import { EntityIdentityIcon } from '../ui/EntityIdentityIcon'
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
 import { useLiveRefetch } from '../../hooks/useLiveRefetch'
 import { useSelectedReportDocument } from './reportDocuments'
+import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
+import { panelGuideAskFromNode } from './workspacePanelGuideAsk'
 
 function debugReportView(event: string, detail?: Record<string, unknown>) {
   if (!import.meta.env.DEV) return
@@ -65,6 +67,18 @@ async function readWorkspaceText(filepath: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+// The endpoint answers a failed script with {error, stderr}; surface both so
+// the report (and whoever reads its error box) sees why, not just "422".
+function reportRunError(error: unknown): string {
+  const data = (error as { response?: { data?: unknown } })?.response?.data
+  if (data && typeof data === 'object') {
+    const body = data as { error?: string; stderr?: string }
+    if (body.error) return body.stderr ? `${body.error}\n${body.stderr}` : body.error
+  }
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  return error instanceof Error ? error.message : 'Script failed.'
 }
 
 function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi['sendChatMessage']): ReportDataApi {
@@ -142,6 +156,14 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
         if (!response.success || !response.data) throw new Error(response.error || 'Update failed.')
         return { oldValues: response.data.old_values, newValues: response.data.new_values }
       },
+      run: async (path: string, args?: unknown) => {
+        try {
+          const response = await api.post('/api/workflow/report-preview/run', { workspace: workspacePath, path, args: args ?? {} })
+          return response.data.data
+        } catch (error) {
+          throw new Error(reportRunError(error))
+        }
+      },
     }
   }, [workspacePath, sendChatMessage])
 }
@@ -206,6 +228,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
     return () => debugReportView('unmounted', { workspacePath })
   }, [workspacePath])
 
+  const guideAsk = panelGuideAskFromNode(headerAction)
   const previewMode = focusTier || previewPreference
   const shellClass = previewMode === 'mobile' ? 'mx-auto w-full max-w-[480px] p-1.5' : 'w-full max-w-full'
   const runtime = useMemo(() => ({ data: dataApi }), [dataApi])
@@ -214,7 +237,8 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
     <ReportEmbedProvider value={runtime}>
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
         <div className="absolute right-3 top-3 z-20 flex gap-1">
-          {headerAction}
+          {guideAsk ? null : headerAction}
+          <WorkspacePanelGuideButton topic="Dashboard" ask={guideAsk} />
           <button type="button" onClick={refresh} aria-label="Refresh dashboard" title="Refresh dashboard" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">
             <RefreshCw className="h-3.5 w-3.5" />
           </button>

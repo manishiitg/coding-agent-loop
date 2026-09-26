@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costobserver"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
@@ -1370,6 +1371,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) closeMessageSequenceRuntime(session *
 	// Agent.Close preserves MCP connections between turns. At true sequence
 	// termination, retire that registry and its isolated workspace as well.
 	mcpagent.CloseSession(runtime.SessionID)
+	// Give back this sequence's tab in the workflow's shared browser. When it
+	// was the browser's only user, the page is handed to the next step.
+	browser.ReleaseSessionTabOwner(runtime.SessionID, browser.NewClient(getWorkspaceAPIURL()))
 }
 
 func closeMessageSequenceCodingSession(provider string, ownerSessionID string, reason string) {

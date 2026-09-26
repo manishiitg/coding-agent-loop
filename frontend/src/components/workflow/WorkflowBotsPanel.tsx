@@ -47,6 +47,17 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
     />
   )
 
+  // Publishing the bot's App Home tab needs the owner's full-mode chat: only
+  // there does the slack tool take any Slack API method (views.publish).
+  const askSlackHomeTab = (
+    <AskAIButton
+      workspacePath={workspacePath}
+      onAsk={onAsk}
+      label="Ask AI to publish the Home tab"
+      message={`Design and publish this ${scopeNoun}'s Slack bot App Home tab (what people see when they open the app in Slack). First read what this ${scopeNoun} does, then draft a Block Kit home view: a one-line intro, what it can help with, three example questions, and how to reach it (mention it in a channel, or DM it). Show me the draft and wait for my OK. Then publish it with the slack tool: method views.publish, parameters user_id and view (type "home"). Find my Slack user ID with users.lookupByEmail (ask me for my Slack email if you do not know it). If Slack refuses, tell me exactly why; a disabled Home tab means turning on App Home > Home Tab in the Slack app.`}
+    />
+  )
+
   if (setup !== null) {
     return (
       <div className="flex flex-col gap-4">
@@ -65,7 +76,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
             {setup !== 'slack' && <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>}
           </div>
         </div>
-        {setup === 'slack' ? <SlackSetup bots={bots} headerAction={askSlackSetup} /> : <WhatsAppSetup bots={bots} />}
+        {setup === 'slack' ? <SlackSetup bots={bots} headerAction={askSlackSetup} homeTabAction={askSlackHomeTab} /> : <WhatsAppSetup bots={bots} />}
       </div>
     )
   }
@@ -83,7 +94,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
     return (
       <div className="space-y-4">
         {tabs}
-        <SlackSetup bots={bots} headerAction={askSlackSetup} />
+        <SlackSetup bots={bots} headerAction={askSlackSetup} homeTabAction={askSlackHomeTab} />
       </div>
     )
   }

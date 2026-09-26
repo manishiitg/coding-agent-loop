@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../stores/useChatStore'
-import { activeWorkflowTabIdForPreset, workflowTabBelongsToPreset } from './workflowTabOwnership'
+import {
+  activeWorkflowTabHasCachedConversation,
+  activeWorkflowTabIdForPreset,
+  cachedWorkflowTabIdForPreset,
+  workflowTabBelongsToPreset,
+} from './workflowTabOwnership'
 
 function tab(overrides: Partial<ChatTab> = {}): ChatTab {
   return {
@@ -75,5 +80,49 @@ describe('workflow tab ownership', () => {
     })
 
     expect(activeWorkflowTabIdForPreset(schedule.tabId, 'workflow-a', { schedule })).toBe(schedule.tabId)
+  })
+})
+
+describe('cached workflow conversation', () => {
+  const event = { id: 'e1' }
+
+  it('treats an active tab of the selected workflow with events as showable at once', () => {
+    const workflowA = tab()
+    const tabs = { [workflowA.tabId]: workflowA }
+
+    expect(activeWorkflowTabHasCachedConversation(workflowA.tabId, 'workflow-a', tabs, { 'session-a': [event] })).toBe(true)
+    // Nothing in memory yet: the pane must wait for the reconnect.
+    expect(activeWorkflowTabHasCachedConversation(workflowA.tabId, 'workflow-a', tabs, {})).toBe(false)
+    // Another workflow's transcript is never shown for the selected one.
+    expect(activeWorkflowTabHasCachedConversation(workflowA.tabId, 'workflow-b', tabs, { 'session-a': [event] })).toBe(false)
+  })
+
+  it('picks the most recently opened persistent Chat that still has its transcript', () => {
+    const older = tab({ tabId: 'older', sessionId: 'older-session', lastAccessedAt: 10 })
+    const newer = tab({ tabId: 'newer', sessionId: 'newer-session', lastAccessedAt: 20 })
+    const emptyNewest = tab({ tabId: 'empty', sessionId: 'empty-session', lastAccessedAt: 30 })
+    const scheduleRun = tab({
+      tabId: 'schedule',
+      sessionId: 'schedule-session',
+      lastAccessedAt: 40,
+      metadata: { mode: 'workflow', presetQueryId: 'workflow-a', isViewOnly: true, isScheduledRun: true },
+    })
+    const otherWorkflow = tab({
+      tabId: 'other',
+      sessionId: 'other-session',
+      lastAccessedAt: 50,
+      metadata: { mode: 'workflow', phaseId: 'workflow-builder', presetQueryId: 'workflow-b' },
+    })
+    const tabs = Object.fromEntries([older, newer, emptyNewest, scheduleRun, otherWorkflow].map(t => [t.tabId, t]))
+    const tabEvents = {
+      'older-session': [event],
+      'newer-session': [event],
+      'schedule-session': [event],
+      'other-session': [event],
+    }
+
+    expect(cachedWorkflowTabIdForPreset('workflow-a', tabs, tabEvents)).toBe('newer')
+    expect(cachedWorkflowTabIdForPreset('workflow-c', tabs, tabEvents)).toBeUndefined()
+    expect(cachedWorkflowTabIdForPreset('workflow-a', tabs, {})).toBeUndefined()
   })
 })

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -2753,6 +2754,26 @@ func commonBackgroundParentExecutionID(agents []*BackgroundAgent) string {
 	return parentID
 }
 
+// settleFailedSyntheticTurn records a synthetic (completion) turn failure on
+// the session and its main terminal. A refusal with
+// mcpagent.ErrTurnAlreadyInFlight is not a session failure: nothing ran,
+// because another turn (typically a user message delivered as live input into
+// the retained CLI, which does not hold the input lane) owns the session. That
+// turn is still running and must keep its terminal. Marking the session
+// "error" here made the tmux reaper close the owner's CLI mid-turn and lost the
+// user's message (PLAT-360). The caller still reports the refusal to its
+// completion callback, which re-queues the notification for a bounded retry.
+func (api *StreamingAPI) settleFailedSyntheticTurn(sessionID, mainTerminalID string, turnErr error) {
+	if errors.Is(turnErr, mcpagent.ErrTurnAlreadyInFlight) {
+		log.Printf("[BG AGENT] Synthetic turn for session %s refused: another turn is in flight; leaving session status and terminal untouched", sessionID)
+		return
+	}
+	api.updateSessionStatus(sessionID, "error")
+	if api.terminalStore != nil {
+		api.terminalStore.MarkTurnFailed(mainTerminalID)
+	}
+}
+
 func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, parentExecutionIDs ...string) bool {
 	parentExecutionID := ""
 	if len(parentExecutionIDs) > 0 {
@@ -2872,10 +2893,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 		api.agentCancelMux.Unlock()
 		api.setSyntheticTurn(sessionID, false)
 		api.setSessionBusy(sessionID, false)
-		api.updateSessionStatus(sessionID, "error")
-		if api.terminalStore != nil {
-			api.terminalStore.MarkTurnFailed(mainTerminalID)
-		}
+		api.settleFailedSyntheticTurn(sessionID, mainTerminalID, err)
 		releaseInputLane()
 		api.completeTrackedExecution(syntheticExecutionID, trackedExecutionStatusFailed, err.Error(), nil)
 		return false
@@ -2973,10 +2991,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 			terminalErr = turnErr
 			syntheticStatus = trackedExecutionStatusFailed
 			syntheticError = turnErr.Error()
-			api.updateSessionStatus(sessionID, "error")
-			if api.terminalStore != nil {
-				api.terminalStore.MarkTurnFailed(mainTerminalID)
-			}
+			api.settleFailedSyntheticTurn(sessionID, mainTerminalID, turnErr)
 			log.Printf("[BG AGENT] Synthetic turn failed for session %s after stream start: %v", sessionID, turnErr)
 			return
 		}
@@ -3006,7 +3021,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 			if hasReq {
 				phaseID = strings.TrimSpace(req.PhaseID)
 			}
-			logPath := workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+			logPath := stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 			var existing struct {
 				PhaseID      string                   `json:"phase_id"`
 				WorkshopMode string                   `json:"workshop_mode,omitempty"`
@@ -3030,7 +3045,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 					effectiveOwner := effectiveBuilderConversationOwner(requestUserID, existing.UserID)
 					if effectiveOwner != currentUserID {
 						currentUserID = effectiveOwner
-						logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+						logPath = stableBuilderConversationLogPath(context.Background(), workflowPhaseFolder, currentUserID, sessionID)
 					}
 				} else {
 					log.Printf("[BG AGENT] Failed to parse existing builder conversation metadata for %s", existingPath)

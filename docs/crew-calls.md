@@ -90,6 +90,25 @@ The conversation is set up automatically on the first call. The Crew's
 removes one, and the caller's next call starts a new conversation. Each
 caller's conversation appears in the Crew's **Chats** list.
 
+## Long calls, timeouts and restarts
+
+- **The timeout counts from the target's last sign of life.** Signs of life
+  are a progress report or any activity in its session. The default is 60
+  minutes (`timeout_minutes`). A call that keeps showing activity can run up
+  to four timeouts, capped at 24 hours.
+- **A timeout doesn't discard the target's work.** When the timeout fires,
+  the caller stops waiting and is told so. The target can still report
+  progress and return its answer, and `ask_function_update` still reaches
+  it. The answer is then sent to the caller's chat as a *late answer*.
+- **The same applies to `ask` on a workflow.** A timeout releases the caller
+  but the assistant's turn keeps running, and its reply arrives as a late
+  answer.
+- **A restart interrupts open calls.** Every call is saved under the
+  target's `functions/calls/` folder and indexed in `_system/function_calls/`.
+  After a restart, `get_function_call` still finds the call. A call that was
+  still open when the server restarted is reported as interrupted, with its
+  last progress kept.
+
 ## Webhooks and schedules
 
 The **Webhooks** tab lists external webhooks only: URL, auth mode (Bearer or

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -249,5 +250,65 @@ func TestDefaultProfilePersistsWithTheOwner(t *testing.T) {
 	}
 	if profileID, folder := reopened.DefaultProfile(); profileID != "" || folder != "" {
 		t.Fatalf("cleared default profile = (%q, %q), want empty", profileID, folder)
+	}
+}
+
+// A crew's Slack thread is its own chat, new to the thread: its first turn
+// carries the thread's earlier messages, as a workflow's first turn does
+// (RTS 2026-09-26: the crew answered without the thread it was asked about).
+func TestSlackCrewFirstTurnGetsTheThread(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	manager.RegisterConnector(&historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", UserName: "alice", Text: "the invoice for ACME is attached, amount looks wrong"},
+			{UserID: "U-bob", UserName: "bob", Text: "@crew check this"},
+		},
+	})
+	texts := make(chan string, 1)
+	titles := make(chan interface{}, 1)
+	manager.SetProfileTurnFunc(func(_ context.Context, _ string, msg BotIncomingMessage, _ ThreadID) (map[string]interface{}, string, bool, error) {
+		texts <- msg.Text
+		return map[string]interface{}{"agent_profile_id": "work", "query": msg.Text}, "crew-thread-chat", true, nil
+	})
+	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, _ string, _ string, _ func(*events.AgentEvent)) error {
+		titles <- req["session_title"]
+		return nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "slack",
+		UserID:          "U-bob",
+		UserName:        "Bob",
+		UserEmail:       "bob@example.com",
+		WorkspaceUserID: "owner",
+		ChannelID:       "C0CREW",
+		ThreadTS:        "1700000000.000100",
+		MessageTS:       "1700000000.000200",
+		Text:            "check this",
+		IsMention:       true,
+		IsThreadReply:   true,
+		PresetWorkflow:  &ChannelRoute{ProfileID: "work", ConversationKey: "crew-aaa", WorkspacePath: "_users/owner/Chats/Work/projects/alpha", WorkspaceUserID: "owner", BotGrant: "run"},
+	})
+	select {
+	case text := <-texts:
+		if !strings.Contains(text, "amount looks wrong") || !strings.Contains(text, "check this") {
+			t.Fatalf("first crew turn lacks the thread: %q", text)
+		}
+		// Many people talk in one channel thread: the turn says who asks.
+		if !strings.Contains(text, "From: Bob <bob@example.com> (Slack)") || strings.Count(text, "From: Bob") != 1 {
+			t.Fatalf("first crew turn does not name the sender once: %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile turn never built")
+	}
+	// The thread's tab says whose question it is, not just "Slack".
+	select {
+	case title := <-titles:
+		if got, _ := title.(string); !strings.HasPrefix(got, "Bob: check this") {
+			t.Fatalf("session_title = %v", title)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session never started")
 	}
 }

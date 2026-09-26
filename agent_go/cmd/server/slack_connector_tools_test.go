@@ -13,7 +13,7 @@ func TestSlackCredentialToolsRequireInteractiveMutationAdmission(t *testing.T) {
 	api := &StreamingAPI{}
 	for _, admitted := range []bool{false, true} {
 		reg := &recordingRegistrar{}
-		if err := api.registerSlackBotTools(reg, "session", "Workflow/example", "", admitted); err != nil {
+		if err := api.registerSlackBotTools(reg, "session", "Workflow/example", "", admitted, false); err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range []string{"configure_slack_bot", "get_slack_bot_credentials"} {
@@ -53,7 +53,7 @@ func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
 	api := &StreamingAPI{chatStore: store, eventStore: events.NewEventStore(10)}
 	api.eventStore.SetSessionOwner("builder-alice", "alice")
 	reg := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(reg, "builder-alice", "Workflow/example", "", true); err != nil {
+	if err := api.registerSlackBotTools(reg, "builder-alice", "Workflow/example", "", true, false); err != nil {
 		t.Fatal(err)
 	}
 	tool := reg.tools["create_slack_bot_route"]

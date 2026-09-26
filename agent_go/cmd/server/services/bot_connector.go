@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -219,13 +220,19 @@ type BotIncomingMessage struct {
 	MessageTS     string // platform timestamp of the incoming message (used to add/remove reactions)
 	Timestamp     time.Time
 	IsThreadReply bool
-	IsMention     bool            // true when the bot was @mentioned (vs plain thread reply)
+	IsMention     bool // true when the bot was @mentioned (vs plain thread reply)
+	// senderNoted: withBotSender already put the sender line on Text.
+	senderNoted bool
+	// DirectMessage: a 1:1 Slack DM, set only by the Slack service after it
+	// proved the sender (slack_dm.go) and put their account in
+	// WorkspaceUserID. The turn runs as that account, not as the route.
+	DirectMessage bool
 	// MentionsOtherUser is true when the message tags another platform user
 	// but not the bot (Slack <@U...> of someone else). Thread replies with
 	// this set are addressed to a colleague: the bot stays silent no matter
 	// how many people are in the thread.
 	MentionsOtherUser bool
-	ThreadHistory []ThreadMessage // populated when tagged in existing thread
+	ThreadHistory     []ThreadMessage // populated when tagged in existing thread
 	// PresetWorkflow, when set, overrides channel-based workflow routing
 	// for this message. WhatsApp uses it after its @<slug> router has
 	// selected a workflow explicitly.
@@ -235,10 +242,6 @@ type BotIncomingMessage struct {
 	// tutor's per-activity conversation) instead of the pairing's default
 	// profile. Built into the turn by ProfileTurnFunc.
 	PresetProfile *ProfileRoute
-	// DeviceSlot names the connector device the message arrived on when the
-	// account has linked more than one (WhatsApp: another parent's phone);
-	// "" is the account's primary device.
-	DeviceSlot string
 }
 
 // BotSessionBinding is the durable pointer from a thread-less platform chat
@@ -289,6 +292,8 @@ func botMetaFromMsg(msg BotIncomingMessage, threadID ThreadID) *chathistory.BotM
 		UserID:    msg.UserID,
 		UserName:  msg.UserName,
 		UserEmail: msg.UserEmail,
+		// Only the Slack service sets DirectMessage, after proving the sender.
+		DirectMessage: msg.DirectMessage && msg.Platform == "slack",
 	}
 }
 
@@ -315,6 +320,11 @@ func applyBotQueryRequestMetadata(req map[string]interface{}, meta *chathistory.
 	if value := strings.TrimSpace(meta.UserEmail); value != "" {
 		req["bot_user_email"] = value
 	}
+	if meta.DirectMessage && meta.Platform == "slack" {
+		// Internal-only key: the server's bot context reads it, and the
+		// public query contract has no such field.
+		req["_trusted_slack_dm"] = true
+	}
 }
 
 // ThreadMessage represents a single message in a thread's history
@@ -324,6 +334,12 @@ type ThreadMessage struct {
 	Text      string    `json:"text"`
 	Timestamp time.Time `json:"timestamp"`
 	IsBot     bool      `json:"is_bot"`
+	// IsSelf marks messages posted by this bot connection itself (its own
+	// replies and status lines). IsBot is also true for other apps' posts
+	// (Sentry, GitHub, other bots), which are real thread content.
+	IsSelf bool `json:"is_self,omitempty"`
+	// TS is the platform's own message id (Slack ts), when it has one.
+	TS string `json:"ts,omitempty"`
 }
 
 // MessageBlock represents a rich message block (buttons, sections, etc.)
@@ -532,15 +548,23 @@ type BotConversationManager struct {
 	mu         sync.RWMutex
 	connectors map[string]BotConnector      // platform name -> connector
 	sessions   map[string]*activeBotSession // threadKey -> active session tracking
+	// threadSeen is the per-thread watermark of thread messages already given
+	// to the agent, so follow-ups add only what was posted since.
+	threadSeen threadSeenTracker
 
 	chatStore       chathistory.Store
 	eventSubscriber BotEventSubscriber
 
 	// Function references set by server layer (to avoid import cycles)
-	startSession     SessionStartFunc
-	followUpSession  SessionFollowUpFunc
-	profileTurn      ProfileTurnFunc
-	workflowTurn     func(context.Context, string, ChannelRoute, ThreadID) (map[string]interface{}, error)
+	startSession    SessionStartFunc
+	followUpSession SessionFollowUpFunc
+	profileTurn     ProfileTurnFunc
+	// workflowTurn builds a Slack workflow turn; dmUserID is the account a
+	// 1:1 DM runs as ("" for channels, which run as the route).
+	workflowTurn func(ctx context.Context, query string, route ChannelRoute, thread ThreadID, dmUserID string) (map[string]interface{}, error)
+	// userWorkflowChat names a user's own chat of a workflow — the one their
+	// web Builder restores — so a DM continues it ("" when they have none).
+	userWorkflowChat func(ctx context.Context, userID string, route ChannelRoute) string
 	chatHistory      ChatHistoryReaderFunc
 	runningWorkflows RunningWorkflowsFunc
 	workflowAccess   BotWorkflowAccessFunc
@@ -927,13 +951,19 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			}
 			return false
 		}
-		msg.WorkspaceUserID = workspaceUserID
+		// The owner holds the crew's conversations. A channel turn also
+		// runs as the owner (in Run mode). A 1:1 DM or WhatsApp message runs
+		// as its sender (mapped or paired into WorkspaceUserID) — never as
+		// the owner of someone else's crew.
+		if !msg.runsAsSender() {
+			msg.WorkspaceUserID = workspaceUserID
+		}
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
 		}
 		if active != nil && !m.routeChangeKeepsSession(*msg, active) {
 			active.mu.Lock()
-			active.UserID = workspaceUserID
+			active.UserID = strings.TrimSpace(msg.WorkspaceUserID)
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
 			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
@@ -964,9 +994,10 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 	}
 	botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
 	userEmail := ""
-	if strings.EqualFold(strings.TrimSpace(msg.Platform), "whatsapp") {
-		// WhatsApp is paired to a workspace account. Its saved slug identifies
-		// a destination, not an independent permission grant.
+	if msg.runsAsSender() {
+		// WhatsApp is paired to a workspace account, and a 1:1 Slack DM is
+		// mapped to its sender's account. The route identifies a
+		// destination, not an independent permission grant.
 		botUserID = strings.TrimSpace(msg.WorkspaceUserID)
 		userEmail = strings.TrimSpace(msg.UserEmail)
 	}
@@ -1500,7 +1531,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		uid := active.UserID
 		active.mu.Unlock()
 		if m.followUpSession != nil && sid != "" {
-			m.startFollowUpTurn(active, msg, sid, uid, "threaded")
+			m.startFollowUpTurn(active, msg, sid, uid, "threaded", m.threadCatchupContext(msg, active.ThreadID))
 		} else {
 			log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sid)
 		}
@@ -1526,7 +1557,13 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// private CLI directories and native resume handles are keyed to it.
 		// Each query still has its own execution ID and run logs.
 		if oldSessionID != "" {
+			withBotSender(&msg)
 			msg.Text = m.withBotRuntimeState(active, msg.Text)
+			if supportsThreads {
+				// The conversation continues, so the first-turn history
+				// prepend does not run: add what was posted since.
+				msg.Text = withThreadCatchup(m.threadCatchupContext(msg, threadID), msg.Text)
+			}
 			go m.startNewSessionDirect(msg, threadID, oldSessionID)
 			return
 		}
@@ -1736,7 +1773,13 @@ func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession
 	}
 }
 
-func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string) bool {
+// threadContext, when set, is a catch-up block of thread messages posted
+// since the agent's last turn; it is prepended to the turn text.
+func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string, threadContext ...string) bool {
+	catchup := ""
+	if len(threadContext) > 0 {
+		catchup = threadContext[0]
+	}
 	if m.followUpSession == nil || sessionID == "" {
 		log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sessionID)
 		return false
@@ -1777,7 +1820,8 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
+		withBotSender(&msg)
+		err := m.followUpSession(followCtx, m.turnRequestForActive(active, withThreadCatchup(catchup, m.withBotRuntimeState(active, msg.Text)), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 			if connector := m.GetConnector(platform); connector != nil {
@@ -1806,10 +1850,10 @@ func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, u
 	}
 
 	if pending > 0 {
-		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state.\n\n---\n\n## Current Message\n%s", pending, userText)
+		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state. Treat the message as a runtime request and follow the deployed-channel guidance.\n\n---\n\n## Current Message\n%s", pending, userText)
 	}
 	if builderDone || status == chathistory.BotSessionStatusCompleted || status == chathistory.BotSessionStatusFailed {
-		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping.\n\n---\n\n## Current Message\n%s", status, userText)
+		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping. Treat the message as a runtime request and follow the deployed-channel guidance.\n\n---\n\n## Current Message\n%s", status, userText)
 	}
 	return userText
 }
@@ -2365,7 +2409,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	if msg.PresetWorkflow == nil {
 		msg.PresetWorkflow = botRouteFromActive(active)
 	}
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, "", threadID)
 	applyBotQueryRequestMetadata(queryReq, botMeta)
 	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
@@ -2411,6 +2455,13 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	if len(resumeSessionID) > 0 {
 		msg.ResumeSessionID = resumeSessionID[0]
 	}
+	// A thread keeps the title of its first message across resumes. A DM
+	// continues the sender's own chat, which keeps its own name.
+	sessionTitle := ""
+	if connector := m.GetConnector(msg.Platform); connector != nil && msg.ResumeSessionID == "" && !msg.DirectMessage {
+		sessionTitle = botSessionTitle(msg, botConnectorChannelName(context.Background(), connector, threadID))
+	}
+	withBotSender(&msg)
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 	profilePresetRoute := msg.PresetWorkflow
 	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
@@ -2441,11 +2492,17 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 
 	// An unrouted message on an account with a default product profile runs
 	// in that profile's own conversation: its request and session id come
-	// from the server layer, and the generic thread-history/restore plumbing
-	// does not apply — the conversation already holds every prior turn.
+	// from the server layer, and the generic restore plumbing does not apply.
 	var queryReq map[string]interface{}
 	profileTurn := false
 	if msg.PresetWorkflow == nil && m.profileTurn != nil {
+		// A Slack thread starts its own chat in the crew, which has seen
+		// nothing of the thread yet: give its first turn the thread, as a
+		// workflow's first turn gets it. WhatsApp runs in the profile's
+		// main conversation, which already holds every prior turn.
+		if msg.Platform == "slack" && msg.PresetProfile != nil && msg.ResumeSessionID == "" {
+			msg.Text = m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
+		}
 		req, profileSessionID, handled, err := m.profileTurn(context.Background(), workspaceUserID, msg, threadID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Profile turn failed for thread %s: %v", threadID.Key(), err)
@@ -2466,14 +2523,28 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		}
 		return
 	}
+	if queryReq == nil && msg.runsAsSender() && msg.PresetWorkflow != nil && strings.TrimSpace(msg.PresetWorkflow.WorkflowID) != "" && m.userWorkflowChat != nil {
+		// One user, one chat: a DM or WhatsApp message continues the
+		// sender's own chat of the workflow, the one their web Builder
+		// restores — even over a chat this thread used before, since the
+		// web's current chat is the one that counts.
+		if own := strings.TrimSpace(m.userWorkflowChat(context.Background(), workspaceUserID, *msg.PresetWorkflow)); own != "" && own != sessionID {
+			sessionID = own
+			restoredConversationSessionID = ""
+			log.Printf("[BOT_MANAGER] %s thread %s continues user %s's workflow chat %s", msg.Platform, threadID.Key(), workspaceUserID, sessionID)
+		}
+	}
 	if queryReq == nil {
 		// Load thread history for context continuity (e.g., user replies after hours)
 		queryWithHistory := msg.Text
 		if len(resumeSessionID) == 0 || resumeSessionID[0] == "" {
 			queryWithHistory = m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
 		}
-		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
+		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, botDMUserID(msg, workspaceUserID), threadID)
 		addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
+	}
+	if existing, _ := queryReq["session_title"].(string); strings.TrimSpace(existing) == "" && sessionTitle != "" {
+		queryReq["session_title"] = sessionTitle
 	}
 	applyBotQueryRequestMetadata(queryReq, botMeta)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
@@ -2660,6 +2731,11 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	if m.startSession != nil {
 		go func() {
 			err := m.startSession(sessionCtx, queryReq, sessionID, userID, func(event *events.AgentEvent) {})
+			if errors.Is(err, ErrBotDryRunAdmitted) {
+				// A dry run stops at admission: no failure message.
+				cancel()
+				return
+			}
 			if err != nil && sessionCtx.Err() == nil {
 				log.Printf("[BOT_MANAGER] Session error: %v", err)
 				connector.SendThreadMessage(ctx, active.ThreadID, botSessionFailureMessage(err))
@@ -2707,8 +2783,13 @@ func botSessionFailureMessage(err error) string {
 		return "I couldn't start this request. Please try again."
 	}
 	detail := strings.ToLower(err.Error())
-	if strings.Contains(detail, "workflow access denied") || strings.Contains(detail, "status 403") {
+	if strings.Contains(detail, "workflow access denied") {
 		return "You don't currently have access to this workflow. Ask a workflow owner to share it with your AgentWorks account, then try again."
+	}
+	// Other refusals are about the bot's setup (route, grant, app binding),
+	// not the person's access; don't send them chasing a sharing problem.
+	if strings.Contains(detail, "status 403") {
+		return "This bot isn't set up to start this conversation. Ask the workflow owner to check its Slack setup in AgentWorks (Setup > Bots)."
 	}
 	return "I couldn't start this request. Please try again. If it keeps failing, ask an administrator to check the connector logs."
 }
@@ -2896,6 +2977,11 @@ func (m *BotConversationManager) SendSyntheticTurnFinalIfNeeded(sessionID, messa
 		return false
 	}
 
+	if filter != nil {
+		// The reply supersedes the "Working on…" placeholder; left in place,
+		// it sat above the answer and the heartbeat kept editing it.
+		filter.ClearProgress()
+	}
 	if _, err := connector.SendThreadMessage(context.Background(), threadID, message); err != nil {
 		log.Printf("[BOT_MANAGER] Synthetic final fallback failed for %s: %v", sessionID, err)
 		return false
@@ -3061,7 +3147,7 @@ func (m *BotConversationManager) IsBotSession(sessionID string) bool {
 // live sessions inject follow-ups as raw text since the LLM retains prior turns in its own context.
 func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platform string, threadID ThreadID) string {
 	connector := m.GetConnector(platform)
-	if connector == nil || !connector.Capabilities().Threads {
+	if connector == nil || !connector.Capabilities().Threads || threadIsWholeChat(threadID) {
 		return query
 	}
 
@@ -3073,6 +3159,9 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 		log.Printf("[BOT_MANAGER] Failed to load thread history: %v", err)
 		return query
 	}
+	// Everything loaded here reaches the agent in this turn; later
+	// follow-ups add only messages posted after it.
+	m.markThreadHistorySeen(threadID, history)
 
 	// Filter out bot status messages (Starting session..., Session completed., etc.)
 	// and keep only meaningful conversation turns
@@ -3107,7 +3196,10 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	parts = append(parts, "## Previous Conversation in This Thread\n")
 	for _, msg := range meaningful[:len(meaningful)-1] {
 		role := "User"
-		if msg.IsBot {
+		if msg.IsBot && !msg.IsSelf && msg.UserName != "" {
+			// Another app's post (e.g. a Sentry alert), not this agent's reply.
+			role = msg.UserName + " (app)"
+		} else if msg.IsBot {
 			role = "Agent"
 		} else if msg.UserName != "" {
 			role = msg.UserName
@@ -3156,7 +3248,7 @@ func (m *BotConversationManager) resolveRoute(platform, connectionID, channelID 
 	if !strings.EqualFold(strings.TrimSpace(platform), "slack") {
 		return m.resolveChannelWorkflow(platform, channelID)
 	}
-	return ResolveSlackRoute(context.Background(), connectionID, func() *ChannelRoute {
+	return ResolveSlackRoute(context.Background(), connectionID, channelID, func() *ChannelRoute {
 		return m.resolveChannelWorkflow(platform, channelID)
 	})
 }
@@ -3172,7 +3264,7 @@ func (m *BotConversationManager) resolveRoute(platform, connectionID, channelID 
 // inject channel-specific formatting rules into the agent's system prompt.
 // Pass "" for non-bot callers. For follow-ups, keep passing the platform and
 // threadID so human tools can notify the same bot conversation.
-func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, threadIDs ...ThreadID) map[string]interface{} {
+func (m *BotConversationManager) buildQueryRequest(query string, userID string, channelID string, presetRoute *ChannelRoute, platform string, dmUserID string, threadIDs ...ThreadID) map[string]interface{} {
 	if platform == "slack" && m.workflowTurn != nil {
 		thread := ThreadID{Platform: platform, ChannelID: channelID}
 		if len(threadIDs) > 0 {
@@ -3183,7 +3275,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 			route = m.resolveRoute(platform, thread.ConnectionID, channelID)
 		}
 		if route != nil && route.WorkflowID != "" {
-			req, err := m.workflowTurn(context.Background(), query, *route, thread)
+			req, err := m.workflowTurn(context.Background(), query, *route, thread, dmUserID)
 			if err != nil {
 				return map[string]interface{}{"_bot_prepare_error": err.Error()}
 			}
@@ -3194,21 +3286,15 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	req := map[string]interface{}{
 		"query": query,
 	}
-	if platform != "" {
-		req["bot_platform"] = platform
-		req["triggered_by"] = "bot:" + platform
-	}
+	var threadID ThreadID
 	if len(threadIDs) > 0 {
-		threadID := threadIDs[0]
-		if threadID.ChannelID != "" {
-			req["bot_channel_id"] = threadID.ChannelID
-		}
-		if threadID.ThreadTS != "" {
-			req["bot_thread_ts"] = threadID.ThreadTS
-		}
-		if threadID.ConnectionID != "" {
-			req["bot_connection_id"] = threadID.ConnectionID
-		}
+		threadID = threadIDs[0]
+	}
+	if platform != "" || len(threadIDs) > 0 {
+		ApplyBotThreadFields(req, platform, threadID)
+	}
+	if platform != "" {
+		req["triggered_by"] = "bot:" + platform
 	}
 
 	// Resolve the workflow route: an explicit preset wins over channel lookup,
@@ -3354,19 +3440,24 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	if platform == "slack" && m.workflowTurn != nil {
 		route := m.resolveRoute(platform, threadID.ConnectionID, threadID.ChannelID)
 		if route != nil && route.WorkflowID != "" {
-			req := m.buildQueryRequest(query, userID, threadID.ChannelID, route, platform, threadID)
+			var meta *chathistory.BotMetadata
 			if active != nil {
 				active.mu.Lock()
-				meta := active.Metadata
+				meta = active.Metadata
 				active.mu.Unlock()
-				applyBotQueryRequestMetadata(req, meta)
 			}
+			dmUserID := ""
+			if meta != nil && meta.DirectMessage {
+				dmUserID = userID
+			}
+			req := m.buildQueryRequest(query, userID, threadID.ChannelID, route, platform, dmUserID, threadID)
+			applyBotQueryRequestMetadata(req, meta)
 			return req
 		}
 		return map[string]interface{}{"_bot_prepare_error": "Slack route was removed or changed"}
 	}
 
-	req := m.buildQueryRequest(query, userID, "", nil, platform, threadID)
+	req := m.buildQueryRequest(query, userID, "", nil, platform, "", threadID)
 	if active == nil {
 		return req
 	}
@@ -3443,9 +3534,11 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 		profileRoute := active.profileRoute
 		routeGrant := active.BotRouteGrant
 		sessionID := active.SessionID
+		directMessage := active.Metadata != nil && active.Metadata.DirectMessage
 		active.mu.Unlock()
 		if isProfileTurn {
-			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true, PresetProfile: profileRoute, ResumeSessionID: sessionID}
+			// A DM thread keeps running in its sender's own chat.
+			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true, PresetProfile: profileRoute, ResumeSessionID: sessionID, DirectMessage: directMessage && platform == "slack"}
 			req, _, handled, err := m.profileTurn(context.Background(), userID, msg, threadID)
 			if err == nil && handled {
 				active.mu.Lock()
@@ -3499,8 +3592,13 @@ func applyProfileBotRouteMetadata(req map[string]interface{}, route *ChannelRout
 	if profileID := strings.TrimSpace(route.ProfileID); profileID != "" {
 		req["agent_profile_id"] = profileID
 	}
+	// The turn builder may already have chosen one of the project's own chats
+	// (a Slack thread's "<project>:slack-<hash>"); keep it. The route names
+	// only the project.
 	if conversationKey := strings.TrimSpace(route.ConversationKey); conversationKey != "" {
-		req["agent_profile_conversation_key"] = conversationKey
+		if existing, _ := req["agent_profile_conversation_key"].(string); strings.TrimSpace(existing) == "" {
+			req["agent_profile_conversation_key"] = conversationKey
+		}
 	}
 	if workspacePath := strings.TrimSpace(route.WorkspacePath); workspacePath != "" {
 		req["selected_folder"] = workspacePath
@@ -3723,6 +3821,11 @@ func (m *BotConversationManager) getThreadOffset(_ ThreadID) int {
 	return 0
 }
 
-func (m *BotConversationManager) SetWorkflowTurnFunc(fn func(context.Context, string, ChannelRoute, ThreadID) (map[string]interface{}, error)) {
+func (m *BotConversationManager) SetWorkflowTurnFunc(fn func(ctx context.Context, query string, route ChannelRoute, thread ThreadID, dmUserID string) (map[string]interface{}, error)) {
 	m.workflowTurn = fn
+}
+
+// SetUserWorkflowChatFunc installs the lookup of a user's own workflow chat.
+func (m *BotConversationManager) SetUserWorkflowChatFunc(fn func(ctx context.Context, userID string, route ChannelRoute) string) {
+	m.userWorkflowChat = fn
 }

@@ -111,4 +111,49 @@ describe('MainAgentTerminal sizing', () => {
       host.remove()
     }
   })
+
+  it('refetches settled history when the retained pane moves to a new revision between polls', async () => {
+    vi.useFakeTimers()
+    const settled = (chunk: number, content: string) => ({
+      terminal_id: 'terminal-1',
+      session_id: 'session-1',
+      tmux_session: 'tmux-1',
+      content,
+      rows: [],
+      chunk_index: chunk,
+      active: false,
+      state: 'completed',
+      status: {},
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:01:00Z',
+    })
+    getMainTerminal
+      .mockResolvedValueOnce(settled(2, ''))
+      .mockResolvedValueOnce(settled(2, 'turn one'))
+      // Same revision: metadata only.
+      .mockResolvedValueOnce(settled(2, ''))
+      // A whole turn ran and settled between polls.
+      .mockResolvedValueOnce(settled(4, ''))
+      .mockResolvedValueOnce(settled(5, 'turn one\nturn two'))
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<MainAgentTerminal sessionId="session-1" />))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(getMainTerminal).toHaveBeenCalledTimes(2)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(getMainTerminal).toHaveBeenCalledTimes(3)
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(getMainTerminal).toHaveBeenCalledTimes(5)
+      expect(getMainTerminal).toHaveBeenNthCalledWith(5, 'session-1', { content: 'history', lines: 1000 })
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+      vi.useRealTimers()
+    }
+  })
 })

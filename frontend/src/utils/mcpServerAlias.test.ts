@@ -7,6 +7,7 @@ import {
   toolBelongsToServer,
   hasServerTool,
   dedupeServerNames,
+  toggleServerSelection,
 } from './mcpServerAlias'
 
 describe('normalizeServerAlias', () => {
@@ -82,5 +83,21 @@ describe('dedupeServerNames', () => {
 
   it('is a no-op on an empty list', () => {
     expect(dedupeServerNames([])).toEqual([])
+  })
+})
+
+describe('toggleServerSelection', () => {
+  it('restores one wildcard when a removed server has stale duplicate tool markers', () => {
+    expect(toggleServerSelection('Linear', ['Resend'], ['Linear:*', 'Resend:*', 'Linear:*'])).toEqual({
+      servers: ['Resend', 'Linear'],
+      tools: ['Resend:*', 'Linear:*'],
+    })
+  })
+
+  it('removes the server and its tools together', () => {
+    expect(toggleServerSelection('Linear', ['Resend', 'Linear'], ['Resend:*', 'Linear:*'])).toEqual({
+      servers: ['Resend'],
+      tools: ['Resend:*'],
+    })
   })
 })

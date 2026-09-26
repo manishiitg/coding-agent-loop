@@ -19,6 +19,23 @@ func TestChatPolicyManifestAuthority(t *testing.T) {
 	}
 }
 
+// Run mode (every reader, every Slack channel turn) lists MCP servers
+// without managing them; Pulse and child agents do neither.
+func TestMCPInspectionIsDeclaredForRunMode(t *testing.T) {
+	for _, mode := range []string{"builder", "run"} {
+		for _, readOnly := range []bool{false, true} {
+			for _, origin := range []string{"interactive", "bot", "scheduled"} {
+				if !ChatCapabilities(mode, origin, readOnly)["mcp_inspection"] {
+					t.Fatalf("%s/%s readOnly=%v cannot list MCP servers", mode, origin, readOnly)
+				}
+			}
+			if ChatCapabilities(mode, "pulse", readOnly)["mcp_inspection"] || ChatCapabilities(mode, "child", readOnly)["mcp_inspection"] {
+				t.Fatal("pulse/child admitted undeclared MCP inspection")
+			}
+		}
+	}
+}
+
 func TestChatPolicyManifestRejectsUnknownCapabilities(t *testing.T) {
 	m, err := AgentWorksManifest()
 	if err != nil {

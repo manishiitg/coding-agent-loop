@@ -124,7 +124,7 @@ func migrateDurableChatsFromDisk(docsRoot, stateRoot string, force bool) error {
 		}
 		// Read one file at a time: holding every candidate's bytes during the
 		// walk made memory grow with the whole legacy archive.
-		raw, readErr := os.ReadFile(candidate.path)
+		raw, readErr := readConversationFileDirect(candidate.path)
 		if readErr != nil {
 			log.Printf("[CHAT_MIGRATION] skipping unreadable %s: %v", candidate.path, readErr)
 			stats.failed++

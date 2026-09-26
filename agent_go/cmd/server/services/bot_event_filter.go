@@ -44,19 +44,23 @@ type BotEventFilter struct {
 	appBaseURL string // public app URL for shareable links (e.g., "https://app.example.com")
 	userID     string // workspace user ID for shareable links (e.g., "default")
 
-	progressMu           sync.Mutex // serialize progress sends with terminal cleanup
-	progressMessageID    string
-	mu                   sync.Mutex
-	delegationNames      map[string]string // correlationID -> instruction (sub-agent name)
-	startedAgents        map[string]bool   // correlationID/name keys already announced as started
-	endedAgents          map[string]bool   // correlationID/name keys already announced as ended
-	pendingDelegations   int
-	awaitingInput        bool   // set on any blocking event, cleared externally
-	completionReceived   bool   // set when unified_completion, agent_end, or conversation_end arrives
-	sessionFailed        bool   // authoritative main-level error completion
-	sessionDone          bool   // idempotency guard — ensures onSessionDone fires at most once
-	baseHierarchy        int    // the minimum hierarchy level seen — treated as "main" level
-	baseHierarchySet     bool   // true once baseHierarchy has been calibrated
+	progressMu         sync.Mutex // serialize progress sends with terminal cleanup
+	progressMessageID  string
+	mu                 sync.Mutex
+	delegationNames    map[string]string // correlationID -> instruction (sub-agent name)
+	startedAgents      map[string]bool   // correlationID/name keys already announced as started
+	endedAgents        map[string]bool   // correlationID/name keys already announced as ended
+	pendingDelegations int
+	awaitingInput      bool // set on any blocking event, cleared externally
+	completionReceived bool // set when unified_completion, agent_end, or conversation_end arrives
+	sessionFailed      bool // authoritative main-level error completion
+	sessionDone        bool // idempotency guard — ensures onSessionDone fires at most once
+	baseHierarchy      int  // the minimum hierarchy level seen — treated as "main" level
+	baseHierarchySet   bool // true once baseHierarchy has been calibrated
+	// sawUserMessage is set by the first user_message event. A calibration
+	// made before it came from preamble events (a restored session's relaunch
+	// replays terminal output at another level) and is redone from the turn.
+	sawUserMessage       bool
 	lastActivity         string // human-friendly description of current activity
 	toolCallCount        int    // total tool calls seen (for progress feel)
 	mainTextSent         bool   // true once we've sent main-level text via llm_generation_end
@@ -236,6 +240,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 	defer heartbeat.Stop()
 	lastSendTime := time.Now()
 	lastEventTime := time.Time{} // zero until first event received
+	heartbeatSkipLogged := false // log the post-reply pause once per turn, not every tick
 
 	for {
 		select {
@@ -250,9 +255,19 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 			activity := f.lastActivity
 			toolCount := f.toolCallCount
 			pendingDel := f.pendingDelegations
+			// Once this turn's reply is out, remaining events are background
+			// work the reply already announced ("I'll update this thread");
+			// a placeholder then only clutters the thread (RTS 2026-09-25).
+			replied := f.mainTextSent
 			f.mu.Unlock()
-			// Only send heartbeat if: session active, events flowing recently, and no message sent recently
-			if !done && !awaiting && f.capabilities().ProgressUpdates && !lastEventTime.IsZero() &&
+			// Only send heartbeat if: session active, reply not yet sent, events flowing recently, and no message sent recently
+			if replied && !heartbeatSkipLogged {
+				log.Printf("[BOT_FILTER] heartbeat: paused for thread=%s, reply already sent", f.threadID.Key())
+				heartbeatSkipLogged = true
+			} else if !replied {
+				heartbeatSkipLogged = false
+			}
+			if !done && !awaiting && !replied && f.capabilities().ProgressUpdates && !lastEventTime.IsZero() &&
 				time.Since(lastEventTime) < 60*time.Second &&
 				time.Since(lastSendTime) > 20*time.Second {
 				msg := f.buildHeartbeatMessage(activity, toolCount, pendingDel, heartbeatCount)
@@ -290,7 +305,8 @@ func (f *BotEventFilter) isMainLevel(event BotEventData) bool {
 	if !f.baseHierarchySet {
 		f.baseHierarchy = event.Data.HierarchyLevel
 		f.baseHierarchySet = true
-		log.Printf("[BOT_FILTER] Calibrated base hierarchy level to %d", f.baseHierarchy)
+		log.Printf("[BOT_FILTER] Calibrated base hierarchy level to %d from %s (thread=%s after_user_message=%v)",
+			f.baseHierarchy, event.Type, f.threadID.Key(), f.sawUserMessage)
 	}
 	base := f.baseHierarchy
 	f.mu.Unlock()
@@ -300,6 +316,19 @@ func (f *BotEventFilter) isMainLevel(event BotEventData) bool {
 // processEvent handles a single event. Returns true if a message was sent to the thread.
 func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) bool {
 	if event.Type == "user_message" {
+		f.mu.Lock()
+		if !f.sawUserMessage {
+			f.sawUserMessage = true
+			// Events before the turn's own user message are preamble (RTS
+			// 2026-09-25: a restored session's relaunch replayed terminal
+			// chunks at level 0, the turn ran at level 3, and its reply was
+			// skipped as a sub-agent). Recalibrate from the turn itself.
+			if f.baseHierarchySet {
+				log.Printf("[BOT_FILTER] Dropping pre-turn hierarchy calibration %d for thread=%s; recalibrating from the turn", f.baseHierarchy, f.threadID.Key())
+				f.baseHierarchySet = false
+			}
+		}
+		f.mu.Unlock()
 		f.beginMessageReply()
 		return false
 	}
@@ -428,7 +457,10 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			// only cares about the main agent's synthesized reply, which arrives
 			// via llm_generation_end / main-level unified_completion. Sub-agent
 			// detail still lives in workflow logs and the run folder.
-			log.Printf("[BOT_FILTER] unified_completion: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, isMain, f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
+			f.mu.Lock()
+			base := f.baseHierarchy
+			f.mu.Unlock()
+			log.Printf("[BOT_FILTER] unified_completion: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d base=%d thread=%s)", kind, isMain, f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel, base, f.threadID.Key())
 		} else {
 			// Main-level completion — only send if this exact text wasn't
 			// already forwarded (via llm_generation_end, or the progressive
@@ -1299,6 +1331,7 @@ func (f *BotEventFilter) sendStreamingChunk(ctx context.Context, event BotEventD
 	f.mu.Unlock()
 
 	if messageID == "" {
+		f.clearProgressMessage("Request finished.")
 		sentID, err := f.connector.SendThreadMessage(ctx, f.threadID, nextText)
 		if err != nil {
 			log.Printf("[BOT_FILTER] Failed to send streaming message: %v", err)
@@ -1346,7 +1379,12 @@ func (f *BotEventFilter) flushStreamingMessage(ctx context.Context, finalText st
 		f.mu.Unlock()
 		return false
 	}
-	if sameBotMainText(text, f.streamingSentText) {
+	// Only an identical message is left as is. sameBotMainText also matches
+	// when the streamed text merely contains the answer, which kept the turn's
+	// running narration ("I'll check…", "Switching to us-east-2…") in front
+	// of the final answer in Slack, while the web chat showed the answer
+	// alone (RTS 2026-09-25, QA bot).
+	if normalizeBotMainText(text) == normalizeBotMainText(f.streamingSentText) {
 		f.mainTextSent = true
 		f.lastMainText = strings.TrimSpace(f.streamingSentText)
 		f.mu.Unlock()
@@ -1476,7 +1514,13 @@ func (f *BotEventFilter) SendProgressiveText(ctx context.Context, content string
 	return f.sendMainText(ctx, content)
 }
 
+// ClearProgress removes the "Working on…" placeholder before a reply lands.
+func (f *BotEventFilter) ClearProgress() {
+	f.clearProgressMessage("Request finished.")
+}
+
 func (f *BotEventFilter) sendMainText(ctx context.Context, content string) bool {
+	f.clearProgressMessage("Request finished.")
 	// Mark before the connector call starts. WhatsApp sends can take long enough
 	// that the synthetic-final fallback may run while this goroutine is still
 	// inside SendThreadMessage; marking afterward lets the fallback send the

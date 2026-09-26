@@ -95,6 +95,30 @@ func TestWorkflowExplicitNewTurnDoesNotInterruptForegroundForRetainedAdmission(t
 	}
 }
 
+func TestWorkflowRetainedPolicyBackfillsFolderFromSession(t *testing.T) {
+	// Follow-ups often omit SelectedFolder and rely on session resumption.
+	// The fingerprint check must still run against the session's last known
+	// workspace: a manifest provider change (pi-cli -> muse-cli) must force
+	// a fresh turn instead of silently reusing the stale retained runtime.
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)
+	ws, docs := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["owner"]},"capabilities":{"llm_config":{"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"m","connection_id":""}}}}`
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	prev := QueryRequest{SelectedFolder: "Workflow/test", Provider: "pi-cli", ModelID: "google/gemini-3.8-flash"}
+	api := &StreamingAPI{
+		activeSessions:          map[string]*ActiveSessionInfo{"chat": {UserID: "owner", WorkspacePath: "Workflow/test"}},
+		lastQueryRequests:       map[string]QueryRequest{"chat": prev},
+		lastChatPolicyBySession: map[string]string{},
+	}
+	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("chat", prev, nil, false))
+	followup := QueryRequest{Provider: "pi-cli", ModelID: "google/gemini-3.8-flash"}
+	if compatible, err := api.workflowRetainedPolicyCompatible(ctx, "chat", followup); err != nil || compatible {
+		t.Fatalf("folder-less follow-up skipped the provider fingerprint check: compatible=%v err=%v", compatible, err)
+	}
+}
+
 func TestWorkflowRetainedProviderAndAccountChangesRequireReconnect(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)

@@ -250,12 +250,13 @@ different fact from `plan_change_dependencies` — the latter is about a plan
 edit's blast radius never having been traced; `plan_drift_candidates` is about
 a step's per-check drift record specifically never having been recorded.
 
-**Plan Drift is an exclusive prerequisite pass.** When it is due, mark
-Technical, Architecture, and Strategic Review skipped for this Pulse cycle,
-even when one of them would otherwise be due. They resume only on a later cycle
-after Plan Drift has cleared every due compatibility check. An unresolved failed
-check keeps Plan Drift due and continues to defer the other modules. Reviewing runtime health, architecture, or strategy against a plan
-already known to be stale produces conclusions from the wrong baseline.
+**Plan Drift runs first, not alone.** When it is due, Pulse runs it before
+the other reviewers in the same pass. Decide Technical and Goal Work (Strategic
+Review) on their own merits exactly as if Plan Drift were not due: open issues,
+new step concerns, failed runs and goal evidence still make them due, and they
+run right after Plan Drift in this pass. Do not skip them because Plan Drift is
+due. Only Architecture waits for a later cycle, because judging the design
+against a plan known to be stale gives conclusions from the wrong baseline.
 
 When DB, knowledgebase, or learnings integrity is selected, explicitly name the
 Stores Health scope in the reason. Stores Health remains a technical lens, not

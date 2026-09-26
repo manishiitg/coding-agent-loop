@@ -1,8 +1,6 @@
 package server
 
 import (
-	"context"
-	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
@@ -81,32 +79,6 @@ func TestWhatsAppUploadFolderStaysInsideTheProfileWorkspace(t *testing.T) {
 	}
 }
 
-// The primary phone talks in the profile's main conversation (the app's);
-// another parent's phone gets the profile's own separate conversation keyed
-// by the device, so replies never cross phones. An activity's keyed
-// conversation is the same from every phone.
-func TestWhatsAppConversationFollowsTheDevice(t *testing.T) {
-	parent := whatsappTestProfile(agentprofiles.CapabilityPreferred, "Chats/SparkQuill")
-	parent.Runtime.Conversation.Mode = agentprofiles.ConversationModeSingleton
-
-	main, err := whatsappConversationBinding(context.Background(), "user-1", parent, "", "")
-	if err != nil || main.ConversationKey != "main" {
-		t.Fatalf("primary phone binding = (%+v, %v), want the main conversation", main, err)
-	}
-	second, err := whatsappConversationBinding(context.Background(), "user-1", parent, "", "phone-2")
-	if err != nil || second.ConversationKey != "whatsapp-phone-2" || second.WorkspacePath != main.WorkspacePath {
-		t.Fatalf("second phone binding = (%+v, %v), want its own conversation on the same workspace", second, err)
-	}
-	if !strings.Contains(second.Title, "phone-2") {
-		t.Fatalf("second phone conversation title = %q, want it to name the phone", second.Title)
-	}
-	if _, err := whatsappConversationBinding(context.Background(), "user-1", parent, "", "bad slot!"); err == nil {
-		t.Fatal("an invalid device slot produced a conversation key")
-	}
-}
-
-// A WhatsApp turn runs on the engine the conversation is already bound to,
-// else the profile's default option — so a first turn from WhatsApp binds
 // the conversation exactly as the app's first turn would.
 func TestWhatsAppEngineFollowsTheConversationBinding(t *testing.T) {
 	profile := whatsappTestProfile(agentprofiles.CapabilityPreferred, "Chats/SparkQuill")

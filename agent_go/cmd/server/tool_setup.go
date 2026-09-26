@@ -317,6 +317,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			toolCategories[name] = category
 		}
 
+		platformTools, platformExecutors, platformCategories := createPulsePlatformTools()
+		allTools = append(allTools, platformTools...)
+		for name, executor := range platformExecutors {
+			allExecutors[name] = executor
+		}
+		for name, category := range platformCategories {
+			toolCategories[name] = category
+		}
+
 		pulseWorklistTools, pulseWorklistExecutors, pulseWorklistCategories := createPulseWorklistTools()
 		allTools = append(allTools, pulseWorklistTools...)
 		for name, executor := range pulseWorklistExecutors {

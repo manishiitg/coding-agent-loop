@@ -665,7 +665,8 @@ func TestMergeCodingAgentFallbackHistoryDropsInjectedReplayBeforePersistence(t *
 			texts = append(texts, chatHistoryPartText(msg.Parts[0]))
 		}
 	}
-	want := []string{"old request", "old answer", "recent request", "recent answer", "current product prompt", "new request", "new answer"}
+	// The newest system prompt leads, once; it is never inserted mid-history.
+	want := []string{"current product prompt", "old request", "old answer", "recent request", "recent answer", "new request", "new answer"}
 	if len(texts) != len(want) {
 		t.Fatalf("merged messages = %q, want %q", texts, want)
 	}

@@ -125,6 +125,16 @@ func CollectPlanChangeBacklog(workspacePath string) *PlanChangeBacklog {
 			continue
 		}
 		for _, e := range file.Entries {
+			// A change whose every named field is cosmetic (wording, review
+			// notes, schedule timing, model/tier settings) cannot orphan a
+			// dependent step, eval, report, DB contract, or KB entry, so it
+			// never belongs in this backlog. An entry with no field names at
+			// all (an untyped update_step_config call, or a step add/delete)
+			// stays conservative and is still counted; see
+			// planChangeFieldsAreDriftMaterial.
+			if !planChangeFieldsAreDriftMaterial(planChangelogEntryFieldNames(e)) {
+				continue
+			}
 			coverageProblems := planDependencyCoverageProblems(e)
 			// Legacy reviewed entries predate structured dependency receipts. Do
 			// not reopen the historical fleet. Every current-contract mutation has
@@ -225,6 +235,19 @@ func planDependencyCoverageProblems(entry PlanChangelogEntry) []string {
 		}
 	}
 	return problems
+}
+
+// planChangelogEntryFieldNames extracts the named changed fields the same
+// way toUnreviewedPlanChange does, for the materiality check that decides
+// whether the entry belongs in the backlog at all.
+func planChangelogEntryFieldNames(e PlanChangelogEntry) []string {
+	var fields []string
+	for _, c := range e.Changes {
+		if f := strings.TrimSpace(c.Field); f != "" {
+			fields = append(fields, f)
+		}
+	}
+	return fields
 }
 
 func toUnreviewedPlanChange(e PlanChangelogEntry, sourceFile string) UnreviewedPlanChange {

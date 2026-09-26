@@ -165,18 +165,30 @@ func otherActiveCDPOwners(port int, ownerID string) []string {
 	if owners == nil {
 		return nil
 	}
+	active := otherActiveOwnersLocked(owners, ownerID, true)
+	if len(owners) == 0 {
+		delete(cdpOwners, port)
+	}
+	return active
+}
+
+// otherActiveOwnersLocked returns the owners in one shared browser's owner
+// map (excluding ownerID) that issued a command within cdpOwnerActiveWindow,
+// sorted. With prune, stale entries are deleted as a side effect. Shared by
+// the CDP per-port registry and the managed-session per-conversation tab
+// registry (session_tabs.go). Caller holds cdpOwnersMu.
+func otherActiveOwnersLocked(owners map[string]time.Time, ownerID string, prune bool) []string {
 	var active []string
 	for owner, lastUsed := range owners {
 		if time.Since(lastUsed) > cdpOwnerActiveWindow {
-			delete(owners, owner)
+			if prune {
+				delete(owners, owner)
+			}
 			continue
 		}
 		if owner != ownerID {
 			active = append(active, owner)
 		}
-	}
-	if len(owners) == 0 {
-		delete(cdpOwners, port)
 	}
 	sort.Strings(active)
 	return active

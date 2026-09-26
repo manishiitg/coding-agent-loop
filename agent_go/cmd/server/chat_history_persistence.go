@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/workspace/chatlog"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -588,6 +589,12 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 }
 
 func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, history []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time, botMeta *ChatHistoryBotMetadata) error {
+	return updatePersistedChatHistoryIndexWithCount(userID, sessionID, agentMode, history, len(history), runtime, conversationPath, sourceSize, now, botMeta)
+}
+
+// updatePersistedChatHistoryIndexWithCount indexes a conversation from a
+// (possibly recent-only) slice of its history and its true message count.
+func updatePersistedChatHistoryIndexWithCount(userID, sessionID, agentMode string, history []llmtypes.MessageContent, messageCount int, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time, botMeta *ChatHistoryBotMetadata) error {
 	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
 	if indexPath == "" {
 		return fmt.Errorf("cannot derive chat index path from %q", conversationPath)
@@ -650,7 +657,7 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 			BotUserEmail:     stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserEmail }),
 			CreatedAt:        createdAt,
 			UpdatedAt:        now.Format(time.RFC3339),
-			MessageCount:     len(history),
+			MessageCount:     messageCount,
 			PreviewMessages:  chatHistoryPreviewMessages(history),
 		},
 		SourceSize:          sourceSize,
@@ -1193,40 +1200,46 @@ func mergeRestoredChatHistory(existing, incoming []llmtypes.MessageContent) []ll
 	if chatHistoryHasPrefix(incoming, existing) {
 		return incoming
 	}
-	// Rendered system prompts contain turn-local data such as the current time.
-	// Their text can differ while the human/assistant body is a true cumulative
-	// continuation. Compare that body independently and keep only the newest
-	// runtime prompt; otherwise every save appends the full conversation again.
-	if existing[0].Role == llmtypes.ChatMessageTypeSystem && incoming[0].Role == llmtypes.ChatMessageTypeSystem {
-		body := mergeRestoredChatHistory(existing[1:], incoming[1:])
-		merged := make([]llmtypes.MessageContent, 0, len(body)+1)
-		merged = append(merged, incoming[0])
-		merged = append(merged, body...)
-		return merged
-	}
-	maxOverlap := len(existing)
-	if len(incoming) < maxOverlap {
-		maxOverlap = len(incoming)
-	}
-	for overlap := maxOverlap; overlap > 0; overlap-- {
-		matched := true
-		for i := 0; i < overlap; i++ {
-			if !chatHistoryMessagesEqual(existing[len(existing)-overlap+i], incoming[i]) {
-				matched = false
-				break
+	// The file often holds rows the in-memory history never saw (live input,
+	// structured completion replies, native transcript catch-up), so incoming
+	// is not a prefix extension. Align the two instead of concatenating: the
+	// old fallback appended the whole history onto the file every turn.
+	old, oldErr := chatHistoryToRaw(existing)
+	next, nextErr := chatHistoryToRaw(incoming)
+	if oldErr == nil && nextErr == nil {
+		if aligned, err := alignChatHistories(old, next); err == nil {
+			var merged []llmtypes.MessageContent
+			if encoded, err := json.Marshal(aligned); err == nil && json.Unmarshal(encoded, &merged) == nil {
+				return merged
 			}
 		}
-		if matched {
-			merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming)-overlap)
-			merged = append(merged, existing...)
-			merged = append(merged, incoming[overlap:]...)
-			return merged
+	}
+	// Never concatenate: keep the file and add only what it lacks at the end.
+	return appendMissingChatHistoryTail(existing, incoming)
+}
+
+func chatHistoryToRaw(history []llmtypes.MessageContent) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, 0, len(history))
+	for _, message := range history {
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, encoded)
+	}
+	return out, nil
+}
+
+// appendMissingChatHistoryTail is the fallback when a history can't be
+// encoded: keep existing and append the incoming rows after its last match.
+func appendMissingChatHistoryTail(existing, incoming []llmtypes.MessageContent) []llmtypes.MessageContent {
+	last := len(existing) - 1
+	for start := 0; start < len(incoming); start++ {
+		if chatHistoryMessagesEqual(existing[last], incoming[start]) {
+			return append(append([]llmtypes.MessageContent{}, existing...), incoming[start+1:]...)
 		}
 	}
-	merged := make([]llmtypes.MessageContent, 0, len(existing)+len(incoming))
-	merged = append(merged, existing...)
-	merged = append(merged, incoming...)
-	return merged
+	return existing
 }
 
 // mergeNativeContinuationChatHistory keeps the durable/UI transcript
@@ -1943,7 +1956,7 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 	for _, sr := range refs {
 		session, ok := indexedLocalChatHistorySession(index, sr.ref)
 		if !ok {
-			data, err := os.ReadFile(sr.ref.convPath)
+			data, err := readConversationFileDirect(sr.ref.convPath)
 			if err != nil {
 				continue
 			}
@@ -2282,7 +2295,7 @@ func resolveLocalWorkflowDir(workflowPath string) (string, bool) {
 }
 
 func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, file localChatHistoryFile) (ChatHistorySession, bool) {
-	data, err := os.ReadFile(file.convPath)
+	data, err := readConversationFileDirect(file.convPath)
 	if err != nil {
 		return ChatHistorySession{}, false
 	}
@@ -3078,7 +3091,7 @@ func readChatHistoryConversationDataFromPath(normalizedPath string) ([]byte, boo
 		return nil, false, nil
 	}
 	localPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(normalizedPath))
-	if localData, err := os.ReadFile(localPath); err == nil {
+	if localData, err := readConversationFileDirect(localPath); err == nil {
 		return localData, true, nil
 	} else if !os.IsNotExist(err) {
 		return nil, false, err
@@ -3420,7 +3433,7 @@ func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMe
 			if err != nil || info.IsDir() {
 				continue
 			}
-			data, err := os.ReadFile(match)
+			data, err := readConversationFileDirect(match)
 			if err != nil {
 				return nil, true, err
 			}
@@ -3433,7 +3446,7 @@ func readUserChatHistoryConversationDirect(userID, sessionID string) (json.RawMe
 	if latest == nil {
 		return nil, false, nil
 	}
-	data, err := os.ReadFile(latest.path)
+	data, err := readConversationFileDirect(latest.path)
 	if err != nil {
 		return nil, true, err
 	}
@@ -3574,7 +3587,7 @@ func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath st
 	if latest == nil {
 		return nil, false, nil
 	}
-	data, err := os.ReadFile(latest.path)
+	data, err := readConversationFileDirect(latest.path)
 	if err != nil {
 		return nil, true, err
 	}
@@ -3952,7 +3965,7 @@ func chatHistoryFileCleanupCandidate(convPath string, cutoff time.Time) (bool, e
 		return false, nil
 	}
 
-	data, err := os.ReadFile(convPath)
+	data, err := readConversationFileDirect(convPath)
 	if err != nil {
 		return false, err
 	}
@@ -4052,17 +4065,15 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	lock := chatConversationMutex(conversationPath)
 	lock.Lock()
 	defer lock.Unlock()
-	content, exists, readErr := readFileFromWorkspace(context.Background(), conversationPath)
+	// Read only the header and recent messages, then append the one new
+	// message: the whole history is never downloaded or rewritten (a 115 MB
+	// chat used to be decoded and rewritten twice per message).
+	content, exists, readErr := readConversationTailFromWorkspace(context.Background(), conversationPath, chatLiveInputTailRows)
 	if readErr != nil || !exists {
 		return
 	}
-	raw := []byte(content)
-
-	// Decode into a generic map so every field this function does not understand —
-	// agent_mode, runtime, ui_events, terminal_snapshots — survives the rewrite
-	// byte-for-byte.
 	var record map[string]interface{}
-	if err := json.Unmarshal(raw, &record); err != nil {
+	if err := json.Unmarshal([]byte(content), &record); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot decode %s: %v", conversationPath, err)
 		return
 	}
@@ -4088,45 +4099,64 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 			return
 		}
 	}
-	history = append(history, llmtypes.MessageContent{
+	total := len(history)
+	if value, ok := record["history_total"].(float64); ok && int(value) > total {
+		total = int(value)
+	}
+	userMessage := llmtypes.MessageContent{
 		Role:  llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: message}},
-	})
-
-	record["conversation_history"] = history
-	record["updated_at"] = time.Now().Format(time.RFC3339)
-
-	advanceChatConversationRevision(record)
-	encoded, err := json.MarshalIndent(record, "", "  ")
+	}
+	encodedMessage, err := json.Marshal(userMessage)
 	if err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot marshal %s: %v", conversationPath, err)
 		return
 	}
-	if err := writeRawFileToWorkspace(context.Background(), conversationPath, string(encoded)); err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot write %s: %v", conversationPath, err)
+	updatedAt := time.Now().Format(time.RFC3339)
+	advanceChatConversationRevision(record)
+	if err := appendConversationHistoryInWorkspace(context.Background(), conversationPath, []json.RawMessage{encodedMessage}, map[string]interface{}{
+		"updated_at": updatedAt,
+		"revision":   record["revision"],
+	}); err != nil {
+		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot append to %s: %v", conversationPath, err)
 		return
 	}
-	if err := writeChatHistoryResumeSnapshot(context.Background(), conversationPath, encoded); err != nil {
-		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update resume snapshot for %s: %v", conversationPath, err)
+	history = append(history, userMessage)
+	total++
+
+	// The resume snapshot and index are refreshed from the recent slice.
+	record["conversation_history"] = history
+	record["updated_at"] = updatedAt
+	delete(record, "history_tail")
+	delete(record, "history_total")
+	if encoded, err := json.Marshal(record); err == nil {
+		if err := writeChatHistoryResumeSnapshot(context.Background(), conversationPath, encoded); err != nil {
+			logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update resume snapshot for %s: %v", conversationPath, err)
+		}
 	}
 	// Keep the history index in step with the transcript, so a session steered
 	// only by live input still shows its latest message — and stays listed at all
 	// for callers that read the index without a local directory to fall back on.
-	if err := updatePersistedChatHistoryIndex(
+	if err := updatePersistedChatHistoryIndexWithCount(
 		userID,
 		sessionID,
 		stringFromRecord(record, "agent_mode"),
 		history,
+		total,
 		runtimeFromRecord(record),
 		conversationPath,
-		int64(len(encoded)),
+		int64(len(content)),
 		time.Now(),
 		botMetadataFromRecord(record),
 	); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update index for %s: %v", conversationPath, err)
 	}
-	logfWithContext(logCtx, "[CHAT_HISTORY] Recorded live-input message (%d messages) in %s", len(history), conversationPath)
+	logfWithContext(logCtx, "[CHAT_HISTORY] Recorded live-input message (%d messages) in %s", total, conversationPath)
 }
+
+// chatLiveInputTailRows is how much recent history a live-input append reads:
+// enough for the owner check, the resume snapshot (last 10 turns) and the
+// index preview.
+const chatLiveInputTailRows = 400
 
 func stringFromRecord(record map[string]interface{}, key string) string {
 	value, _ := record[key].(string)
@@ -4164,4 +4194,14 @@ func runtimeFromRecord(record map[string]interface{}) *ChatHistoryAgentRuntime {
 		return nil
 	}
 	return &runtime
+}
+
+// readConversationFileDirect reads a chat conversation straight from disk in
+// its legacy single-record form (assembled from header + history log when it
+// is stored in that format); any other file is read as-is.
+func readConversationFileDirect(path string) ([]byte, error) {
+	if chatlog.IsConversationPath(path) {
+		return chatlog.Load(path)
+	}
+	return os.ReadFile(path)
 }

@@ -48,13 +48,12 @@ func TestWhatsAppManagerNamespacesIncomingMessage(t *testing.T) {
 	}
 }
 
-func TestWhatsAppManagerSessionBindingsAreIsolatedPerAccountAndDevice(t *testing.T) {
+func TestWhatsAppManagerSessionBindingsAreIsolatedPerAccount(t *testing.T) {
 	baseDir := t.TempDir()
 	manager := NewWhatsAppServiceManager(baseDir)
-	keys := []string{"user-a", "user-b", whatsappServiceKey("user-a", "phone-2")}
+	keys := []string{"user-a", "user-b"}
 	for _, key := range keys {
-		userKey, slot := splitWhatsAppServiceKey(key)
-		dbPath := manager.devicePath(userKey, slot)
+		dbPath := manager.devicePath(key)
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 			t.Fatalf("create device directory for %s: %v", key, err)
 		}
@@ -70,9 +69,8 @@ func TestWhatsAppManagerSessionBindingsAreIsolatedPerAccountAndDevice(t *testing
 
 	chatJID := "15551234567@s.whatsapp.net"
 	bindings := map[string]string{
-		"user-a":                                "session-user-a-primary",
-		"user-b":                                "session-user-b-primary",
-		whatsappServiceKey("user-a", "phone-2"): "session-user-a-phone-2",
+		"user-a": "session-user-a",
+		"user-b": "session-user-b",
 	}
 	for key, sessionID := range bindings {
 		threadID := ThreadID{Platform: "whatsapp", ChannelID: encodeWhatsAppManagedChannelID(key, chatJID)}
@@ -199,7 +197,7 @@ func TestLockServiceKeySerializesSameKeyAndAllowsOtherKeys(t *testing.T) {
 func TestManagerSetDeviceLabelDoesNotCreateResidentServiceWhenNotCached(t *testing.T) {
 	manager := NewWhatsAppServiceManager(t.TempDir())
 
-	if err := manager.SetDeviceLabel(context.Background(), "user-1", "", "Primary Phone"); err != nil {
+	if err := manager.SetDeviceLabel(context.Background(), "user-1", "Primary Phone"); err != nil {
 		t.Fatalf("SetDeviceLabel failed: %v", err)
 	}
 
@@ -219,7 +217,7 @@ func TestManagerSetDeviceLabelUsesLiveInstanceWhenResident(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whatsappUserKey failed: %v", err)
 	}
-	key := whatsappServiceKey(userKey, "")
+	key := userKey
 
 	svc := NewWhatsAppService("")
 	manager.configureService(key, svc)
@@ -231,7 +229,7 @@ func TestManagerSetDeviceLabelUsesLiveInstanceWhenResident(t *testing.T) {
 	// is expected to fail on the actual write -- what matters here is that it
 	// took the resident branch (attempted the live instance) rather than
 	// silently falling through to the offline path for a key that IS cached.
-	if err := manager.SetDeviceLabel(context.Background(), "user-1", "", "Primary Phone"); err == nil {
+	if err := manager.SetDeviceLabel(context.Background(), "user-1", "Primary Phone"); err == nil {
 		t.Fatal("expected an error from the resident instance's unopened meta store, got nil")
 	}
 }

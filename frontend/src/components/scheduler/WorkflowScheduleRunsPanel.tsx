@@ -17,6 +17,7 @@ import WorkflowAPITriggersView from '../workflow/WorkflowAPITriggersView'
 import type { ProductTriggerScope } from '../../api/productWebhooks'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { TriggerDeliveryHistoryPanel } from '../automation/TriggerDeliveryHistoryPanel'
+import { WorkspaceViewHeader } from '../workflow/WorkspaceViewHeader'
 
 const ProductAPITriggersView = lazy(() => import('../workflow/ProductAPITriggersView'))
 
@@ -136,7 +137,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         )}
 
         {automationSection === 'bots' && botContent ? (
-          <div className="min-h-0 flex-1">{botContent}</div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {!hideHeader && <WorkspaceViewHeader icon={Bot} title="Bots" helpTopic="Automation · Bots" actions={headerAction} />}
+            <div className="min-h-0 flex-1 overflow-y-auto">{botContent}</div>
+          </div>
         ) : automationSection === 'webhooks' && hasProductWebhooks && productTriggerScope ? (
           <div className="min-h-0 flex-1">
             <ProductAPITriggersView
@@ -158,7 +162,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         {/* Header */}
         {!hideHeader && (
           <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction}
-            compact={compact} navigation={compact ? viewControls : undefined} />
+            compact={compact} navigation={compact ? viewControls : undefined}
+            helpTopic={showAutomationTabs && (hasWebhooks || botContent) ? 'Automation · Schedules' : undefined} />
         )}
 
         {/* Body */}

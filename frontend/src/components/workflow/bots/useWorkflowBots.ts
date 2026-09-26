@@ -4,17 +4,26 @@ import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestSto
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import type {
     BotRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
-    GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
+    GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, SlackUsableBot, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 import { slackConnectionStatus } from './slackConnectionStatus'
-import { resolveWorkflowSlackConnection, selectedWorkflowSlackReady } from './slackWorkflowConnection'
+import { resolveWorkflowSlackConnection, sameBotWorkspacePath, selectedWorkflowSlackReady } from './slackWorkflowConnection'
+import { withSlackDryRun } from './slackDryRun'
 
 type WaRoute = WhatsAppRoute
 
 const SLUG_RE = /^[a-z0-9-]+$/
 const SLACK_CHANNEL_RE = /^[CDG][A-Z0-9]{2,}$/
+
+// Server errors come back as plain-text bodies; prefer them over axios's
+// generic "Request failed with status code 409".
+const serverErrorMessage = (err: unknown, fallback: string): string => {
+  const data = (err as { response?: { data?: unknown } })?.response?.data
+  if (typeof data === 'string' && data.trim()) return data.trim()
+  return err instanceof Error ? err.message : fallback
+}
 
 const normalizeGmailEmails = (values: string | string[] | undefined): string[] => {
   const source = Array.isArray(values) ? values : [values || '']
@@ -48,6 +57,12 @@ export type BotRouteTarget = {
 
 export function useWorkflowBots(workspacePath: string | null, target?: BotRouteTarget, section: 'bots' | 'email' | 'all' = 'all') {
   // ── Workflow identity ─────────────────────────────────────────────────────
+  // Crew passes a fresh target object when chat state changes. Effects must
+  // depend on its values so typing does not reload the Slack setup panel.
+  const targetProfileId = target?.profileId
+  const targetConversationKey = target?.conversationKey
+  const targetLabel = target?.label
+  const hasTarget = target !== undefined
   const workflows = useWorkflowManifestStore(state => state.workflows)
   const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
   const updateWorkflow = useWorkflowManifestStore(state => state.updateWorkflow)
@@ -55,12 +70,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     () => (workspacePath ? workflows.find(w => w.workspace_path === workspacePath) : undefined),
     [workflows, workspacePath],
   )
-  const workflowId = target?.conversationKey || workflow?.manifest.id || null
+  const workflowId = targetConversationKey || workflow?.manifest.id || null
   const workflowLabel = (id: string) => workflows.find(w => w.manifest.id === id)?.manifest.label || id
   // Every write here lands in shared connector config immediately -- there's
   // no Save step for the panel to gate -- so each mutating control disables.
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
-  const readOnly = target ? false : !canWriteWorkflow
+  const readOnly = hasTarget ? false : !canWriteWorkflow
   // Slack apps are owner-managed (writers get a 403 server-side); readers see
   // everything disabled through readOnly as usual.
   const canManageWorkflowSlack = !readOnly && (workflow?.my_access || 'owner') === 'owner'
@@ -71,21 +86,21 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const canManageOwnWhatsAppDevices: boolean = true
 
   const routeMatchesTarget = useCallback((route: ChannelRoute | WaRoute) => {
-    if (target) {
-      return route.profile_id === target.profileId && route.conversation_key === target.conversationKey
+    if (hasTarget) {
+      return route.profile_id === targetProfileId && route.conversation_key === targetConversationKey
     }
     return route.workflow_id === workflowId
-  }, [target, workflowId])
+  }, [hasTarget, targetProfileId, targetConversationKey, workflowId])
 
-  const routeForTarget = useCallback((): ChannelRoute => target ? {
+  const routeForTarget = useCallback((): ChannelRoute => hasTarget ? {
     workspace_path: workspacePath || '',
-    profile_id: target.profileId,
-    conversation_key: target.conversationKey,
-    profile_label: target.label,
+    profile_id: targetProfileId,
+    conversation_key: targetConversationKey,
+    profile_label: targetLabel,
   } : {
     workflow_id: workflowId || '',
     workspace_path: workflow?.workspace_path || '',
-  }, [target, workflowId, workflow?.workspace_path, workspacePath])
+  }, [hasTarget, targetProfileId, targetConversationKey, targetLabel, workflowId, workflow?.workspace_path, workspacePath])
 
   useEffect(() => {
     if (workflows.length === 0) void refreshWorkflows()
@@ -143,14 +158,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [qrImageURL, setQrImageURL] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
-  const [waAddDeviceOpen, setWaAddDeviceOpen] = useState(false)
   const [waUnpairConfirmSlot, setWaUnpairConfirmSlot] = useState<string | null>(null)
   const [waUnpairingSlot, setWaUnpairingSlot] = useState<string | null>(null)
-  const [waDeviceLabelDrafts, setWaDeviceLabelDrafts] = useState<Record<string, string>>({})
-  const [waDeviceLabelSavingSlot, setWaDeviceLabelSavingSlot] = useState<string | null>(null)
-  const [waPairDeviceLabel, setWaPairDeviceLabel] = useState('')
-  const [waPairDeviceLabelSaving, setWaPairDeviceLabelSaving] = useState(false)
-  const [waPairingDeviceSlot, setWaPairingDeviceSlot] = useState<string | null>(null)
   const waPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Gmail (account-wide, shared by every workflow) ────────────────────────
@@ -209,17 +218,32 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } catch { /* ignore */ }
   }, [])
 
+  // ── "One of my bots": workflow/crew bots this user manages ────────────────
+  const [myBots, setMyBots] = useState<SlackUsableBot[]>([])
+  const [newMyBotChannel, setNewMyBotChannel] = useState('')
+  const [myBotSaving, setMyBotSaving] = useState<string | null>(null)
+  const [myBotError, setMyBotError] = useState<string | null>(null)
+  const loadMyBots = useCallback(async () => {
+    try {
+      const data = await agentApi.listUsableSlackBots()
+      setMyBots(Array.isArray(data.bots) ? data.bots : [])
+    } catch {
+      // Listing is best effort: the option then explains how to add a bot.
+      setMyBots([])
+    }
+  }, [])
+
   const [projectSlackSelectionId, setProjectSlackSelectionId] = useState<string>('')
   const loadSlack = useCallback(async () => {
     try {
       setSlackLoading(true)
       setSlackError(null)
-      const data = await agentApi.getSlackFeedbackConfig()
+      const [data] = await Promise.all([agentApi.getSlackFeedbackConfig(), loadMyBots()])
       setSlackConfig(data)
       setSlackOriginal(data)
-      if (target && workspacePath) {
+      if (hasTarget && workspacePath) {
         try {
-          const selection = await agentApi.getProjectSlackSelection(target.profileId, workspacePath)
+          const selection = await agentApi.getProjectSlackSelection(targetProfileId || '', workspacePath)
           setProjectSlackSelectionId(selection.slack_connection_id || '')
         } catch {
           setProjectSlackSelectionId('')
@@ -230,7 +254,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } finally {
       setSlackLoading(false)
     }
-  }, [target, workspacePath])
+  }, [hasTarget, targetProfileId, workspacePath, loadMyBots])
 
   const loadWaStatus = useCallback(async () => {
     try {
@@ -256,10 +280,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 
   const refreshWaQR = useCallback(() => {
     setQrBust(Date.now())
-  }, [])
-
-  const setWaDeviceLabelDraft = useCallback((slot: string, label: string) => {
-    setWaDeviceLabelDrafts(current => ({ ...current, [slot]: label }))
   }, [])
 
   const loadGmailConnections = useCallback(async (attempt = 0) => {
@@ -508,11 +528,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     () => resolveWorkflowSlackConnection(
       slackOriginal.connections,
       workspacePath,
-      target ? projectSlackSelectionId : workflow?.manifest.capabilities.slack_connection_id,
+      hasTarget ? projectSlackSelectionId : workflow?.manifest.capabilities.slack_connection_id,
       slackOriginal.default_connection_id,
-      target ? target.profileId : null,
+      targetProfileId ?? null,
     ),
-    [slackOriginal.connections, slackOriginal.default_connection_id, target, workspacePath, projectSlackSelectionId, workflow?.manifest.capabilities.slack_connection_id],
+    [slackOriginal.connections, slackOriginal.default_connection_id, hasTarget, targetProfileId, workspacePath, projectSlackSelectionId, workflow?.manifest.capabilities.slack_connection_id],
   )
   const slackOwnConnId = slackSelection.own?.id || null
   useEffect(() => {
@@ -540,8 +560,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // user having to refresh. Only runs while the WhatsApp setup screen is open.
   useEffect(() => {
     if (setup !== 'whatsapp') {
-      setWaAddDeviceOpen(false)
-      setWaPairingDeviceSlot(null)
       if (waPollingRef.current) {
         clearInterval(waPollingRef.current)
         waPollingRef.current = null
@@ -553,33 +571,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     let lastQRKey: string | undefined
     const tick = async () => {
       try {
-        const s = await agentApi.getWhatsAppStatus(waAddDeviceOpen && waPairingDeviceSlot === null ? { device: 'next' } : undefined)
+        const s = await agentApi.getWhatsAppStatus()
         if (cancelled) return
-        if (waAddDeviceOpen) {
-          const targetSlot = waPairingDeviceSlot ?? s.next_device?.slot ?? ''
-          const hasPairingTarget = waPairingDeviceSlot !== null || s.next_device !== undefined
-          const targetDevice = s.devices?.find(device => device.slot === targetSlot)
-          if (hasPairingTarget && targetDevice?.paired) {
-            setWaStatus(s)
-            setWaError(null)
-            setWaAddDeviceOpen(false)
-            setWaPairingDeviceSlot(null)
-            setWaPairDeviceLabel('')
-            setQrImageURL(prev => {
-              if (prev) URL.revokeObjectURL(prev)
-              return null
-            })
-            return
-          }
-          if (waPairingDeviceSlot === null && s.next_device) {
-            setWaPairingDeviceSlot(s.next_device.slot)
-          }
-        }
         setWaStatus(s)
         setWaError(null)
-        const key = (waAddDeviceOpen && s.paired)
-          ? `next|${waPairingDeviceSlot ?? s.next_device?.slot ?? ''}|${s.next_device?.qr_expires_at || ''}`
-          : `primary|${s.qr_expires_at || ''}`
+        const key = s.qr_expires_at || ''
         if (key !== lastQRKey) {
           lastQRKey = key
           setQrBust(Date.now())
@@ -598,17 +594,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         waPollingRef.current = null
       }
     }
-  }, [setup, waAddDeviceOpen, waPairingDeviceSlot])
+  }, [setup])
 
+  // One person, one WhatsApp: the QR is shown only while the account's phone
+  // is unpaired.
   useEffect(() => {
-    const pairingMode: 'primary' | 'next' | null = !waStatus?.paired ? 'primary' : waAddDeviceOpen ? 'next' : null
-    const nextSlotMatches = pairingMode !== 'next'
-      || waPairingDeviceSlot === null
-      || waStatus?.next_device?.slot === waPairingDeviceSlot
-    const qrAvailable = pairingMode === 'next'
-      ? nextSlotMatches && !!waStatus?.next_device?.qr_available
-      : !!waStatus?.qr_available
-    if (setup !== 'whatsapp' || !waStatus?.enabled || pairingMode === null || !qrAvailable) {
+    if (setup !== 'whatsapp' || !waStatus?.enabled || waStatus?.paired || !waStatus?.qr_available) {
       setQrLoading(false)
       setQrError(null)
       setQrImageURL(prev => {
@@ -621,8 +612,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     let cancelled = false
     setQrLoading(true)
     setQrError(null)
-    const device = pairingMode === 'next' ? (waPairingDeviceSlot ?? 'next') : undefined
-    agentApi.getWhatsAppPairQR(384, qrBust, device)
+    agentApi.getWhatsAppPairQR(384, qrBust)
       .then(blob => {
         if (cancelled) return
         const nextURL = URL.createObjectURL(blob)
@@ -646,7 +636,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     return () => {
       cancelled = true
     }
-  }, [setup, waStatus?.enabled, waStatus?.paired, waStatus?.qr_available, waStatus?.next_device?.qr_available, waStatus?.next_device?.slot, waAddDeviceOpen, waPairingDeviceSlot, qrBust])
+  }, [setup, waStatus?.enabled, waStatus?.paired, waStatus?.qr_available, qrBust])
 
   useEffect(() => {
     return () => {
@@ -654,27 +644,10 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     }
   }, [qrImageURL])
 
-  useEffect(() => {
-    const devices = waStatus?.devices || []
-    if (devices.length === 0) return
-    setWaDeviceLabelDrafts(current => {
-      let changed = false
-      const next = { ...current }
-      for (const device of devices) {
-        const slot = device.slot || ''
-        if (!(slot in next)) {
-          next[slot] = device.label || ''
-          changed = true
-        }
-      }
-      return changed ? next : current
-    })
-  }, [waStatus?.devices])
-
   // Show accessible workflow destinations in the shared connector overview.
   // Crew remains scoped to its selected project.
   const workflowRoutes = useMemo<WorkflowRoute[]>(() => {
-    const visible = (route: ChannelRoute | WaRoute) => routeMatchesTarget(route) || (!target && !!route.workflow_id && workflows.some(w => w.manifest.id === route.workflow_id))
+    const visible = (route: ChannelRoute | WaRoute) => routeMatchesTarget(route) || (!hasTarget && !!route.workflow_id && workflows.some(w => w.manifest.id === route.workflow_id))
     const describe = (route: ChannelRoute | WaRoute) => ({
       target_label: route.profile_id ? route.profile_label || route.conversation_key : workflows.find(w => w.manifest.id === route.workflow_id)?.manifest.label || route.workflow_id,
       current_target: routeMatchesTarget(route),
@@ -688,7 +661,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       .filter(([, route]) => visible(route))
       .map(([key, route]) => ({ kind: 'whatsapp' as const, key, ...describe(route) }))
     return [...slack, ...wa]
-  }, [slackOriginal.channel_routing, waRouting, workflows, target, routeMatchesTarget])
+  }, [slackOriginal.channel_routing, waRouting, workflows, hasTarget, routeMatchesTarget])
   const myRoutes = useMemo(() => workflowRoutes.filter(route => route.current_target), [workflowRoutes])
 
   // Slack channel routing writes: base on the last loaded config so unsaved
@@ -985,7 +958,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         id = await saveWorkflowSlackConnection()
         if (!id) return
       }
-      setSlackConnTestResult(await agentApi.testSlackConnectionEntry(id))
+      const result = await agentApi.testSlackConnectionEntry(id)
+      setSlackConnTestResult(result.success ? await withSlackDryRun(id, result, target ? 'crew' : 'workflow') : result)
     } catch (err) {
       setSlackConnTestResult({ success: false, message: err instanceof Error ? err.message : 'Connection test failed' })
     } finally { setSlackConnTesting(false) }
@@ -1030,53 +1004,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   }
 
   // ── WhatsApp handlers (setup screen) ──────────────────────────────────────
-  const openAddWhatsAppDevice = useCallback(() => {
-    setWaAddDeviceOpen(true)
-    setWaPairingDeviceSlot(null)
-    setQrBust(Date.now())
-  }, [])
-
-  const closeAddWhatsAppDevice = useCallback(() => {
-    setWaAddDeviceOpen(false)
-    setWaPairDeviceLabel('')
-    setWaPairingDeviceSlot(null)
-    setQrBust(Date.now())
-  }, [])
-
-  const handleSaveWhatsAppDeviceLabel = useCallback(async (slot: string, label: string) => {
-    try {
-      setWaDeviceLabelSavingSlot(slot)
-      setWaError(null)
-      await agentApi.updateWhatsAppDeviceLabel(slot, label)
-      setWaDeviceLabelDrafts(current => ({ ...current, [slot]: label.trim() }))
-      await loadWaStatus()
-      return true
-    } catch (err) {
-      setWaError(err instanceof Error ? err.message : 'Failed to save WhatsApp name')
-      return false
-    } finally {
-      setWaDeviceLabelSavingSlot(null)
-    }
-  }, [loadWaStatus])
-
-  const handleSaveWhatsAppPairDeviceLabel = useCallback(async () => {
-    const slot = waAddDeviceOpen ? (waPairingDeviceSlot ?? waStatus?.next_device?.slot ?? '') : ''
-    try {
-      setWaPairDeviceLabelSaving(true)
-      setWaError(null)
-      await agentApi.updateWhatsAppDeviceLabel(slot, waPairDeviceLabel)
-      const status = await agentApi.getWhatsAppStatus(waAddDeviceOpen && waPairingDeviceSlot === null ? { device: 'next' } : undefined)
-      setWaStatus(status)
-    } catch (err) {
-      setWaError(err instanceof Error ? err.message : 'Failed to save WhatsApp name')
-    } finally {
-      setWaPairDeviceLabelSaving(false)
-    }
-  }, [waAddDeviceOpen, waPairDeviceLabel, waPairingDeviceSlot, waStatus?.next_device?.slot])
-
-  // Drops one linked phone/number (slot "" = primary), restarts that
-  // connector session, and refreshes local status. Two-step confirmation
-  // prevents accidental clicks.
+  // Drops the account's linked phone, restarts its connector session and
+  // refreshes local status. Two-step confirmation prevents accidental clicks.
   const handleUnpairWhatsAppDevice = useCallback(async (slot: string) => {
     if (waUnpairConfirmSlot !== slot) {
       setWaUnpairConfirmSlot(slot)
@@ -1088,10 +1017,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     try {
       setWaUnpairingSlot(slot)
       setWaError(null)
-      await agentApi.unpairWhatsApp(slot ? { device: slot } : undefined)
+      await agentApi.unpairWhatsApp()
       setWaUnpairConfirmSlot(null)
-      setWaAddDeviceOpen(false)
-      setWaPairingDeviceSlot(null)
       await loadWaStatus()
       setQrBust(Date.now())
     } catch (err) {
@@ -1177,6 +1104,73 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       : !waReady ? 'Not paired'
         : waStatus.connected || waLinkedDevices.some(device => device.connected) ? 'Connected' : 'Paired, offline'
 
+  // ── "One of my bots": share a bot this user manages with this target ─────
+  // A route names this workflow folder (or crew project); the server checks
+  // the user manages the bot and can write this target.
+  const myBotDestination = useMemo(() => {
+    const path = hasTarget ? (workspacePath || '') : (workflow?.workspace_path || workspacePath || '')
+    return { workspace_path: path, ...(hasTarget && targetProfileId ? { profile_id: targetProfileId } : {}) }
+  }, [hasTarget, targetProfileId, workflow?.workspace_path, workspacePath])
+  const routesHere = useCallback((bot: SlackUsableBot) => (bot.channel_routes || []).filter(route =>
+    sameBotWorkspacePath(route.workspace_path, myBotDestination.workspace_path) && (route.profile_id || '') === (myBotDestination.profile_id || '')), [myBotDestination])
+  // Bots other than this target's own, with the channels routed here.
+  const myOtherBots = useMemo(
+    () => myBots.filter(bot => !(sameBotWorkspacePath(bot.workspace_path, myBotDestination.workspace_path) && (bot.profile_id || '') === (myBotDestination.profile_id || ''))),
+    [myBots, myBotDestination],
+  )
+
+  const replaceMyBot = (updated: SlackUsableBot) => {
+    setMyBots(prev => prev.map(bot => bot.id === updated.id ? { ...bot, ...updated, channel_routes: updated.channel_routes || [] } : bot))
+  }
+
+  const addMyBotChannel = async (botId: string) => {
+    const bot = myBots.find(entry => entry.id === botId)
+    if (!bot || !myBotDestination.workspace_path) return
+    const channels = Array.from(new Set(
+      newMyBotChannel.split(/[\s,;]+/).map(value => value.trim().toUpperCase()).filter(Boolean),
+    ))
+    if (channels.length === 0) return
+    const invalid = channels.find(channel => !SLACK_CHANNEL_RE.test(channel))
+    if (invalid) {
+      setMyBotError(`Slack channel ID "${invalid}" is invalid. Use IDs like C1234567890 or G1234567890.`)
+      return
+    }
+    const taken = channels.map(channel => (bot.channel_routes || []).find(route => route.channel_id === channel)).find(Boolean)
+    if (taken) {
+      const here = sameBotWorkspacePath(taken.workspace_path, myBotDestination.workspace_path) && (taken.profile_id || '') === (myBotDestination.profile_id || '')
+      setMyBotError(here
+        ? `${taken.channel_id} already answers here on ${bot.display_name}.`
+        : `${taken.channel_id} on ${bot.display_name} already answers for ${taken.label || taken.workspace_path}. Remove it there first.`)
+      return
+    }
+    setMyBotError(null)
+    setMyBotSaving(`add:${botId}`)
+    try {
+      for (const channel of channels) {
+        replaceMyBot(await agentApi.addSlackBotChannelRoute(botId, channel, myBotDestination))
+      }
+      setNewMyBotChannel('')
+    } catch (err) {
+      setMyBotError(serverErrorMessage(err, 'Failed to add the channel'))
+      void loadMyBots()
+    } finally {
+      setMyBotSaving(null)
+    }
+  }
+
+  const removeMyBotChannel = async (botId: string, channelId: string) => {
+    setMyBotError(null)
+    setMyBotSaving(`remove:${botId}:${channelId}`)
+    try {
+      replaceMyBot(await agentApi.removeSlackBotChannelRoute(botId, channelId))
+    } catch (err) {
+      setMyBotError(serverErrorMessage(err, 'Failed to remove the channel'))
+      void loadMyBots()
+    } finally {
+      setMyBotSaving(null)
+    }
+  }
+
   const slackHasChanges = JSON.stringify(slackConfig) !== JSON.stringify(slackOriginal)
 
   return {
@@ -1192,18 +1186,18 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     canManageSlackDefault, canManageWorkflowSlack, hasProfileTarget: !!target,
     // slack: this workflow's own app
-    slackSelection,
+    slackSelection, slackAppDefaultName: targetLabel || workflow?.manifest.label || '',
     slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
     slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
     slackConnConfirmDelete, slackConnShowBot, setSlackConnShowBot, slackConnShowApp, setSlackConnShowApp,
     slackConnHasChanges, saveWorkflowSlackConnection, selectWorkflowSlackConnection,
     testWorkflowSlackConnection, removeWorkflowSlackConnection,
+    // slack: "One of my bots"
+    myOtherBots, myBotRoutesHere: routesHere, newMyBotChannel, setNewMyBotChannel,
+    myBotSaving, myBotError, setMyBotError, addMyBotChannel, removeMyBotChannel,
     // whatsapp
     waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
-    waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,
     waUnpairConfirmSlot, waUnpairingSlot, refreshWaQR, handleUnpairWhatsAppDevice,
-    waDeviceLabelDrafts, setWaDeviceLabelDraft, waDeviceLabelSavingSlot, handleSaveWhatsAppDeviceLabel,
-    waPairDeviceLabel, setWaPairDeviceLabel, waPairDeviceLabelSaving, waPairingDeviceSlot, handleSaveWhatsAppPairDeviceLabel,
     waReady, waStatusLabel,
     // routes
     myRoutes, workflowRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,

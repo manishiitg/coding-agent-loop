@@ -76,8 +76,11 @@ import type {
   SlackConnection,
   SlackConnectionRequest,
   SlackConnectionsResponse,
+  SlackUsableBot,
+  SlackUsableBotsResponse,
   ProjectSlackSelectionResponse,
   SlackTestResponse,
+  SlackDryRunResponse,
   SlackTestReplyResponse,
   GmailConfigRequest,
   GmailConfigResponse,
@@ -1521,6 +1524,30 @@ export const agentApi = {
     return apiResponse.data
   },
 
+  // Runs a mention of the app in a channel through the real inbound path
+  // and stops before the model: nothing is posted, no turn starts.
+  dryRunSlackConnection: async (id: string, channelId: string, text?: string): Promise<SlackDryRunResponse> => {
+    const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/dry-run`, { channel_id: channelId, text })
+    return apiResponse.data
+  },
+
+  // "One of my bots": workflow/crew bots the caller manages, and the channel
+  // routes that share one with another workflow or crew they can write.
+  listUsableSlackBots: async (): Promise<SlackUsableBotsResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/connections/mine', { timeout: 10000 })
+    return apiResponse.data
+  },
+
+  addSlackBotChannelRoute: async (id: string, channelId: string, destination: { workspace_path: string; profile_id?: string }): Promise<SlackUsableBot> => {
+    const apiResponse = await api.put(`/api/human-feedback/slack/connections/${id}/channel-routes/${encodeURIComponent(channelId)}`, destination)
+    return apiResponse.data
+  },
+
+  removeSlackBotChannelRoute: async (id: string, channelId: string): Promise<SlackUsableBot> => {
+    const apiResponse = await api.delete(`/api/human-feedback/slack/connections/${id}/channel-routes/${encodeURIComponent(channelId)}`)
+    return apiResponse.data
+  },
+
   getProjectSlackSelection: async (profileId: string, workspacePath: string): Promise<ProjectSlackSelectionResponse> => {
     const apiResponse = await api.get('/api/human-feedback/slack/connections/project/selection', {
       params: { profile_id: profileId, workspace_path: workspacePath },
@@ -1705,26 +1732,23 @@ export const agentApi = {
   // ── WhatsApp bot connector ────────────────────────────────────────────────
   // Status: is the connector enabled, paired, connected? When a pairing flow
   // is active, returns the QR expiration timestamp so the UI can auto-refresh.
-  getWhatsAppStatus: async (opts?: { device?: string }): Promise<WhatsAppStatus> => {
-    const params: Record<string, string> = {}
-    if (opts?.device) params.device = opts.device
-    const response = await api.get('/api/whatsapp/status', { params })
+  getWhatsAppStatus: async (): Promise<WhatsAppStatus> => {
+    const response = await api.get('/api/whatsapp/status')
     return response.data
   },
 
   // Returns the URL to the PNG QR. Kept for callers that need a direct URL.
-  getWhatsAppPairURL: (size = 384, bust?: number, device?: string): string => {
+  getWhatsAppPairURL: (size = 384, bust?: number): string => {
     const b = bust ?? Date.now()
     const token = getAuthToken()
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
-    const deviceParam = device ? `&device=${encodeURIComponent(device)}` : ''
-    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${deviceParam}${tokenParam}`
+    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${tokenParam}`
   },
 
   // Fetches the QR PNG and preserves backend error text. This avoids the
   // <img>-tag failure mode where 409/503 responses only render as a broken image.
-  getWhatsAppPairQR: async (size = 384, bust?: number, device?: string): Promise<Blob> => {
-    const response = await fetch(agentApi.getWhatsAppPairURL(size, bust, device), {
+  getWhatsAppPairQR: async (size = 384, bust?: number): Promise<Blob> => {
+    const response = await fetch(agentApi.getWhatsAppPairURL(size, bust), {
       method: 'GET',
       cache: 'no-store',
     })
@@ -1736,16 +1760,10 @@ export const agentApi = {
   },
 
   // Drops the paired account and restarts the connector with a fresh QR.
-  unpairWhatsApp: async (opts?: { device?: string; jid?: string }): Promise<{ ok: boolean }> => {
+  unpairWhatsApp: async (opts?: { jid?: string }): Promise<{ ok: boolean }> => {
     const params: Record<string, string> = {}
-    if (opts?.device) params.device = opts.device
     if (opts?.jid) params.jid = opts.jid
     const response = await api.delete('/api/whatsapp/session', { params })
-    return response.data
-  },
-
-  updateWhatsAppDeviceLabel: async (slot: string, label: string): Promise<{ devices: WhatsAppStatus['devices'] }> => {
-    const response = await api.put('/api/whatsapp/device-label', { slot, label })
     return response.data
   },
 

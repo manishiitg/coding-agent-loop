@@ -20,13 +20,18 @@ func TestDecidePulseDueUsesTheChosenTimeWithinGuards(t *testing.T) {
 	}
 }
 
-func TestDecidePulseDueEnforcesAtMostDailyAndAtLeastWeekly(t *testing.T) {
+func TestDecidePulseDueEnforcesTheSixHourFloorAndAtLeastWeekly(t *testing.T) {
 	schedule := (&WorkflowManifest{}).EffectivePulseSchedule()
 	last := time.Date(2026, 9, 20, 6, 0, 0, 0, time.UTC)
 
 	tooSoon := decidePulseDue(schedule, pulseScheduleState{LastStartedAt: last, NextAt: last.Add(2 * time.Hour)}, false, last.Add(3*time.Hour))
-	if tooSoon.Due || !tooSoon.NextAt.Equal(last.Add(24*time.Hour)) {
-		t.Fatalf("chosen time inside the daily guard must move to last+24h: %+v", tooSoon)
+	if tooSoon.Due || !tooSoon.NextAt.Equal(last.Add(6*time.Hour)) {
+		t.Fatalf("chosen time inside the floor must move to last+6h: %+v", tooSoon)
+	}
+	// A pass that chooses a time within hours gets it once the floor passes.
+	soon := decidePulseDue(schedule, pulseScheduleState{LastStartedAt: last, NextAt: last.Add(8 * time.Hour)}, false, last.Add(8*time.Hour))
+	if !soon.Due || !soon.NextAt.Equal(last.Add(8*time.Hour)) {
+		t.Fatalf("a chosen time 8h out must run then: %+v", soon)
 	}
 	tooLate := decidePulseDue(schedule, pulseScheduleState{LastStartedAt: last, NextAt: last.Add(30 * 24 * time.Hour)}, false, last.Add(7*24*time.Hour))
 	if !tooLate.Due || !tooLate.NextAt.Equal(last.Add(7*24*time.Hour)) {
@@ -46,16 +51,16 @@ func TestDecidePulseDueDefaultsToDailyWhenThePassChoseNothing(t *testing.T) {
 	}
 }
 
-func TestDecidePulseDueFastRequestPullsEarlierButKeepsTheDailyGuard(t *testing.T) {
+func TestDecidePulseDueFastRequestPullsEarlierButKeepsTheFloor(t *testing.T) {
 	schedule := (&WorkflowManifest{}).EffectivePulseSchedule()
 	last := time.Date(2026, 9, 20, 6, 0, 0, 0, time.UTC)
 	state := pulseScheduleState{LastStartedAt: last, NextAt: last.Add(5 * 24 * time.Hour), NextReason: "weekly outcome window"}
 
 	early := decidePulseDue(schedule, state, true, last.Add(2*time.Hour))
-	if early.Due || !early.NextAt.Equal(last.Add(24*time.Hour)) {
-		t.Fatalf("fast request within the daily guard must wait until last+24h: %+v", early)
+	if early.Due || !early.NextAt.Equal(last.Add(6*time.Hour)) {
+		t.Fatalf("fast request within the floor must wait until last+6h: %+v", early)
 	}
-	due := decidePulseDue(schedule, state, true, last.Add(25*time.Hour))
+	due := decidePulseDue(schedule, state, true, last.Add(7*time.Hour))
 	if !due.Due || due.Reason != "a workflow run requested an earlier Pulse" {
 		t.Fatalf("fast request after the guard must run now: %+v", due)
 	}
@@ -101,7 +106,7 @@ func TestEffectivePulseScheduleDefaultsAndTimezone(t *testing.T) {
 		{Enabled: true, Timezone: "Asia/Kolkata"}, {Enabled: true, Timezone: "Asia/Kolkata"}, {Enabled: true, Timezone: "UTC"}, {Enabled: false, Timezone: "America/New_York"},
 	}}
 	got := manifest.EffectivePulseSchedule()
-	if got.Mode != "self" || got.MinIntervalHours != 24 || got.MaxIntervalHours != 168 || got.Timezone != "Asia/Kolkata" {
+	if got.Mode != "self" || got.MinIntervalHours != 6 || got.MaxIntervalHours != 168 || got.Timezone != "Asia/Kolkata" {
 		t.Fatalf("defaults = %+v", got)
 	}
 	if err := validateWorkflowPulseSchedule(&WorkflowPulseSchedule{Mode: "fixed", Cron: "not a cron"}); err == nil {

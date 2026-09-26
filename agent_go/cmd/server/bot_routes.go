@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 
@@ -93,6 +94,17 @@ func saveBotConnectorHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		req.ID = platform
+		if platform == "slack" && strings.TrimSpace(req.AllowedChannels) != "" && req.AllowedChannels != "[]" && req.AllowedChannels != "{}" {
+			var routes map[string]ChannelRoute
+			if err := json.Unmarshal([]byte(req.AllowedChannels), &routes); err != nil {
+				http.Error(w, "Invalid Slack channel routes", http.StatusBadRequest)
+				return
+			}
+			if err := validateSlackRoutingScopes(routes); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 
 		cfg, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &req)
 		if err != nil {

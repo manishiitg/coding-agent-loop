@@ -948,6 +948,67 @@ func CountPulseActionableWorkflowIssuesForPass(ctx context.Context, workspacePat
 	return count, err
 }
 
+// PulseActionableIssue is one open workflow issue the Technical drain owns,
+// with the last time anything happened to it (seen again or any recorded
+// event).
+type PulseActionableIssue struct {
+	ID           string
+	LastActivity time.Time
+}
+
+// ListPulseActionableWorkflowIssues returns the issues
+// CountPulseActionableWorkflowIssuesForPass counts, so a failed drain can name
+// them and a fix run can tell whether any changed since its last attempt.
+func ListPulseActionableWorkflowIssues(ctx context.Context, workspacePath string) ([]PulseActionableIssue, error) {
+	db, err := openRunConcernsDB(ctx, workspacePath, true)
+	if err != nil || db == nil {
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensurePulseFindingLifecycleSchema(ctx, db); err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT c.fingerprint, c.issue_id, c.last_seen_at,
+			COALESCE((SELECT MAX(e.recorded_at) FROM pulse_finding_events e WHERE e.fingerprint=c.fingerprint), '')
+		FROM run_concerns c
+		JOIN pulse_finding_details d ON d.fingerprint=c.fingerprint
+		WHERE c.status NOT IN (?, ?, ?, ?)
+			AND d.issue_kind=?
+			AND COALESCE(json_extract(d.detail_json, '$.recommended_route'), '')<>?
+		ORDER BY c.issue_id`,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired, ConcernStatusAcknowledged,
+		IssueKindWorkflow, pulseFindingRouteDecisionRequired,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var issues []PulseActionableIssue
+	for rows.Next() {
+		var fingerprint, issueID, lastSeen, lastEvent string
+		if err := rows.Scan(&fingerprint, &issueID, &lastSeen, &lastEvent); err != nil {
+			return nil, err
+		}
+		id := strings.TrimSpace(issueID)
+		if id == "" {
+			id = fingerprint
+		}
+		issue := PulseActionableIssue{ID: id}
+		for _, raw := range []string{lastSeen, lastEvent} {
+			for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05Z"} {
+				if at, err := time.Parse(layout, strings.TrimSpace(raw)); err == nil {
+					if at.After(issue.LastActivity) {
+						issue.LastActivity = at
+					}
+					break
+				}
+			}
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
 func CountPulseActionableWorkflowIssues(ctx context.Context, workspacePath string) (int, error) {
 	db, err := openRunConcernsDB(ctx, workspacePath, true)
 	if err != nil || db == nil {

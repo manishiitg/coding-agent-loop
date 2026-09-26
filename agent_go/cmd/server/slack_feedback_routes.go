@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/mail"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -115,7 +114,7 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 
 func sameSlackRouteDestination(a, b ChannelRoute) bool {
 	return strings.EqualFold(strings.TrimSpace(a.WorkflowID), strings.TrimSpace(b.WorkflowID)) &&
-		strings.EqualFold(strings.TrimSpace(a.WorkspacePath), strings.TrimSpace(b.WorkspacePath)) &&
+		services.SameSlackScopePath(a.WorkspacePath, b.WorkspacePath) &&
 		strings.EqualFold(strings.TrimSpace(a.ProfileID), strings.TrimSpace(b.ProfileID)) &&
 		strings.EqualFold(strings.TrimSpace(a.ConversationKey), strings.TrimSpace(b.ConversationKey))
 }
@@ -154,6 +153,10 @@ func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAP
 		}
 		if strings.TrimSpace(route.ProfileID) != "" {
 			route.WorkspaceUserID = ownerID
+			// Store the crew's physical folder: the crew UI sends the logical
+			// path, while its turns run in the physical one and revalidation
+			// compares the two.
+			route.WorkspacePath = productConversationRuntimeWorkspace(ownerID, route.WorkspacePath)
 			next[channelID] = route
 		}
 		checked[channelID] = true
@@ -167,6 +170,26 @@ func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAP
 		}
 		if _, err := requireSlackRouteDestinationOwner(ctx, api, route); err != nil {
 			return err
+		}
+	}
+	// Store every crew route in its physical folder (the bot destination
+	// invariant, docs/design/bot_destination_scope.md), then refuse anything
+	// that still is not.
+	for channelID, route := range next {
+		if strings.TrimSpace(route.ProfileID) != "" && strings.TrimSpace(route.WorkspaceUserID) != "" {
+			route.WorkspacePath = productConversationRuntimeWorkspace(route.WorkspaceUserID, route.WorkspacePath)
+			next[channelID] = route
+		}
+	}
+	return validateSlackRoutingScopes(next)
+}
+
+// validateSlackRoutingScopes refuses channel routes whose crew destination is
+// not physical.
+func validateSlackRoutingScopes(routes map[string]ChannelRoute) error {
+	for channelID, route := range routes {
+		if err := services.ValidateBotScope(route.WorkspacePath, route.ProfileID); err != nil {
+			return fmt.Errorf("Slack route for %s: %w", channelID, err)
 		}
 	}
 	return nil
@@ -224,7 +247,8 @@ func requireSlackRouteProfileOwner(ctx context.Context, api *StreamingAPI, route
 	if err != nil {
 		return "", fmt.Errorf("profile route %s has no authorized conversation: %w", profileID, err)
 	}
-	if filepath.Clean(binding.WorkspacePath) != filepath.Clean(strings.TrimSpace(route.WorkspacePath)) {
+	// The crew UI sends the logical path, the binding holds the physical one.
+	if !workspacePathsMatchForUser(userID, binding.WorkspacePath, route.WorkspacePath) {
 		return "", fmt.Errorf("Slack route profile %s does not match the selected product workspace", profileID)
 	}
 	return userID, nil

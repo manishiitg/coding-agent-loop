@@ -1103,7 +1103,17 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 			if err != nil {
 				return "", err
 			}
-			return marshalReportHumanInputToolResult("answered", input)
+			result, err := marshalReportHumanInputToolResult("answered", input)
+			if err != nil || input == nil {
+				return result, err
+			}
+			// Decisions are answered in chat (the Needs you card pre-fills the
+			// choice), so the same turn applies it rather than waiting for the
+			// next run's drain. Same instructions as the UI answer path.
+			if apply := decisionApplyChatMessage(*input); apply != "" {
+				result += "\n\nAPPLY THIS ANSWER NOW, in this same turn, then report in one or two plain sentences what changed:\n" + apply
+			}
+			return result, nil
 		},
 		"mark_human_input_consumed": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			workspacePath, _ := args["workspace_path"].(string)

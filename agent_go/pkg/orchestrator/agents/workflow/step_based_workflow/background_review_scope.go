@@ -61,6 +61,9 @@ var goalWorkChangeTools = map[string]bool{
 
 func goalWorkToolAllowed(name string, perms goalWorkPermissions) bool {
 	return researchReviewToolAllowed(name) || name == "record_pulse_goal_work" ||
+		// Other workflows and Crews are read-only context; having a Crew do
+		// work is running work, so it follows the Run permission.
+		name == "search_platform" || (perms.Run && name == "ask_platform_crew") ||
 		(perms.Run && goalWorkRunTools[name]) || (perms.Change && goalWorkChangeTools[name])
 }
 

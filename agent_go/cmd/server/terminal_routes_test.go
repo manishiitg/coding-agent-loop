@@ -1289,6 +1289,68 @@ func TestTerminalRoutesGetTerminalHistoryIdlePanePreservesLiveStream(t *testing.
 	}
 }
 
+// A retained main agent (e.g. Cursor on tmux) keeps one pane across turns. A
+// live-attach transcript persisted during an earlier turn must not keep owning
+// the settled scrollback after a later turn ran with no viewer attached: the
+// product terminal view froze on the old turn while the pane had moved on.
+func TestTerminalRoutesGetTerminalHistoryRecapturesAfterLaterRetainedTurn(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-terminal-stream-later-turn"
+	terminalID := sessionID + ":workflow-step:review-plan"
+	tmuxSession := "mlp-cursor-cli-stream-later-turn"
+	oldTranscript := "\x1bcturn one as seen by the viewer\r\n"
+	latestPane := "turn one\nturn two reply\n"
+
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "workflow-step:review-plan", tmuxSession, "turn one", 2))
+	if _, ok := store.SetDisplayContent(terminalID, oldTranscript, "tmux_stream"); !ok {
+		t.Fatal("expected live stream transcript to be stored")
+	}
+	if _, ok := store.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("expected first turn to settle")
+	}
+	// Turn two runs and settles with no live-attach viewer.
+	if _, ok := store.MarkTurnRunning(terminalID); !ok {
+		t.Fatal("expected second turn to start")
+	}
+	settled, ok := store.MarkTurnCompleted(terminalID)
+	if !ok {
+		t.Fatal("expected second turn to settle")
+	}
+
+	captured := false
+	oldRunOutput := runTerminalTmuxOutputCommand
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			captured = true
+			return latestPane, nil
+		}
+		return "", nil
+	}
+	defer func() { runTerminalTmuxOutputCommand = oldRunOutput }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/terminals/"+terminalID+"?content=history", nil)
+	req = mux.SetURLVars(req, map[string]string{"terminal_id": terminalID})
+	rec := httptest.NewRecorder()
+	api.handleGetTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode history response: %v", err)
+	}
+	if !captured {
+		t.Fatal("settled history served the earlier turn's live-attach transcript without capturing the pane")
+	}
+	if !strings.Contains(response.Content, "turn two reply") || response.ContentSource == "tmux_stream" {
+		t.Fatalf("history = source %q content %q, want the latest pane capture", response.ContentSource, response.Content)
+	}
+	if response.ChunkIndex <= settled.ChunkIndex {
+		t.Fatalf("chunk_index = %d, want > %d so pollers see the new content", response.ChunkIndex, settled.ChunkIndex)
+	}
+}
+
 func TestTerminalRoutesGetTerminalCapturesRunningTmuxVisibleScreen(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

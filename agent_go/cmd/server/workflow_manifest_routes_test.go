@@ -15,15 +15,18 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 		req            QueryRequest
 		active         *ActiveSessionInfo
 		readOnly, want bool
+		// list: list_mcp_servers is registered (Run mode inspects servers).
+		list bool
 	}{
 		{name: "Builder", want: true},
 		{name: "legacy Builder", want: true},
 		{name: "legacy Run request by writable user", req: QueryRequest{ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"}}, want: true},
-		{name: "manual workflow execution", req: QueryRequest{AgentMode: "workflow"}},
+		{name: "manual workflow execution", req: QueryRequest{AgentMode: "workflow"}, list: true},
 		{name: "cron shares builder mode", req: QueryRequest{TriggeredBy: "cron"}, want: true},
 		{name: "retained schedule", session: "schedule-digest_123", want: true},
 		{name: "restored origin", active: &ActiveSessionInfo{TriggeredBy: "cron"}, want: true},
-		{name: "read only Builder", readOnly: true},
+		{name: "read only Builder", readOnly: true, list: true},
+		{name: "Slack channel turn (Run)", req: QueryRequest{BotPlatform: "slack"}, readOnly: true, list: true},
 		{name: "Pulse maintenance", req: QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}},
 		{name: "Pulse reviewer", req: QueryRequest{SessionKind: "pulse_reviewer", ParentSessionID: "parent"}},
 		{name: "restored child", active: &ActiveSessionInfo{ParentSessionID: "parent"}},
@@ -44,6 +47,9 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 				if got != tc.want {
 					t.Fatalf("%s registered=%v want %v (%+v)", name, got, tc.want, policy)
 				}
+			}
+			if _, got := reg.tools["list_mcp_servers"]; got != (tc.want || tc.list) {
+				t.Fatalf("list_mcp_servers registered=%v want %v (%+v)", got, tc.want || tc.list, policy)
 			}
 			if tc.want {
 				// Exercise the real handler without making a network request.

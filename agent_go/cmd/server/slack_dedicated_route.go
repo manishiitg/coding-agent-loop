@@ -14,11 +14,16 @@ import (
 )
 
 // dedicatedSlackRoute resolves the destination a scoped Slack app serves
-// (see services.DedicatedSlackRouteFunc). A workflow-scoped app runs its
-// workflow and a project-scoped app runs its crew project, in Run mode, in
-// any channel it is invited to. The connection's scope is the grant: only
-// the destination's owner (or an admin) can create a scoped connection.
-func (api *StreamingAPI) dedicatedSlackRoute(ctx context.Context, connectionID string) (*services.ChannelRoute, bool) {
+// in a channel (see services.DedicatedSlackRouteFunc). A workflow-scoped app
+// runs its workflow and a project-scoped app runs its crew project, in Run
+// mode, in any channel it is invited to. The connection's scope is the
+// grant: only the destination's owner (or an admin) can create a scoped
+// connection. A channel the owner routed on the connection itself
+// (ChannelRoutes, granted by someone who manages the app and can write the
+// destination) answers for that route's destination instead. A route whose
+// destination no longer resolves is revoked, never the app's own
+// destination: the channel was handed to someone else.
+func (api *StreamingAPI) dedicatedSlackRoute(ctx context.Context, connectionID, channelID string) (*services.ChannelRoute, bool) {
 	svc := services.GetSlackService()
 	if svc == nil {
 		return nil, false
@@ -40,25 +45,37 @@ func (api *StreamingAPI) dedicatedSlackRoute(ctx context.Context, connectionID s
 	if !conn.Enabled {
 		return nil, true
 	}
-	if profileID := strings.TrimSpace(conn.ProfileID); profileID != "" {
-		route, err := api.dedicatedSlackProfileRoute(ctx, profileID, workspacePath)
-		if err != nil {
-			log.Printf("[SLACK] Dedicated app %s: crew project %s unavailable: %v", connectionID, workspacePath, err)
-			return nil, true
-		}
-		return route, true
+	destinationPath, profileID := workspacePath, strings.TrimSpace(conn.ProfileID)
+	if routed, found := conn.ChannelRoutes[services.NormalizeSlackChannelID(channelID)]; found && channelID != "" {
+		destinationPath, profileID = strings.TrimSpace(routed.WorkspacePath), strings.TrimSpace(routed.ProfileID)
+	}
+	route, err := api.slackDestinationRoute(ctx, destinationPath, profileID)
+	if err != nil {
+		log.Printf("[SLACK] Dedicated app %s: destination %s unavailable in channel %s: %v", connectionID, destinationPath, channelID, err)
+		return nil, true
+	}
+	return route, true
+}
+
+// slackDestinationRoute builds the Run-mode route for a workflow folder or,
+// with profileID, a crew project.
+func (api *StreamingAPI) slackDestinationRoute(ctx context.Context, workspacePath, profileID string) (*services.ChannelRoute, error) {
+	if profileID != "" {
+		return api.dedicatedSlackProfileRoute(ctx, profileID, workspacePath)
 	}
 	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
-	if err != nil || !found || manifest == nil || strings.TrimSpace(manifest.ID) == "" {
-		log.Printf("[SLACK] Dedicated app %s: workflow %s unavailable (found=%v err=%v)", connectionID, workspacePath, found, err)
-		return nil, true
+	if err != nil {
+		return nil, err
+	}
+	if !found || manifest == nil || strings.TrimSpace(manifest.ID) == "" {
+		return nil, fmt.Errorf("workflow %s has no manifest", workspacePath)
 	}
 	return &services.ChannelRoute{
 		WorkflowID:    strings.TrimSpace(manifest.ID),
 		WorkspacePath: workspacePath,
 		BotGrant:      "run",
 		WorkshopMode:  "run",
-	}, true
+	}, nil
 }
 
 // dedicatedSlackProfileRoute builds a crew project's route: the owner comes
@@ -68,6 +85,17 @@ func (api *StreamingAPI) dedicatedSlackRoute(ctx context.Context, connectionID s
 func (api *StreamingAPI) dedicatedSlackProfileRoute(ctx context.Context, profileID, workspacePath string) (*services.ChannelRoute, error) {
 	route := services.ChannelRoute{ProfileID: profileID, WorkspacePath: workspacePath, BotGrant: "run", WorkshopMode: "run"}
 	ownerID := services.RouteWorkspaceUserID(route, "")
+	if ownerID == "" {
+		// A crew app saved with the logical path: resolve its owner from the
+		// one user tree that holds the project (startup repairs the stored
+		// scope; this covers a repair that could not run yet).
+		logical := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/")
+		if owners := crewProjectOwners(ctx, profileID, logical); len(owners) == 1 {
+			ownerID = owners[0]
+			workspacePath = agentProfileRuntimeWorkspace(ownerID, logical)
+			route.WorkspacePath = workspacePath
+		}
+	}
 	if ownerID == "" {
 		return nil, fmt.Errorf("project path has no owner")
 	}
@@ -106,13 +134,13 @@ func (api *StreamingAPI) dedicatedSlackProfileRoute(ctx context.Context, profile
 	return &route, nil
 }
 
-// slackRouteForConnection is the tool-side twin of the inbound rule: the
-// arrival app's own destination when it is dedicated, else the channel
-// route. found=false means no route (or a revoked dedicated one). A
+// slackRouteForConnection is the tool-side twin of the inbound rule: for a
+// dedicated arrival app, the destination its owner routed this channel to,
+// else its own destination; for a shared app, the platform channel route. found=false means no route (or a revoked dedicated one). A
 // dedicated app is its destination's own enablement, like a saved route,
 // so it never depends on the platform switch or a saved connector config.
 func (api *StreamingAPI) slackRouteForConnection(ctx context.Context, connectionID, channel string, routes map[string]ChannelRoute) (route ChannelRoute, found, dedicated bool) {
-	if own, isDedicated := services.DedicatedSlackRoute(ctx, connectionID); isDedicated {
+	if own, isDedicated := services.DedicatedSlackRoute(ctx, connectionID, channel); isDedicated {
 		if own == nil || services.IsRevokedSlackRoute(*own) {
 			return ChannelRoute{}, false, true
 		}

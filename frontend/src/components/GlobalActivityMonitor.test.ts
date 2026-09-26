@@ -8,7 +8,7 @@ import {
   statusTone,
   visibleActivitySessions,
 } from '../utils/globalActivityMonitorStatus'
-import { crewActivityTitle, showsActivityTypeIcon } from '../utils/globalActivityPresentation'
+import { activityTypeLabels, botPlatformLabel, crewActivityTitle } from '../utils/globalActivityPresentation'
 import type { ChatTab } from '../stores/useChatStore'
 
 function minimalSession(overrides: Partial<ActiveSessionInfo> = {}): ActiveSessionInfo {
@@ -103,12 +103,16 @@ describe('global activity monitor labels', () => {
     expect(crewActivityTitle(tab, 'Agent chat')).toBe('Release crew')
   })
 
-  it('reserves activity type icons for schedules and triggers', () => {
-    expect(showsActivityTypeIcon('Scheduled')).toBe(true)
-    expect(showsActivityTypeIcon('Webhook')).toBe(true)
-    expect(showsActivityTypeIcon('Chat')).toBe(false)
-    expect(showsActivityTypeIcon('Bot')).toBe(false)
-    expect(showsActivityTypeIcon('Manual')).toBe(false)
+  it('names the bot platform from bot_platform or the session id', () => {
+    expect(botPlatformLabel('slack', 'x')).toBe('Slack')
+    expect(botPlatformLabel(undefined, 'bot-whatsapp--abc')).toBe('WhatsApp')
+    expect(botPlatformLabel('', 'chat-1')).toBe('')
+  })
+
+  it('labels every activity type so each row says what started it', () => {
+    for (const type of ['Scheduled', 'Webhook', 'Manual', 'Bot', 'Chat'] as const) {
+      expect(activityTypeLabels[type]).toBeTruthy()
+    }
   })
 })
 

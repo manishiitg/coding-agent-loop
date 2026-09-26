@@ -56,14 +56,19 @@ func workflowAskMessage(caller triggerLinkCaller, message string) string {
 	case triggerCallerUser:
 		kind = "external connection"
 	}
-	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. If it asks you to run something, start the right route with the variables it needs (never rely on a saved value for per-run data such as a PR number), wait for the outcome and report it, including any step that skipped and why. If a required value is missing, say which instead of running. You cannot change the workflow here: if the caller reports a problem or asks for a change, record it for the owner with submit_workflow_suggestion and say you did.]\n\n%s", kind, caller.Label, strings.TrimSpace(message))
+	return fmt.Sprintf("[Asked by the %s %q through `ask`. This conversation is yours and that caller's; answer in a clear, self-contained final reply, which is returned to it. If it asks you to run something, start the right route with the values it needs (run_full_workflow variables for declared variables, human_inputs otherwise) (never rely on a saved value for per-run data such as a PR number), wait for the outcome and report it, including any step that skipped and why. If a required value is missing, say which instead of running. You cannot change the workflow here: if the caller reports a problem or asks for a change, record it for the owner with submit_workflow_suggestion and say you did.]\n\n%s", kind, caller.Label, strings.TrimSpace(message))
 }
 
 // runWorkflowAsk sends the question to the workflow assistant and settles the
 // call with its final reply. It runs in the background; the call's done
 // channel carries the result.
+//
+// As with a Crew call, the timeout counts from the assistant's last sign of
+// life and only releases the caller: the turn keeps running (up to
+// crewFunctionHardCap) and its reply is delivered as a late answer.
 func (api *StreamingAPI) runWorkflowAsk(call *crewFunctionCall, target triggerTarget, caller triggerLinkCaller, message string, timeout time.Duration) {
-	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: call.UserID}), timeout)
+	hardCap := crewFunctionHardCap(timeout)
+	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: call.UserID}), hardCap)
 	defer cancel()
 	manifest := target.Manifest
 	sessionID := workflowAskSessionID(manifest.ID, caller.Stamp)
@@ -86,22 +91,58 @@ func (api *StreamingAPI) runWorkflowAsk(call *crewFunctionCall, target triggerTa
 	call.RunID, call.RunIDs = sessionID, []string{sessionID}
 	call.mu.Unlock()
 	call.persist()
+	turnDone := make(chan struct{})
+	go api.watchWorkflowAskActivity(call, sessionID, timeout, turnDone)
 	var result internalSessionTurnResult
 	if workflowAskTurn != nil {
 		result, err = workflowAskTurn(api, ctx, reqMap, sessionID, call.UserID)
 	} else {
 		result, err = api.startSessionInternalWithResult(ctx, reqMap, sessionID, call.UserID, nil)
 	}
+	close(turnDone)
 	if err != nil {
-		call.finish("failed", nil, fmt.Sprintf("the workflow assistant did not answer: %v", err))
+		if ctx.Err() == context.DeadlineExceeded {
+			call.settle("failed", nil, fmt.Sprintf("the workflow assistant was still not done after %s", hardCap))
+			return
+		}
+		call.settle("failed", nil, fmt.Sprintf("the workflow assistant did not answer: %v", err))
 		return
 	}
 	answer := strings.TrimSpace(result.FinalResponse)
 	if answer == "" {
-		call.finish("failed", nil, "the workflow assistant finished without a reply")
+		call.settle("failed", nil, "the workflow assistant finished without a reply")
 		return
 	}
-	call.finish("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(answer)}, "")
+	call.settle("completed", map[string]interface{}{"answer": truncateTriggerTargetResult(answer)}, "")
+}
+
+// watchWorkflowAskActivity releases the caller once the assistant shows no
+// sign of life (progress or session events) for timeout. The turn goes on.
+func (api *StreamingAPI) watchWorkflowAskActivity(call *crewFunctionCall, sessionID string, timeout time.Duration, turnDone <-chan struct{}) {
+	lastSign := time.Now()
+	ticker := time.NewTicker(call.poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-turnDone:
+			return
+		case <-call.done:
+			return
+		case <-ticker.C:
+		}
+		call.mu.Lock()
+		if call.UpdatedAt.After(lastSign) {
+			lastSign = call.UpdatedAt
+		}
+		call.mu.Unlock()
+		if at := api.crewFunctionLastEventAt(sessionID); at.After(lastSign) {
+			lastSign = at
+		}
+		if time.Since(lastSign) > timeout {
+			call.timeOut(fmt.Sprintf("no activity from the workflow assistant of %q for %s; stopped waiting. It is still working: its answer is sent to you automatically", call.TargetLabel, timeout))
+			return
+		}
+	}
 }
 
 // workflowAskSessionExists reports whether the caller's assistant

@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,30 +28,18 @@ type WhatsAppServiceManager struct {
 	workflowAccess   WhatsAppWorkflowAccessFunc
 	started          bool
 
-	// routingLocks serializes the read-primary-then-fan-out-to-every-device
-	// sequence per account. Each device's own SetRouting call is locked
-	// individually, but nothing spanned the whole sequence, so two concurrent
-	// routing writes for the same account (double-click, two open tabs, or an
-	// explicit PUT racing the throttled GET-time default-route sync) could
-	// interleave their per-device writes and leave devices with divergent
-	// routing maps -- reproducing the exact routes-differ-per-phone symptom
-	// this endpoint exists to prevent. Keyed by userID, one *sync.Mutex each.
+	// routingLocks serializes an account's routing read-then-write sequence
+	// (an explicit PUT racing the throttled GET-time default-route sync).
+	// Keyed by userID, one *sync.Mutex each.
 	routingLocks sync.Map
 
-	// keyLocks serializes "resolve or create this service" (serviceForKey's
-	// create path) against "tear this service down" (UnpairDevice) for the
-	// exact same key. Without this, serviceForKey's existence check (an RLock
-	// read) can find nothing, then -- while it's off constructing a new
-	// WhatsAppService and starting it, entirely outside any lock -- a
-	// concurrent UnpairDevice can delete the map entry and remove the
-	// on-disk directory; serviceForKey's later re-check under m.mu still
-	// finds the key absent (Unpair already removed it) and proceeds to
-	// insert and start the new service anyway, recreating the sqlite
-	// file/directory for a device that was supposed to be gone. A plain
-	// tombstone won't do: slot names are reused after removal
-	// (nextWhatsAppDeviceSlot fills gaps from the current on-disk listing),
-	// so this must be a transient per-operation lock, not a persisted flag.
+	// keyLocks serializes creating one account's service, so two concurrent
+	// lookups do not both construct and start it.
 	keyLocks sync.Map
+
+	// logoutRetiredDevice logs out one retired extra phone's session
+	// (tests replace it; nil = logoutWhatsAppSession).
+	logoutRetiredDevice func(ctx context.Context, dbPath string) error
 }
 
 // SetWorkflowAccessFunc installs the current-user workflow visibility check
@@ -71,9 +58,7 @@ func (m *WhatsAppServiceManager) SetWorkflowAccessFunc(fn WhatsAppWorkflowAccess
 }
 
 // LockAccountRouting acquires this account's routing lock and returns the
-// unlock function. Callers must hold it for the entire read-then-fan-out
-// sequence (read the primary's routing, write it to every linked device),
-// not just the write step.
+// unlock function. Callers hold it for the whole read-then-write sequence.
 func (m *WhatsAppServiceManager) LockAccountRouting(userID string) func() {
 	lockIface, _ := m.routingLocks.LoadOrStore(userID, &sync.Mutex{})
 	lock := lockIface.(*sync.Mutex)
@@ -81,8 +66,7 @@ func (m *WhatsAppServiceManager) LockAccountRouting(userID string) func() {
 	return lock.Unlock
 }
 
-// lockServiceKey serializes create/teardown for one exact service key
-// (userKey+slot) between serviceForKey's create path and UnpairDevice.
+// lockServiceKey serializes creating the service for one account key.
 func (m *WhatsAppServiceManager) lockServiceKey(key string) func() {
 	lockIface, _ := m.keyLocks.LoadOrStore(key, &sync.Mutex{})
 	lock := lockIface.(*sync.Mutex)
@@ -145,8 +129,7 @@ func whatsappOwnerUserID(svc *WhatsAppService, key string) string {
 	if owner := svc.GetOwner(); owner != nil && strings.TrimSpace(owner.UserID) != "" {
 		return owner.UserID
 	}
-	userKey, _ := splitWhatsAppServiceKey(key)
-	return userKey
+	return key
 }
 
 func NewWhatsAppServiceManager(baseDir string) *WhatsAppServiceManager {
@@ -189,14 +172,10 @@ func (m *WhatsAppServiceManager) StartListening(ctx context.Context) error {
 			continue
 		}
 		userKey := entry.Name()
-		if _, err := os.Stat(m.devicePath(userKey, "")); err == nil {
-			if _, err := m.serviceForKey(ctx, userKey, ""); err != nil {
+		m.retireExtraWhatsAppDevices(ctx, userKey)
+		if _, err := os.Stat(m.devicePath(userKey)); err == nil {
+			if _, err := m.serviceForKey(ctx, userKey); err != nil {
 				log.Printf("[WHATSAPP] Failed to start service for user %s: %v", userKey, err)
-			}
-		}
-		for _, slot := range m.deviceSlots(userKey) {
-			if _, err := m.serviceForKey(ctx, userKey, slot); err != nil {
-				log.Printf("[WHATSAPP] Failed to start device %s for user %s: %v", slot, userKey, err)
 			}
 		}
 	}
@@ -215,27 +194,33 @@ func (m *WhatsAppServiceManager) StopListening() {
 	}
 }
 
-// ServiceForUser is the account's primary WhatsApp device: the one the
-// account's default profile, routing and notifications live on.
+// ServiceForUser is the account's WhatsApp: the one linked phone its default
+// profile, routing and notifications live on.
 func (m *WhatsAppServiceManager) ServiceForUser(ctx context.Context, userID, email, username string) (*WhatsAppService, error) {
 	_, _ = email, username
 	userKey, err := whatsappUserKey(userID)
 	if err != nil {
 		return nil, err
 	}
-	return m.serviceForKey(ctx, userKey, "")
+	return m.serviceForKey(ctx, userKey)
 }
 
-// An account can link more than one phone (a second parent's): each extra
-// device is its own whatsmeow session with its own pairing, stored under
-// <user>/devices/<slot>/ and keyed "<user>~<slot>" in the service map and in
-// managed channel ids. The primary device keeps its original key and path.
+// One person, one WhatsApp (user decision 2026-09-26): an account links a
+// single phone, stored at <user>/session.db and keyed by the account in the
+// service map and in managed channel ids. Accounts once could link extra
+// phones under <user>/devices/<slot>/; startup logs those out
+// (retireExtraWhatsAppDevices) and nothing creates them any more.
 const (
+	// whatsappDeviceKeySeparator marked an extra phone in a service key or
+	// managed channel id ("<user>~<slot>"); such ids are refused now.
 	whatsappDeviceKeySeparator = "~"
 	whatsappDevicesDirName     = "devices"
 )
 
-// WhatsAppDevice describes one linked (or linking) phone of an account.
+// ErrWhatsAppOnePhone refuses a second phone on one account.
+var ErrWhatsAppOnePhone = fmt.Errorf("one WhatsApp per account: unpair the linked phone first")
+
+// WhatsAppDevice describes the account's linked (or linking) phone.
 type WhatsAppDevice struct {
 	Slot        string    `json:"slot"`
 	Label       string    `json:"label,omitempty"`
@@ -258,85 +243,21 @@ func whatsappUserKey(userID string) (string, error) {
 	return key, nil
 }
 
-func whatsappServiceKey(userKey, slot string) string {
-	if slot == "" {
-		return userKey
-	}
-	return userKey + whatsappDeviceKeySeparator + slot
+func (m *WhatsAppServiceManager) devicePath(userKey string) string {
+	return filepath.Join(m.baseDir, userKey, whatsappUserSessionDBName)
 }
 
-// splitWhatsAppServiceKey undoes whatsappServiceKey. The separator never
-// appears in a sanitized user key, so the split is unambiguous.
-func splitWhatsAppServiceKey(key string) (userKey, slot string) {
-	userKey, slot, _ = strings.Cut(key, whatsappDeviceKeySeparator)
-	return userKey, slot
-}
-
-func (m *WhatsAppServiceManager) devicePath(userKey, slot string) string {
-	if slot == "" {
-		return filepath.Join(m.baseDir, userKey, whatsappUserSessionDBName)
-	}
-	return filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot, whatsappUserSessionDBName)
-}
-
-// ServiceForDevice is one linked phone of the account; slot "" is the primary.
-func (m *WhatsAppServiceManager) ServiceForDevice(ctx context.Context, userID, slot string) (*WhatsAppService, error) {
-	userKey, err := whatsappUserKey(userID)
-	if err != nil {
-		return nil, err
-	}
-	return m.serviceForKey(ctx, userKey, slot)
-}
-
-// serviceForEncodedKey resolves the service a managed channel id names.
+// serviceForEncodedKey resolves the service a managed channel id names. An
+// id minted for a retired extra phone names no service.
 func (m *WhatsAppServiceManager) serviceForEncodedKey(ctx context.Context, key string) (*WhatsAppService, error) {
-	userKey, slot := splitWhatsAppServiceKey(key)
-	return m.serviceForKey(ctx, userKey, slot)
+	if strings.Contains(key, whatsappDeviceKeySeparator) {
+		return nil, fmt.Errorf("whatsapp: %q was an extra phone, which is no longer supported", key)
+	}
+	return m.serviceForKey(ctx, key)
 }
 
-// deviceSlots lists the account's extra devices, on disk and in memory.
-func (m *WhatsAppServiceManager) deviceSlots(userKey string) []string {
-	slots := map[string]bool{}
-	if entries, err := os.ReadDir(filepath.Join(m.baseDir, userKey, whatsappDevicesDirName)); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				if _, err := os.Stat(filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, entry.Name(), whatsappUserSessionDBName)); err == nil {
-					slots[entry.Name()] = true
-				}
-			}
-		}
-	}
-	m.mu.RLock()
-	for key := range m.services {
-		if user, slot := splitWhatsAppServiceKey(key); user == userKey && slot != "" {
-			slots[slot] = true
-		}
-	}
-	m.mu.RUnlock()
-	out := make([]string, 0, len(slots))
-	for slot := range slots {
-		out = append(out, slot)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// nextWhatsAppDeviceSlot names the next extra device: phone-2, phone-3, …
-// skipping slots already in use.
-func nextWhatsAppDeviceSlot(taken []string) string {
-	used := map[string]bool{}
-	for _, slot := range taken {
-		used[slot] = true
-	}
-	for n := 2; ; n++ {
-		if slot := fmt.Sprintf("phone-%d", n); !used[slot] {
-			return slot
-		}
-	}
-}
-
-func whatsappDeviceInfo(slot string, svc *WhatsAppService) WhatsAppDevice {
-	device := WhatsAppDevice{Slot: slot, Paired: svc.IsPaired(), Connected: svc.IsConnected()}
+func whatsappDeviceInfo(svc *WhatsAppService) WhatsAppDevice {
+	device := WhatsAppDevice{Paired: svc.IsPaired(), Connected: svc.IsConnected()}
 	if label := svc.DeviceLabel(); label != "" {
 		device.Label = label
 	}
@@ -350,167 +271,107 @@ func whatsappDeviceInfo(slot string, svc *WhatsAppService) WhatsAppDevice {
 	return device
 }
 
-// Devices lists the account's phones, primary first.
+// Devices lists the account's phone (at most one).
 func (m *WhatsAppServiceManager) Devices(ctx context.Context, userID string) ([]WhatsAppDevice, error) {
 	userKey, err := whatsappUserKey(userID)
 	if err != nil {
 		return nil, err
 	}
-	primary, err := m.serviceForKey(ctx, userKey, "")
+	primary, err := m.serviceForKey(ctx, userKey)
 	if err != nil {
 		return nil, err
 	}
-	devices := []WhatsAppDevice{whatsappDeviceInfo("", primary)}
-	for _, slot := range m.deviceSlots(userKey) {
-		svc, err := m.serviceForKey(ctx, userKey, slot)
-		if err != nil {
-			log.Printf("[WHATSAPP] device %s/%s unavailable: %v", userKey, slot, err)
-			continue
-		}
-		devices = append(devices, whatsappDeviceInfo(slot, svc))
-	}
-	return devices, nil
+	return []WhatsAppDevice{whatsappDeviceInfo(primary)}, nil
 }
 
-// SetDeviceLabel persists a display name for one device. If the device is
-// already resident in memory, the label is set on the live instance
-// directly. Otherwise it's written straight to that device's local metadata
-// store (SetDeviceLabelOffline) rather than going through the full
-// serviceForKey bootstrap -- that path opens a real WhatsApp connection
-// (whatsmeow's client.Connect()) before the cheap label upsert ever runs,
-// which saving a display name has no need for.
-func (m *WhatsAppServiceManager) SetDeviceLabel(ctx context.Context, userID, slot, label string) error {
+// SetDeviceLabel persists a display name for the account's phone. If the
+// service is resident the label is set on it; otherwise it is written
+// straight to the local metadata store (SetDeviceLabelOffline) instead of
+// opening a WhatsApp connection just to save a name.
+func (m *WhatsAppServiceManager) SetDeviceLabel(ctx context.Context, userID, label string) error {
 	userKey, err := whatsappUserKey(userID)
 	if err != nil {
 		return err
 	}
-	if slot != "" {
-		clean := sanitizeWhatsAppFileName(slot)
-		if clean == "" {
-			return fmt.Errorf("whatsapp: invalid device %q", slot)
-		}
-		slot = clean
-	}
-	key := whatsappServiceKey(userKey, slot)
-
 	m.mu.RLock()
-	svc := m.services[key]
+	svc := m.services[userKey]
 	m.mu.RUnlock()
 	if svc != nil {
 		return svc.SetDeviceLabel(ctx, label)
 	}
-	return NewWhatsAppService(m.devicePath(userKey, slot)).SetDeviceLabelOffline(ctx, label)
+	return NewWhatsAppService(m.devicePath(userKey)).SetDeviceLabelOffline(ctx, label)
 }
 
-// NextPairingDevice is the phone a scan would pair right now: the primary
-// while it is unpaired, else an extra device still waiting for its scan,
-// else a fresh one. Idempotent, so a pairing screen can poll it.
-func (m *WhatsAppServiceManager) NextPairingDevice(ctx context.Context, userID string) (*WhatsAppService, string, error) {
-	userKey, err := whatsappUserKey(userID)
-	if err != nil {
-		return nil, "", err
-	}
-	primary, err := m.serviceForKey(ctx, userKey, "")
-	if err != nil {
-		return nil, "", err
-	}
-	if !primary.IsPaired() {
-		return primary, "", nil
-	}
-	slots := m.deviceSlots(userKey)
-	for _, slot := range slots {
-		svc, err := m.serviceForKey(ctx, userKey, slot)
-		if err != nil {
-			continue
-		}
-		if !svc.IsPaired() {
-			return svc, slot, nil
-		}
-	}
-	slot := nextWhatsAppDeviceSlot(slots)
-	svc, err := m.serviceForKey(ctx, userKey, slot)
-	if err != nil {
-		return nil, "", err
-	}
-	return svc, slot, nil
-}
-
-// DeviceByJID finds the account's phone paired as jid (full JID or the bare
-// number).
-func (m *WhatsAppServiceManager) DeviceByJID(ctx context.Context, userID, jid string) (*WhatsAppService, string, bool) {
-	jid = strings.TrimSpace(jid)
-	if jid == "" {
-		return nil, "", false
-	}
-	devices, err := m.Devices(ctx, userID)
-	if err != nil {
-		return nil, "", false
-	}
-	userKey, _ := whatsappUserKey(userID)
-	for _, device := range devices {
-		if device.OwnJID == "" {
-			continue
-		}
-		if device.OwnJID == jid || strings.TrimSuffix(strings.SplitN(device.OwnJID, "@", 2)[0], "") == jid {
-			svc, err := m.serviceForKey(ctx, userKey, device.Slot)
-			if err != nil {
-				return nil, "", false
-			}
-			return svc, device.Slot, true
-		}
-	}
-	return nil, "", false
-}
-
-// UnpairDevice forgets one phone. The primary is reset to a fresh pairing
-// (its slot stays); an extra device is removed entirely.
-func (m *WhatsAppServiceManager) UnpairDevice(ctx context.Context, userID, slot string) error {
+// UnpairDevice forgets the account's phone: the pairing is reset to a fresh
+// one, ready for a new scan.
+func (m *WhatsAppServiceManager) UnpairDevice(ctx context.Context, userID string) error {
 	userKey, err := whatsappUserKey(userID)
 	if err != nil {
 		return err
 	}
-	slot = sanitizeWhatsAppFileName(slot)
-	if slot == "" {
-		primary, err := m.serviceForKey(ctx, userKey, "")
-		if err != nil {
-			return err
-		}
-		return primary.Unpair(ctx)
-	}
-	key := whatsappServiceKey(userKey, slot)
-	svc, err := m.serviceForKey(ctx, userKey, slot)
+	primary, err := m.serviceForKey(ctx, userKey)
 	if err != nil {
+		return err
+	}
+	return primary.Unpair(ctx)
+}
+
+// logoutWhatsAppSession connects a stored pairing just long enough to log it
+// out of WhatsApp, then deletes its session files.
+func logoutWhatsAppSession(ctx context.Context, dbPath string) error {
+	svc := NewWhatsAppService(dbPath)
+	if err := svc.StartListening(ctx); err != nil {
 		return err
 	}
 	if err := svc.LogoutAndRemove(ctx); err != nil {
+		svc.StopListening()
 		return err
 	}
-	// Held across both the map delete and the directory removal, and shared
-	// with serviceForKey's create path (see lockServiceKey), so a lookup that
-	// arrives mid-teardown waits for this to finish rather than lazily
-	// recreating the device from a stale "not resident" read.
-	unlockKey := m.lockServiceKey(key)
-	defer unlockKey()
-	m.mu.Lock()
-	delete(m.services, key)
-	m.mu.Unlock()
-	dir := filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot)
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("whatsapp: remove device %s: %w", slot, err)
-	}
-	log.Printf("[WHATSAPP] Removed device %s for user %s", slot, userKey)
 	return nil
 }
 
-func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slot string) (*WhatsAppService, error) {
-	if slot != "" {
-		clean := sanitizeWhatsAppFileName(slot)
-		if clean == "" {
-			return nil, fmt.Errorf("whatsapp: invalid device %q", slot)
-		}
-		slot = clean
+// retireExtraWhatsAppDevices logs out every extra phone an account linked
+// before one-phone-per-account, so the phone shows the link removed, and
+// deletes its session. A phone that cannot be logged out now (offline,
+// WhatsApp unreachable) keeps its files and is retried at the next start,
+// rather than leaving a linked device nobody can remove from the server.
+func (m *WhatsAppServiceManager) retireExtraWhatsAppDevices(ctx context.Context, userKey string) {
+	root := filepath.Join(m.baseDir, userKey, whatsappDevicesDirName)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
 	}
-	key := whatsappServiceKey(userKey, slot)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		dbPath := filepath.Join(dir, whatsappUserSessionDBName)
+		if _, err := os.Stat(dbPath); err != nil {
+			_ = os.RemoveAll(dir)
+			continue
+		}
+		logout := m.logoutRetiredDevice
+		if logout == nil {
+			logout = logoutWhatsAppSession
+		}
+		if err := logout(ctx, dbPath); err != nil {
+			log.Printf("[WHATSAPP] Extra phone %s of %s: logout failed (retry next start): %v", entry.Name(), userKey, err)
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("[WHATSAPP] Extra phone %s of %s: logged out, but removing %s failed: %v", entry.Name(), userKey, dir, err)
+			continue
+		}
+		log.Printf("[WHATSAPP] Logged out and removed extra phone %s of %s (one WhatsApp per account)", entry.Name(), userKey)
+	}
+	if remaining, err := os.ReadDir(root); err == nil && len(remaining) == 0 {
+		_ = os.Remove(root)
+	}
+}
+
+func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey string) (*WhatsAppService, error) {
+	key := userKey
 
 	m.mu.RLock()
 	svc := m.services[key]
@@ -524,9 +385,8 @@ func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slo
 		return svc, nil
 	}
 
-	// Not resident. Serialize against a concurrent UnpairDevice for this same
-	// key before doing any of the (slow, disk-touching) creation work below --
-	// otherwise a device mid-teardown can be recreated out from under it.
+	// Not resident. Serialize creation for this key so two concurrent lookups
+	// do not both construct and start a service.
 	unlockKey := m.lockServiceKey(key)
 	defer unlockKey()
 
@@ -542,7 +402,7 @@ func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slo
 		return svc, nil
 	}
 
-	dbPath := m.devicePath(userKey, slot)
+	dbPath := m.devicePath(userKey)
 	svc = NewWhatsAppService(dbPath)
 	m.configureService(key, svc)
 
@@ -566,7 +426,6 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 	workflowAccess := m.workflowAccess
 	m.mu.RUnlock()
 	svc.SetWorkflowAccessFunc(workflowAccess)
-	_, deviceSlot := splitWhatsAppServiceKey(userID)
 	svc.SetMessageHandler(func(msg BotIncomingMessage) {
 		rawChannelID := msg.ChannelID
 		encodedChannelID := encodeWhatsAppManagedChannelID(userID, rawChannelID)
@@ -574,7 +433,6 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 		if msg.ThreadTS == rawChannelID {
 			msg.ThreadTS = encodedChannelID
 		}
-		msg.DeviceSlot = deviceSlot
 		m.mu.RLock()
 		handler := m.messageHandler
 		m.mu.RUnlock()

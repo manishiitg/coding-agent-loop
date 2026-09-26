@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { Activity } from 'lucide-react'
-import { PulseWorkspace } from './PulseWorkspace'
+import { PulseWorkspace, type PulseWorkspaceTab } from './PulseWorkspace'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
@@ -79,11 +80,13 @@ export default function PulseView({
   onRefresh,
   headerAction,
 }: PulseViewProps) {
+  const [tab, setTab] = useState<PulseWorkspaceTab>('for_you')
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
       <WorkspaceViewHeader
         icon={Activity}
         title="Pulse"
+        helpTopic={`Pulse · ${tab === 'for_you' ? 'For you' : 'Platform health'}`}
         context={<span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${monitorOn ? 'border-primary/25 bg-primary/10 text-primary' : 'border-border bg-muted text-muted-foreground'}`}>
           {monitorOn ? 'On' : 'Off'}
         </span>}
@@ -106,6 +109,8 @@ export default function PulseView({
         <div className="p-3 sm:p-4">
           {workspacePath && (
             <PulseWorkspace
+              activeTab={tab}
+              onTabChange={setTab}
               workspacePath={workspacePath}
               moduleStates={moduleStates}
               planDriftDue={planDriftDue}

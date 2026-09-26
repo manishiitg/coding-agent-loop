@@ -147,3 +147,102 @@ func TestDeferredSteerDoesNotHoldOtherSessionsOrChildRows(t *testing.T) {
 	expectIDs(t, store, "chat", "child")
 	expectIDs(t, store, "other", "other-answer")
 }
+
+// A message sent while the previous answer is still streaming is taken by
+// the CLI only when that answer ends. The short timeout must count from that
+// end: counted from the send, it wrote the second message into the middle of
+// the first answer (msg1, msg2, rest of reply1, reply2) although the CLI ran
+// msg1 -> reply1 -> msg2 -> reply2.
+func TestDeferredSteerTimeoutStartsWhenTheInFlightAnswerEnds(t *testing.T) {
+	previous := deferredSteerHoldTimeout
+	deferredSteerHoldTimeout = 50 * time.Millisecond
+	defer func() { deferredSteerHoldTimeout = previous }()
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", steerUser("user:a"))
+	store.AddEvent("chat", transcriptMessage("answer-a1", "first part"))
+
+	user := steerUser("user:b")
+	store.BeginDeferredSteer("chat", user)
+	// The first answer keeps streaming well past the short timeout.
+	time.Sleep(150 * time.Millisecond)
+	store.AddEvent("chat", transcriptMessage("answer-a2", "second part"))
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "answer-a2")
+	store.AddEvent("chat", steerCompletion("completion-a"))
+
+	// Now the CLI takes message b; its ack arrives before the short timeout.
+	store.CompleteDeferredSteer("chat", user)
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to b"))
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "answer-a2", "completion-a", "user:b", "answer-b")
+}
+
+// Without an ack, the user row still appears, but after the first answer.
+func TestDeferredSteerTimeoutAfterTheAnswerKeepsOrder(t *testing.T) {
+	previous := deferredSteerHoldTimeout
+	deferredSteerHoldTimeout = 50 * time.Millisecond
+	defer func() { deferredSteerHoldTimeout = previous }()
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", steerUser("user:a"))
+	store.AddEvent("chat", transcriptMessage("answer-a1", "first part"))
+	store.BeginDeferredSteer("chat", steerUser("user:b"))
+	time.Sleep(120 * time.Millisecond)
+	store.AddEvent("chat", steerCompletion("completion-a"))
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to b"))
+	waitForIDs(t, store, "chat", 5)
+	expectIDs(t, store, "chat", "user:a", "answer-a1", "completion-a", "user:b", "answer-b")
+}
+
+func liveEvents(store *EventStore, sessionID string) map[string]Event {
+	byID := map[string]Event{}
+	for _, event := range store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1}).Events {
+		byID[event.ID] = event
+	}
+	return byID
+}
+
+// RTS rtslatency, Cursor: the whole reply was one transcript chunk produced at
+// 12:11:20.96, the durable ack wrote the question at 12:11:21.55. Journal order
+// was right (question, reply), but the chat orders the main conversation by
+// timestamp, so the reply rendered above its own question and never as the
+// newest row. The question must not be dated after the answer it precedes.
+func TestDeferredSteerUserRowIsNotDatedAfterItsHeldReply(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	submitted := time.Date(2026, 9, 25, 12, 11, 15, 0, time.UTC)
+	replied := submitted.Add(5963 * time.Millisecond)
+	acked := submitted.Add(6549 * time.Millisecond)
+
+	user := UserMessageAt(steerUser("user:plan"), submitted)
+	store.BeginDeferredSteer("chat", user)
+	reply := transcriptMessage("answer", "No. The plan was not updated.")
+	reply.Timestamp = replied
+	completion := steerCompletion("completion")
+	completion.Timestamp = replied.Add(time.Microsecond)
+	store.AddEvent("chat", reply)
+	store.AddEvent("chat", completion)
+
+	store.CompleteDeferredSteer("chat", UserMessageAt(user, acked))
+	expectIDs(t, store, "chat", "user:plan", "answer", "completion")
+	rows := liveEvents(store, "chat")
+	question := rows["user:plan"]
+	if question.Timestamp.After(rows["answer"].Timestamp) {
+		t.Fatalf("question dated %s, after its reply %s", question.Timestamp, rows["answer"].Timestamp)
+	}
+	if question.Data == nil || question.Data.Timestamp.After(rows["answer"].Timestamp) {
+		t.Fatalf("question payload dated after its reply: %+v", question.Data)
+	}
+}
+
+// Nothing held: the ack time stands (the question follows the prior answer).
+func TestDeferredSteerUserRowKeepsAckTimeWithoutHeldRows(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	acked := time.Date(2026, 9, 25, 12, 11, 21, 0, time.UTC)
+	user := steerUser("user:x")
+	store.BeginDeferredSteer("chat", user)
+	store.CompleteDeferredSteer("chat", UserMessageAt(user, acked))
+	if got := liveEvents(store, "chat")["user:x"].Timestamp; !got.Equal(acked) {
+		t.Fatalf("timestamp = %s, want ack time %s", got, acked)
+	}
+}

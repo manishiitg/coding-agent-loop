@@ -197,3 +197,25 @@ func TestMCPOAuthAuthorizationRefreshAndRevocation(t *testing.T) {
 		t.Fatal("revoked access accepted")
 	}
 }
+
+func TestMCPOAuthOriginAllowsConfiguredLoopbackOnly(t *testing.T) {
+	for _, tc := range []struct {
+		url      string
+		resource string
+	}{
+		{"https://agentworks.example.com", "https://agentworks.example.com" + externalMCPPath},
+		{"http://127.0.0.1:18743", "http://127.0.0.1:18743" + externalMCPPath},
+		{"http://localhost:18743", "http://localhost:18743" + externalMCPPath},
+		{"http://[::1]:18743", "http://[::1]:18743" + externalMCPPath},
+		{"http://agentworks.example.com", ""},
+		{"http://127.0.0.1.evil.example:18743", ""},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			t.Setenv("PUBLIC_URL", tc.url)
+			_, resource, ok := mcpOAuthURLs()
+			if ok != (tc.resource != "") || resource != tc.resource {
+				t.Fatalf("mcpOAuthURLs() = %q, %v; want %q", resource, ok, tc.resource)
+			}
+		})
+	}
+}

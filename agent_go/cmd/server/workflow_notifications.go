@@ -39,16 +39,14 @@ type WorkflowNotificationAccountChannelInfo struct {
 	// background; the row renders immediately and settles when it lands.
 	Checking bool `json:"checking,omitempty"`
 
-	// DefaultSender is the address mail actually goes OUT from — the counterpart
-	// to DefaultRecipient, which is where it goes TO. The popup showed only the
-	// recipient, so there was no way to tell which mailbox was sending. Empty
-	// while auth is still resolving or when the account has never been checked.
+	// DefaultSender is the account-level fallback FROM address. A workflow may
+	// select a different Notify sender. Empty when no default connection exists
+	// or while legacy authentication is still resolving.
 	DefaultSender string `json:"default_sender,omitempty"`
 	// DefaultSenderConnectionID names the connection DefaultSender came from,
 	// so the UI can say which configured account is inherited by default.
 	DefaultSenderConnectionID string `json:"default_sender_connection_id,omitempty"`
-	// SenderChoices lists the connections a workflow may select between. One or
-	// zero entries means there is nothing to choose and the picker stays hidden.
+	// SenderChoices lists the connections available to the Notify sender picker.
 	SenderChoices []WorkflowNotificationSenderChoice `json:"sender_choices,omitempty"`
 }
 
@@ -74,8 +72,7 @@ type WorkflowNotificationInfoResponse struct {
 	// lists inherited account-level channels this workflow opts out of;
 	// BlockRecipients is the workflow's own email denylist (added to the
 	// account-wide one), and both are display-only here — edits go through
-	// /notify. The Run/PulseSummaryRecipients lists say where mail is actually
-	// sent and ARE editable from the popup.
+	// /notify. The Run/PulseSummaryRecipients lists say where mail is sent.
 	RunSummaryInstructions   string   `json:"run_summary_instructions,omitempty"`
 	PulseSummaryInstructions string   `json:"pulse_summary_instructions,omitempty"`
 	RunSummaryChannels       []string `json:"run_summary_channels,omitempty"`
@@ -139,7 +136,7 @@ func resolveWorkflowSlackNotificationState(manifest *WorkflowManifest, secretVal
 	return resolveSlackNotificationState("workflow-slack-webhook", "Workflow Slack webhook", manifest.Capabilities, secretValue, secretResolved)
 }
 
-func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAccountChannelInfo {
+func notificationAccountChannels(ctx context.Context, selectedSenderID string) []WorkflowNotificationAccountChannelInfo {
 	accountChannels := []WorkflowNotificationAccountChannelInfo{}
 	if gmail, gmailErr := ensureGmailService(); gmailErr == nil {
 		config := gmail.GetConfig()
@@ -164,9 +161,15 @@ func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAcco
 		// Which account sends. With no connections configured this is the
 		// legacy singleton, whose address comes from the same cached auth the
 		// badge above already used — so naming the sender costs nothing extra.
-		defaultSender := auth.Email
+		defaultSender := ""
+		if len(config.Connections) == 0 {
+			defaultSender = auth.Email
+		}
 		defaultSenderID := config.DefaultConnectionID
 		choices := []WorkflowNotificationSenderChoice{}
+		selectedFound := false
+		selectedReady := false
+		selectedChecking := false
 		for _, conn := range gmail.ListConnections() {
 			connAuth, _ := gmail.AuthStatusForConnection(conn.ID)
 			email := conn.Email
@@ -177,6 +180,11 @@ func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAcco
 			if isDefault && email != "" {
 				defaultSender = email
 			}
+			if conn.ID == selectedSenderID {
+				selectedFound = true
+				selectedChecking = connAuth.Checking
+				selectedReady = conn.Enabled && connAuth.Authenticated && connAuth.HasGmailScope
+			}
 			choices = append(choices, WorkflowNotificationSenderChoice{
 				ID:          conn.ID,
 				DisplayName: conn.DisplayName,
@@ -184,6 +192,18 @@ func notificationAccountChannels(ctx context.Context) []WorkflowNotificationAcco
 				Ready:       conn.Enabled && connAuth.Authenticated && connAuth.HasGmailScope,
 				IsDefault:   isDefault,
 			})
+		}
+		if selectedSenderID != "" {
+			switch {
+			case !selectedFound:
+				gmailState, gmailSummary = "not_ready", "Selected Notify sender is missing."
+			case selectedChecking:
+				gmailState, gmailSummary = "checking", "Checking the selected Notify sender…"
+			case config.Enabled && selectedReady:
+				gmailState, gmailSummary = "ready", "Selected Notify sender is connected."
+			default:
+				gmailState, gmailSummary = "not_ready", "Selected Notify sender is unavailable."
+			}
 		}
 
 		accountChannels = append(accountChannels, WorkflowNotificationAccountChannelInfo{
@@ -255,7 +275,11 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 		secretValue, secretResolved = api.resolveBackendNotificationSecret(r.Context(), userID, workspacePath, secretName)
 	}
 	slack := resolveWorkflowSlackNotificationState(manifest, secretValue, secretResolved)
-	accountChannels := notificationAccountChannels(r.Context())
+	selectedSenderID := ""
+	if manifest.Capabilities.Notifications != nil {
+		selectedSenderID = strings.TrimSpace(manifest.Capabilities.Notifications.GmailConnectionID)
+	}
+	accountChannels := notificationAccountChannels(r.Context(), selectedSenderID)
 
 	response := WorkflowNotificationInfoResponse{
 		Success:                  true,

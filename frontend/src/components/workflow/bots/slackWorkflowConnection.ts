@@ -11,6 +11,17 @@ export type WorkflowSlackSelection = {
   selectionId: string
 }
 
+/**
+ * Compares a bot's scope with a workflow or crew folder. The server stores a
+ * crew's physical path ("_users/<owner>/Chats/Work/projects/<id>") while the
+ * crew UI knows its logical one ("Chats/Work/projects/<id>"), so the owner
+ * prefix is ignored on both sides.
+ */
+export function sameBotWorkspacePath(a: string | null | undefined, b: string | null | undefined): boolean {
+  const logical = (path: string | null | undefined) => (path || '').trim().replace(/^\/+|\/+$/g, '').replace(/^_users\/[^/]+\//, '')
+  return logical(a) !== '' && logical(a) === logical(b)
+}
+
 export function selectedWorkflowSlackReady(selection: WorkflowSlackSelection): boolean {
   return !!selection.selectionId && !!selection.effective?.enabled && !!selection.effective?.configured
 }
@@ -24,7 +35,7 @@ export function resolveWorkflowSlackConnection(
 ): WorkflowSlackSelection {
   const list = connections || []
   const byId = new Map(list.map(entry => [entry.id, entry]))
-  const own = (workspacePath ? list.find(entry => entry.workspace_path === workspacePath && (profileId ? entry.profile_id === profileId : !entry.profile_id)) : undefined) || null
+  const own = (workspacePath ? list.find(entry => sameBotWorkspacePath(entry.workspace_path, workspacePath) && (profileId ? entry.profile_id === profileId : !entry.profile_id)) : undefined) || null
   const selection = (selectionId || '').trim()
   let effective: SlackConnection | null = null
   if (selection) {

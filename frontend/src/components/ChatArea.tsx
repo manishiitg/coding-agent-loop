@@ -21,6 +21,7 @@ import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import { SessionStopButton } from './SessionStopButton'
 import { TerminalEventTranscript } from './TerminalEventTranscript'
+import { followTranscriptLatest } from './useTranscriptScroll'
 import { MainAgentTerminal } from './MainAgentTerminal'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -2446,10 +2447,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       globalHasRestored = true
 
       try {
-        // Wait for active-sessions polling to start and return initial data
-        await new Promise(resolve => setTimeout(resolve, 500))
-
         // --- Phase 1: restore active / recently-completed sessions from backend ---
+        // getActiveSessions(true) fetches (or joins the in-flight poll), so no
+        // settle delay is needed in front of it.
         const activeSessions = await getActiveSessions(true)
         const restoredSessionIds = new Set<string>()
 
@@ -2486,20 +2486,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             setIsRestoringChatSessions(true)
           }
 
-          for (const activeSession of sessionsToRestore) {
+          // Each restore is independent; run them together so the pane
+          // waits for the slowest one, not the sum of all of them.
+          await Promise.all(sessionsToRestore.map(async (activeSession, index) => {
             try {
               const tabId = await restoreSession(activeSession.session_id, {
                 title: activeSession.query || 'Active Chat',
                 source: 'auto-restore',
               })
               restoredSessionIds.add(activeSession.session_id)
-              if (sessionsToRestore.indexOf(activeSession) === 0) {
+              if (index === 0) {
                 switchTab(tabId)
               }
             } catch (err) {
               console.error(`[SessionRestore] auto-restore failed for ${activeSession.session_id}:`, err)
             }
-          }
+          }))
         }
 
         // --- Phase 2: hydrate persisted tabs that Phase 1 didn't cover ---
@@ -2515,17 +2517,28 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (tabsToHydrate.length > 0) {
           setIsRestoringChatSessions(true)
         }
-        for (const tab of tabsToHydrate) {
-          try {
-            await restoreSession(tab.sessionId!, {
-              source: 'page-refresh',
-              skipConfigRestore: true,
-              workspacePath: tab.metadata?.agentProfileWorkspace,
-            })
-          } catch (err) {
-            console.error(`[SessionRestore] page-refresh hydrate failed for tab ${tab.tabId}:`, err)
+        // Loading persisted chats one after another kept an empty tab on
+        // "Loading conversation..." until every chat before it had loaded.
+        // Load the visible tab first and the rest a few at a time.
+        const visibleTabId = useChatStore.getState().activeTabId
+        const hydrationQueue = [...tabsToHydrate].sort((a, b) =>
+          Number(b.tabId === visibleTabId) - Number(a.tabId === visibleTabId))
+        let nextHydration = 0
+        const hydrateWorker = async () => {
+          while (nextHydration < hydrationQueue.length) {
+            const tab = hydrationQueue[nextHydration++]
+            try {
+              await restoreSession(tab.sessionId!, {
+                source: 'page-refresh',
+                skipConfigRestore: true,
+                workspacePath: tab.metadata?.agentProfileWorkspace,
+              })
+            } catch (err) {
+              console.error(`[SessionRestore] page-refresh hydrate failed for tab ${tab.tabId}:`, err)
+            }
           }
         }
+        await Promise.all([hydrateWorker(), hydrateWorker(), hydrateWorker()])
       } catch (error) {
         console.error('[SessionRestore] page-load restore failed:', error)
       } finally {
@@ -3055,6 +3068,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Enable auto-scroll and scroll to bottom
     chatStore.setAutoScroll(true)
     setTimeout(() => { scrollToBottom('smooth') }, 50)
+    // The conversation scrolls inside the transcript, not the chat container.
+    followTranscriptLatest(currentTab.tabId)
 
     // Clear query text
     useAppStore.getState().setCurrentQuery('')

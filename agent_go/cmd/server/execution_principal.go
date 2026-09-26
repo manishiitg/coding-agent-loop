@@ -25,6 +25,9 @@ type ExecutionPrincipal struct {
 // turns. Listener validation alone is insufficient for a queued turn.
 func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req QueryRequest) (context.Context, error) {
 	claims := GetUserFromContext(ctx)
+	if claims != nil && claims.Provider == slackDMProvider {
+		return api.revalidateSlackDMPrincipal(ctx, claims, req)
+	}
 	if claims == nil || claims.Provider != "bot_route" {
 		return ctx, nil
 	}
@@ -53,10 +56,15 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 		return ctx, fmt.Errorf("Slack email is blocked or unverifiable")
 	}
 	expected := services.ChannelRoute{WorkflowID: claims.BotRouteWorkflowID, ProfileID: claims.BotRouteProfileID, ConversationKey: claims.BotRouteConversationKey, WorkspacePath: claims.BotRouteWorkspacePath}
+	// A Slack thread runs in its own chat of the route's crew
+	// ("<crew>:slack-<hash>"); the route names the crew itself.
+	if sameProjectConversation(route.ConversationKey, expected.ConversationKey) {
+		expected.ConversationKey = route.ConversationKey
+	}
 	if !sameSlackRouteDestination(route, expected) {
 		return ctx, fmt.Errorf("bot route target changed; start a new conversation")
 	}
-	if filepath.Clean(req.SelectedFolder) != filepath.Clean(route.WorkspacePath) || req.AgentProfileID != route.ProfileID || req.PresetQueryID != route.WorkflowID || req.AgentProfileConversationKey != route.ConversationKey {
+	if !slackRouteFolderMatches(route, req.SelectedFolder) || req.AgentProfileID != route.ProfileID || req.PresetQueryID != route.WorkflowID || !sameProjectConversation(route.ConversationKey, req.AgentProfileConversationKey) {
 		return ctx, fmt.Errorf("query does not match the bot route target")
 	}
 	principal := &ExecutionPrincipal{Kind: "bot_route", ID: services.BotPrincipalIDForRoute("slack", route), Target: route, Access: WorkflowAccessRead, AuditActor: req.BotUserID}
@@ -162,4 +170,15 @@ func (api *StreamingAPI) conversationTargetAccess(ctx context.Context, req Query
 		}
 	}
 	return workflowAccessForClaims(claims), nil
+}
+
+// slackRouteFolderMatches compares a route's folder with the turn's. A crew
+// route may hold the logical path while the turn runs in the owner's
+// physical folder; both name the same crew for that owner. Workflow routes
+// compare exactly.
+func slackRouteFolderMatches(route services.ChannelRoute, selectedFolder string) bool {
+	if strings.TrimSpace(route.ProfileID) != "" && strings.TrimSpace(route.WorkspaceUserID) != "" {
+		return workspacePathsMatchForUser(route.WorkspaceUserID, route.WorkspacePath, selectedFolder)
+	}
+	return filepath.Clean(strings.TrimSpace(selectedFolder)) == filepath.Clean(strings.TrimSpace(route.WorkspacePath))
 }

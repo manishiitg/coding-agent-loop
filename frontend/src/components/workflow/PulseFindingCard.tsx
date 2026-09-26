@@ -17,6 +17,7 @@ import type {
   PulseFindingVerification,
 } from '../../services/api-types'
 import { pulseIssueForFinding } from './pulseModuleInspectorUtils'
+import { WorkspacePanelGuideButton } from './WorkspacePanelGuideButton'
 import {
   pulseFindingImpact,
   pulseFindingPresentation,
@@ -237,27 +238,30 @@ export function PulseFindingCard({
           )}
 
           <div className="mt-3 overflow-hidden rounded-lg border bg-background">
-            <div className="flex items-center gap-1 border-b bg-muted/20 p-1" role="tablist" aria-label="Issue details">
-              {([
-                ['fix', 'Fix', attempts.length, Wrench],
-                ['verification', 'Verification', finding.verifications.length, FileCheck2],
-                ['activity', 'Activity', events.length, History],
-              ] as const).map(([id, label, count, Icon]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === id}
-                  onClick={() => setTab(id)}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[10px] font-medium transition-colors ${
-                    tab === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  <Icon className="h-3 w-3" />
-                  {label}
-                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{count}</span>
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/20 p-1">
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto" role="tablist" aria-label="Issue details">
+                {([
+                  ['fix', 'Fix', attempts.length, Wrench],
+                  ['verification', 'Verification', finding.verifications.length, FileCheck2],
+                  ['activity', 'Activity', events.length, History],
+                ] as const).map(([id, label, count, Icon]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === id}
+                    onClick={() => setTab(id)}
+                    className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[10px] font-medium transition-colors ${
+                      tab === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {label}
+                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] tabular-nums">{count}</span>
+                  </button>
+                ))}
+              </div>
+              <WorkspacePanelGuideButton topic={`Pulse · Issue ${tab === 'fix' ? 'Fix' : tab === 'verification' ? 'Verification' : 'Activity'}`} />
             </div>
 
             {tab === 'fix' && (

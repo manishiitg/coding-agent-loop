@@ -4167,6 +4167,84 @@ func planStepUpdateRequiresDependentArtifactReview(fieldChanges []PlanFieldChang
 	return len(fieldChanges) > 0
 }
 
+// planDriftMaterialFieldNames are step fields whose change can alter what a
+// step produces or how the plan routes, so a dependent step, an eval, a
+// report query, a DB contract, or downstream learnings/KB may now be stale.
+// It is the same set planStepUpdateInvalidatesDescriptionReview uses, minus
+// "description" and "title": wording edits are the single largest share of
+// plan-mod calls (2026-09-26 review: description-only edits on regular and
+// message-sequence steps were the biggest bucket of the unreviewed changelog
+// backlog across live workflows), and treating every one as drift-worthy made
+// plan_drift_review due on nearly every plan edit. A wording rewrite
+// occasionally hides a real behavior change, but that then shows up as an
+// output or data change on the step's next run, which Pulse already catches
+// through its own step-output and step-concern review, not through Plan
+// Drift. Schedule timing, review_notes, updated_at, and model/tier settings
+// (Architecture's, not Plan Drift's, per pulse-gate.md) were never in this
+// set either.
+var planDriftMaterialFieldNames = map[string]bool{
+	"type": true, "context_dependencies": true, "context_output": true,
+	"items": true, "messages": true, "next_step_id": true,
+	"validation_schema": true, "success_criteria": true, "script_parameters": true,
+	"routing_question": true, "branch_question": true, "routes": true,
+	"default_route_id": true, "route_source_file": true,
+	"question": true, "variable_name": true, "response_type": true,
+	"options": true, "if_yes_next_step_id": true, "if_no_next_step_id": true,
+	"option_routes": true,
+}
+
+// planDriftFieldNameIsMaterial checks one field name, following the last
+// path segment for a dotted name (a manifest-level changelog entry such as
+// "workflow.json.schedules" or "workflow.json.capabilities.llm_config.
+// builder_llm" records its field this way; a step-level PlanFieldChange
+// never does).
+func planDriftFieldNameIsMaterial(field string) bool {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return false
+	}
+	name := field
+	if idx := strings.LastIndex(field, "."); idx >= 0 {
+		name = field[idx+1:]
+	}
+	if strings.HasPrefix(name, "predefined_routes") || strings.Contains(field, "sub_agent_step") {
+		return true
+	}
+	return planDriftMaterialFieldNames[name]
+}
+
+// planStepFieldChangesRequireDriftReview decides whether an edit makes
+// plan_drift_review due for the step: true only when at least one changed
+// field can affect a dependent. An empty list (nothing to check) is not
+// flagged; the caller already gates on len(fieldChanges) > 0 before this is
+// reached.
+func planStepFieldChangesRequireDriftReview(fieldChanges []PlanFieldChange) bool {
+	for _, change := range fieldChanges {
+		if planDriftFieldNameIsMaterial(change.Field) {
+			return true
+		}
+	}
+	return false
+}
+
+// planChangeFieldsAreDriftMaterial is the changelog-backlog counterpart: an
+// entry with NO recorded field names (an untyped update_step_config call, or
+// a step add/delete, which changes the plan's shape without a field-level
+// diff) stays conservative -- there is nothing proving it is safe to skip.
+// Only an entry whose every named field is known and none of them material
+// is dropped from the backlog.
+func planChangeFieldsAreDriftMaterial(fields []string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	for _, f := range fields {
+		if planDriftFieldNameIsMaterial(f) {
+			return true
+		}
+	}
+	return false
+}
+
 func planStepUpdateInvalidatesDescriptionReview(fieldChanges []PlanFieldChange) bool {
 	for _, change := range fieldChanges {
 		field := change.Field
@@ -4225,17 +4303,14 @@ func clearDescriptionReviewedAfterPlanUpdate(ctx context.Context, workspacePath,
 }
 
 // clearDriftReviewAfterPlanUpdate flags an existing drift review stale rather
-// than destroying it — the "stale flag" model. It deliberately does NOT share
-// clearDescriptionReviewedAfterPlanUpdate's field classifier: a description
-// review is specifically about whether the step's prose still matches its
-// behavior, so a title-only edit legitimately leaves it untouched, but a
-// drift review's broader claim ("this step's current configured form has
-// been checked") is stale the instant any field changes, title included. Do
-// not attempt to classify an update as material or cosmetic in Go — even a
-// title change can alter meaning, and classification would create a new
-// false-negative path. The trigger condition here mirrors
-// planStepUpdateRequiresDependentArtifactReview's own unconditional
-// len(fieldChanges) > 0 gate, not the description-review classifier.
+// than destroying it — the "stale flag" model. Whether it fires is now
+// planStepFieldChangesRequireDriftReview's call (planDriftMaterialFieldNames):
+// until 2026-09-26 this fired on ANY changed field, title included, which
+// made plan_drift_review due on nearly every plan edit — description-only
+// edits were the single largest share of live workflows' unreviewed
+// changelog backlog. A step's last real review can be trusted through a
+// wording-only edit; a change to what it outputs, depends on, validates, or
+// routes to cannot.
 //
 // A step with NeedsReview==true (or no record at all) is what makes the
 // plan_drift_review Pulse module due — this is the mechanism that turns "we
@@ -4246,7 +4321,7 @@ func clearDescriptionReviewedAfterPlanUpdate(ctx context.Context, workspacePath,
 // appends the changelog entry for this field change elsewhere in the same
 // turn — no separate changelog entry is needed here.
 func clearDriftReviewAfterPlanUpdate(ctx context.Context, workspacePath, stepID string, fieldChanges []PlanFieldChange, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) (bool, error) {
-	if len(fieldChanges) == 0 {
+	if !planStepFieldChangesRequireDriftReview(fieldChanges) {
 		return false, nil
 	}
 

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
 // Per-workflow and per-project Slack apps: CRUD over Slack app identities,
@@ -74,11 +76,14 @@ func SlackConnectionRoutes(router *mux.Router, api *StreamingAPI) {
 	r := router.PathPrefix("/api/human-feedback/slack/connections").Subrouter()
 	r.HandleFunc("", listSlackConnectionsHandler(api)).Methods("GET")
 	r.HandleFunc("", createSlackConnectionHandler(api)).Methods("POST", "OPTIONS")
+	// Before "/{id}" so "/mine" is not read as a connection ID.
+	registerSlackConnectionChannelRoutes(r, api)
 	r.HandleFunc("/{id}", getSlackConnectionHandler(api)).Methods("GET")
 	r.HandleFunc("/{id}", updateSlackConnectionHandler(api)).Methods("PATCH", "POST", "OPTIONS")
 	r.HandleFunc("/{id}", deleteSlackConnectionHandler(api)).Methods("DELETE", "OPTIONS")
 	r.HandleFunc("/{id}/default", setDefaultSlackConnectionHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/{id}/test", testSlackConnectionEntryHandler(api)).Methods("POST", "OPTIONS")
+	r.HandleFunc("/{id}/dry-run", slackConnectionDryRunHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/project/selection", projectSlackConnectionHandler(api)).Methods("GET", "PUT", "POST", "OPTIONS")
 }
 
@@ -133,6 +138,21 @@ func slackConnectionService(w http.ResponseWriter, r *http.Request) (*services.S
 // requireSlackConnectionCreateAccess enforces who may create a connection.
 // Admins may create at any scope; anyone else must scope the connection to
 // a workflow they own. Bot-route principals can never manage connections.
+// physicalProductSlackScope turns a crew/product project path into the
+// caller's physical project folder. The browser sends a crew's logical path
+// ("Chats/Work/projects/<id>"); stored or read as-is it names no folder in the
+// document root, so the project's manifest was "not found" when the new bot
+// was selected, and the bot's Slack route had no owner (RTS 2026-09-25, #201
+// sub-issue 5). A "_users/<owner>/..." path is already physical and is kept.
+// Workflow scopes (no profile) are returned unchanged.
+func physicalProductSlackScope(ctx context.Context, profileID, workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if strings.TrimSpace(profileID) == "" || workspacePath == "" {
+		return workspacePath
+	}
+	return productConversationRuntimeWorkspace(productWorkspaceUserID(ctx), workspacePath)
+}
+
 func requireSlackConnectionCreateAccess(r *http.Request, api *StreamingAPI, workspacePath, profileID string) error {
 	claims := GetUserFromContext(r.Context())
 	if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" {
@@ -212,6 +232,10 @@ func requireProductSlackScopeOwner(ctx context.Context, api *StreamingAPI, profi
 		return fmt.Errorf("agent profiles are unavailable; cannot verify product ownership")
 	}
 	userID := productWorkspaceUserID(ctx)
+	// A connection saved before scopes were made physical still holds the
+	// logical path, which names the caller's own crew; resolve it so its owner
+	// is not locked out of the bot (and can re-save it to repair the scope).
+	workspacePath = productConversationRuntimeWorkspace(userID, workspacePath)
 	profile, err := api.agentProfiles.Resolve(profileID, 0, userID)
 	if err != nil {
 		return fmt.Errorf("agent profile %q is unavailable: %w", profileID, err)
@@ -334,6 +358,7 @@ func createSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		if req.ProfileID != nil {
 			profileID = strings.TrimSpace(*req.ProfileID)
 		}
+		workspacePath = physicalProductSlackScope(r.Context(), profileID, workspacePath)
 		if err := requireSlackConnectionCreateAccess(r, api, workspacePath, profileID); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
@@ -351,9 +376,14 @@ func createSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ProfileID:     profileID,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, services.ErrSlackTokenInUse) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
+		registerSlackBotConnectorForOwnedConnections(api, svc)
 		w.WriteHeader(http.StatusCreated)
 		writeSlackConnection(w, svc, conn)
 	}
@@ -389,6 +419,13 @@ func updateSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		workspacePath := current.WorkspacePath
 		profileID := current.ProfileID
+		if req.WorkspacePath == nil && req.ProfileID == nil {
+			// A crew bot saved before paths were made physical keeps a logical
+			// path. A logical path always names the caller's own crew (another
+			// owner's crew is addressed by its "_users/<owner>/" path), so
+			// re-saving it from the crew repairs the stored scope.
+			workspacePath = physicalProductSlackScope(r.Context(), profileID, workspacePath)
+		}
 		if req.WorkspacePath != nil || req.ProfileID != nil {
 			if !currentUserIsAdmin(r) {
 				http.Error(w, "only a platform admin may change a Slack connection's scope", http.StatusForbidden)
@@ -416,9 +453,14 @@ func updateSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ProfileID:     profileID,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, services.ErrSlackTokenInUse) {
+				status = http.StatusConflict
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
+		registerSlackBotConnectorForOwnedConnections(api, svc)
 		writeSlackConnection(w, svc, conn)
 	}
 }
@@ -622,7 +664,7 @@ func projectSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		profileID := strings.TrimSpace(r.URL.Query().Get("profile_id"))
-		workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+		workspacePath := physicalProductSlackScope(r.Context(), profileID, r.URL.Query().Get("workspace_path"))
 		if profileID == "" || workspacePath == "" {
 			http.Error(w, "profile_id and workspace_path are required", http.StatusBadRequest)
 			return
@@ -665,6 +707,7 @@ func projectSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			registerSlackBotConnectorForOwnedConnections(api, services.GetSlackService())
 			selected, err := productSlackConnectionID(r.Context(), profileID, workspacePath)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("failed to read project Slack selection: %v", err), http.StatusInternalServerError)
@@ -782,4 +825,65 @@ func slackToolConnectionID(ctx context.Context, api *StreamingAPI, session strin
 		}
 	}
 	return slackConnectionIDForRoute(ctx, route)
+}
+
+// slackHasOwnedEnabledConnection reports whether any enabled Slack
+// connection is owned by a workflow or crew project. Such an app has its
+// own Socket Mode listener, so its @mentions need the bot manager's
+// handler even when the shared bot switch is off and no channel route
+// exists.
+func slackHasOwnedEnabledConnection(svc *services.SlackService) bool {
+	if svc == nil {
+		return false
+	}
+	for _, conn := range svc.ListConnections() {
+		if !conn.Enabled {
+			continue
+		}
+		if strings.TrimSpace(conn.WorkspacePath) != "" || strings.TrimSpace(conn.ProfileID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// registerSlackBotConnector registers Slack with the bot manager and starts
+// listening, unless it is already registered. Registration only wires the
+// message handler; per-message routing and ownership gates still decide
+// what each message may do. Reports whether it registered now.
+func registerSlackBotConnector(botManager *services.BotConversationManager, svc *services.SlackService) bool {
+	if botManager == nil || svc == nil || botManager.GetConnector("slack") != nil {
+		return false
+	}
+	botManager.RegisterConnector(svc)
+	svc.StartListening(context.Background())
+	return true
+}
+
+// registerSlackBotConnectorForOwnedConnections registers Slack when a
+// workflow- or crew-owned connection is enabled. Called after connection
+// saves; the shared-bot and route conditions are handled by the Slack
+// config save and startup as before.
+func registerSlackBotConnectorForOwnedConnections(api *StreamingAPI, svc *services.SlackService) {
+	if api == nil || !slackHasOwnedEnabledConnection(svc) {
+		return
+	}
+	if registerSlackBotConnector(api.botManager, svc) {
+		log.Printf("[SLACK] Owned Slack connection enabled — registered with bot manager")
+	} else if api.botManager != nil {
+		// Already registered: the root re-propagated its handler to the
+		// new or restarted child runtime on reload; resolve bot identities
+		// so the child strips its own @mention.
+		svc.StartListening(context.Background())
+	}
+}
+
+// slackBotConnectorWantedAtStartup mirrors the startup registration rule:
+// the platform switch, any owner-saved channel route, or any enabled
+// workflow- or crew-owned connection.
+func slackBotConnectorWantedAtStartup(botConfig *chathistory.BotConnectorConfig, svc *services.SlackService) bool {
+	if botConfig != nil && (botConfig.BotMode || services.SlackBotConfigHasRoutes(botConfig)) {
+		return true
+	}
+	return slackHasOwnedEnabledConnection(svc)
 }

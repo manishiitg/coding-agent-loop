@@ -1022,6 +1022,8 @@ func TestRegisterAgentProfileToolsReaderSplit(t *testing.T) {
 		"list_accessible_workflows", "list_attached_workflows", "list_workflow_triggers", "run_workflow_trigger", "get_workflow_trigger_run",
 		"list_project_schedules", "list_project_triggers",
 		"manage_custom_commands", "list_work_folders", "attach_work_folder",
+		// A crew answering in Slack reads its thread in Run mode too.
+		"slack", "get_slack_bot_settings",
 	} {
 		if _, ok := registrar.tools[want]; !ok {
 			t.Fatalf("reader missing %q: %v", want, keysOf(registrar.tools))
@@ -1033,6 +1035,7 @@ func TestRegisterAgentProfileToolsReaderSplit(t *testing.T) {
 		"create_project_trigger", "update_project_trigger", "delete_project_trigger",
 		"update_project_mcp_server_selection", "update_project_global_secret_selection", "update_project_skill_selection",
 		"set_work_identity", "create_crew", "perform_ui_action", "get_file_link",
+		"configure_slack_bot", "create_slack_bot_route", "remove_slack_bot_route",
 	} {
 		if _, ok := registrar.tools[denied]; ok {
 			t.Fatalf("reader registered %q", denied)

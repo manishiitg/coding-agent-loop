@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -20,11 +21,40 @@ import (
 
 const (
 	pulseFixRunScheduleID = "pulse-fix-run"
-	// pulseFixRunMinGap and pulseFixRunMaxPerDay bound cost: a workflow whose
-	// issues a pass cannot close is retried, but not continuously.
-	pulseFixRunMinGap    = 3 * time.Hour
-	pulseFixRunMaxPerDay = 3
+	// The gaps and daily cap bound cost. Fresh trouble (a failed run or new
+	// step concerns) is fixed quickly; a backlog of older issues a pass could
+	// not close is retried, but not continuously.
+	pulseFixRunFreshGap   = 90 * time.Minute
+	pulseFixRunBacklogGap = 4 * time.Hour
+	pulseFixRunMaxPerDay  = 6
 )
+
+// maxConcurrentPulseRuns bounds Pulse work server-wide: full Pulses and fix
+// runs together. Every workflow can be due at once (after a restart, or when a
+// pacing change makes waiting requests due), and each run is a long agent
+// session; the rest wait for later scheduler ticks. Full Pulses launch first.
+const maxConcurrentPulseRuns = 2
+
+// pulseLauncherMu serializes the per-tick Pulse launcher passes, so the cap
+// check and the start it guards are never interleaved across ticks.
+var pulseLauncherMu sync.Mutex
+
+// runningPulseRuns counts full Pulses and fix runs in progress on any workflow.
+func (s *SchedulerService) runningPulseRuns() int {
+	s.runtimeStatesMu.RLock()
+	defer s.runtimeStatesMu.RUnlock()
+	running := 0
+	for key, state := range s.runtimeStates {
+		if state == nil || state.LastStatus != "running" {
+			continue
+		}
+		if strings.HasSuffix(key, scheduleScopeSeparator+manualWorkflowPulseScheduleID) ||
+			strings.HasSuffix(key, scheduleScopeSeparator+pulseFixRunScheduleID) {
+			running++
+		}
+	}
+	return running
+}
 
 const pulseFixRunsSchema = `CREATE TABLE IF NOT EXISTS pulse_fix_runs (
 	run_id TEXT PRIMARY KEY,
@@ -89,6 +119,9 @@ type pulseFixSignals struct {
 	OpenIssues  int
 	NewConcerns int
 	FailedRuns  int
+	// OpenIssuesLastActivity is the latest time any open issue was seen again
+	// or had an event recorded.
+	OpenIssuesLastActivity time.Time
 }
 
 func (s pulseFixSignals) any() bool { return s.OpenIssues > 0 || s.NewConcerns > 0 || s.FailedRuns > 0 }
@@ -117,8 +150,19 @@ func decidePulseFixRun(signals pulseFixSignals, lastFix time.Time, fixesLastDay 
 	if fixesLastDay >= pulseFixRunMaxPerDay {
 		return false, fmt.Sprintf("daily limit of %d fix runs reached", pulseFixRunMaxPerDay)
 	}
-	if !lastFix.IsZero() && now.Sub(lastFix) < pulseFixRunMinGap {
-		return false, fmt.Sprintf("last fix run started %s ago; minimum gap is %s", now.Sub(lastFix).Round(time.Minute), pulseFixRunMinGap)
+	// Only old open issues, none touched since the last fix run started: a new
+	// pass would see exactly what the last one left, so it would end the same
+	// way. They wait for new trouble or the full Pulse.
+	if signals.NewConcerns == 0 && signals.FailedRuns == 0 && !lastFix.IsZero() &&
+		!signals.OpenIssuesLastActivity.After(lastFix) {
+		return false, "open issues unchanged since the last fix run"
+	}
+	gap := pulseFixRunBacklogGap
+	if signals.NewConcerns > 0 || signals.FailedRuns > 0 {
+		gap = pulseFixRunFreshGap
+	}
+	if !lastFix.IsZero() && now.Sub(lastFix) < gap {
+		return false, fmt.Sprintf("last fix run started %s ago; minimum gap is %s", now.Sub(lastFix).Round(time.Minute), gap)
 	}
 	return true, signals.reason()
 }
@@ -131,6 +175,17 @@ func collectPulseFixSignals(ctx context.Context, workspacePath string, since tim
 		return signals, err
 	}
 	signals.OpenIssues = open
+	if open > 0 {
+		issues, err := stepworkflow.ListPulseActionableWorkflowIssues(ctx, workspacePath)
+		if err != nil {
+			return signals, err
+		}
+		for _, issue := range issues {
+			if issue.LastActivity.After(signals.OpenIssuesLastActivity) {
+				signals.OpenIssuesLastActivity = issue.LastActivity
+			}
+		}
+	}
 	signals.NewConcerns = collectStepConcerns(workspacePath, since).Total
 	runs, err := ReadScheduleRuns(ctx, workspacePath)
 	if err != nil {
@@ -189,6 +244,9 @@ func (s *SchedulerService) launchDueFixRuns(ctx context.Context) {
 		due, reason := decidePulseFixRun(signals, lastFix, fixesLastDay, now)
 		if !due {
 			continue
+		}
+		if s.runningPulseRuns() >= maxConcurrentPulseRuns {
+			return
 		}
 		runID, err := s.TriggerPulseFixRun(workspacePath, reason)
 		if err != nil {

@@ -341,6 +341,7 @@ type WorkshopChatSession struct {
 	llmToolsFuncs          *LLMToolsCallbacks
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 	resolveSecretValues    func(ctx context.Context, names []string) map[string]string
+	secretsAttached        func(set map[string]string, removed []string)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier      SubAgentNotifier
@@ -635,6 +636,10 @@ type WorkshopConfig struct {
 	// the returned map - never an error. Used by update_workflow_config to refresh the
 	// workshop shell's SECRET_* env vars mid-session without a session restart.
 	ResolveSecretValues func(ctx context.Context, names []string) map[string]string
+	// SecretsAttached pushes attached secret values (and removals) into the
+	// builder chat's live shell, whose environment was captured at turn start.
+	// Without it an attached secret stays unset until the next turn.
+	SecretsAttached func(set map[string]string, removed []string)
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -804,6 +809,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		llmToolsFuncs:          cfg.LLMToolsFuncs,
 		listAvailableSecrets:   cfg.ListAvailableSecrets,
 		resolveSecretValues:    cfg.ResolveSecretValues,
+		secretsAttached:        cfg.SecretsAttached,
 		workshopNotifier:       wsn,
 	}, nil
 }
@@ -995,6 +1001,7 @@ func RegisterWorkshopChatTools(
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
 		resolveSecretValues:    session.resolveSecretValues,
+		secretsAttached:        session.secretsAttached,
 		executionNotifier:      session.executionNotifier,
 		hasPendingCompletions:  session.hasPendingCompletions,
 		hasRunningAgents:       session.hasRunningAgents,
@@ -1646,6 +1653,13 @@ func RegisterRunFullWorkflowTool(
 						"type": "string",
 					},
 				},
+				"variables": map[string]interface{}{
+					"type":        "object",
+					"description": "Per-run values for this run only, keyed by declared variable name (see variables/variables.json), overriding the group's saved values. Use for per-run data such as a PR number, URL or ID the user gave; never rely on a saved value for it. Unknown names are refused. Not allowed for a run started by a webhook or function, whose values are fixed by the trigger. Example: {\"PR_NUMBER\": \"149\"}.",
+					"additionalProperties": map[string]interface{}{
+						"type": "string",
+					},
+				},
 			},
 			"required": []string{"group_name"},
 		},
@@ -1699,6 +1713,19 @@ func RegisterRunFullWorkflowTool(
 						return "route_selections entries must have non-empty step IDs and route values.", nil
 					}
 					routeSelections[stepID] = value
+				}
+			}
+
+			runVariables, parseErr := parseWorkflowStepStringMap(args, "variables")
+			if parseErr != nil {
+				return parseErr.Error(), nil
+			}
+			if len(runVariables) > 0 {
+				if cfg.WebhookInvocation != nil {
+					return "variables cannot be set here: this run was started by a webhook or function, whose values are fixed by the trigger.", nil
+				}
+				if problem := undeclaredRunVariables(session.controller.variablesManifest, runVariables); problem != "" {
+					return problem, nil
 				}
 			}
 
@@ -2000,6 +2027,8 @@ func RegisterRunFullWorkflowTool(
 				if cfg.WebhookInvocation != nil {
 					execOpts.WebhookInputFile = cfg.WebhookInvocation.InputFile
 					execOpts.WebhookVariables = cfg.WebhookInvocation.Variables
+				} else if len(runVariables) > 0 {
+					execOpts.WebhookVariables = runVariables
 				}
 				workflowController.SetExecutionOptions(execOpts)
 				if len(routeSelections) > 0 {
@@ -2122,4 +2151,31 @@ func registerPlanModificationTools(mcpAgent DefinitionToolRegistrar, workspacePa
 		return err
 	}
 	return r.flush()
+}
+
+// undeclaredRunVariables refuses per-run variables the workflow does not
+// declare, listing the declared names.
+func undeclaredRunVariables(manifest *VariablesManifest, values map[string]string) string {
+	declared := map[string]bool{}
+	var names []string
+	if manifest != nil {
+		for _, variable := range manifest.Variables {
+			if variable.Name != "" && !declared[variable.Name] {
+				declared[variable.Name] = true
+				names = append(names, variable.Name)
+			}
+		}
+	}
+	var unknown []string
+	for name := range values {
+		if !declared[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	sort.Strings(unknown)
+	sort.Strings(names)
+	return fmt.Sprintf("Unknown variable(s) %s. Declared variables: %s. Put other per-run instructions in human_inputs for the step that needs them.", strings.Join(unknown, ", "), strings.Join(names, ", "))
 }

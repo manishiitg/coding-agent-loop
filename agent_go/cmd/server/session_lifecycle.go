@@ -530,14 +530,17 @@ func (api *StreamingAPI) handleGetBrowserSessions(w http.ResponseWriter, r *http
 // Must be called whenever a session ends (stop, clear, workflow completion).
 func (api *StreamingAPI) cleanupBrowserSessions(sessionID string) {
 	tracker := browser.GetSessionTracker()
-	if tracker.CountForChat(sessionID) == 0 {
-		return
-	}
 	workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
 	if workspaceAPIURL == "" {
 		workspaceAPIURL = "http://127.0.0.1:8081"
 	}
 	client := browser.NewClient(workspaceAPIURL)
+	// Give back this conversation's tab in a shared Crew/workflow browser even
+	// when another conversation opened (and is tracked for) that browser.
+	browser.ReleaseSessionTabOwner(sessionID, client)
+	if tracker.CountForChat(sessionID) == 0 {
+		return
+	}
 	tracker.CloseAllForChat(sessionID, client)
 }
 

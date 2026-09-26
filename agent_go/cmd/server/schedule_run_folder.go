@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var scheduledRunFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)-sched$`)
@@ -44,7 +46,7 @@ func allocateImmutableRunFolder(workspace, runID, suffix, markerName string) (st
 	// Serialize marker lookup and allocation across server processes as well.
 	// Exclusive mkdir alone lets a retry race past a just-created marker and
 	// incorrectly allocate a second folder for the same delivery.
-	allocationLock, err := root.OpenFile(".run-allocation.lock", os.O_CREATE|os.O_RDWR, 0600)
+	allocationLock, err := openRunAllocationLock(root)
 	if err != nil {
 		return "", err
 	}
@@ -106,4 +108,24 @@ func allocateImmutableRunFolder(workspace, runID, suffix, markerName string) (st
 		}
 		return folder, nil
 	}
+}
+
+// openRunAllocationLock creates or opens the workspace's allocation lock file.
+// os.Root's create-or-open can report ENOENT when another process creates the
+// same file at that moment (it tries open, then exclusive create); the folder
+// exists, so a not-found here is only that lost race — retry briefly.
+func openRunAllocationLock(root *os.Root) (*os.File, error) {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		var lock *os.File
+		lock, err = root.OpenFile(".run-allocation.lock", os.O_CREATE|os.O_RDWR, 0600)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil, err
 }

@@ -130,10 +130,18 @@ func chatPolicyRequiresReconnect(codingProvider bool, previous, current string, 
 // Registration is shared by normal chat and workflow-phase construction, before
 // finalization/catalog publication. Other products retain their manifest gate.
 func (api *StreamingAPI) registerMCPToolsForChat(registrar definitionToolRegistrar, policy workflowChatPolicy, disabled func(string) bool) error {
-	if !policy.allows("mcp_management") {
+	if policy.allows("mcp_management") {
+		return api.registerMultiAgentMCPServerTools(registrar, disabled)
+	}
+	if !policy.allows("mcp_inspection") {
 		return nil
 	}
-	return api.registerMultiAgentMCPServerTools(registrar, disabled)
+	// Run mode lists the servers and their status and changes nothing.
+	// Without it an agent told to confirm a server before using it (the
+	// crew's work-mcp skill) reports connected tools as unavailable.
+	return api.registerMultiAgentMCPServerTools(registrar, func(name string) bool {
+		return name != "list_mcp_servers" || disabled != nil && disabled(name)
+	})
 }
 
 // Persist the same access-derived conversational mode used for tool admission.
@@ -157,7 +165,7 @@ func normalizeWorkflowConversationMode(req *QueryRequest, readOnly bool) {
 
 // workflowChatNativeAgentTools reports whether this workflow chat turn runs
 // with the coding CLI's native tools (agent_tools hybrid): the workflow's
-// "Native agent tools" switch is on, the turn is an interactive Builder or
+// "Native agent tools" switch is on (the default), the turn is an interactive Builder or
 // Run-mode chat (not a step agent, schedule, webhook, bot, notification or
 // Pulse turn) and the user may edit the workflow.
 func (api *StreamingAPI) workflowChatNativeAgentTools(ctx context.Context, req QueryRequest, sessionID string, readOnly bool) bool {
@@ -174,5 +182,5 @@ func (api *StreamingAPI) workflowChatNativeAgentTools(ctx context.Context, req Q
 		return false
 	}
 	manifest, found, err := ReadWorkflowManifest(ctx, req.SelectedFolder)
-	return err == nil && found && manifest != nil && manifest.Capabilities.NativeAgentTools
+	return err == nil && found && manifest != nil && manifest.Capabilities.NativeAgentToolsEnabled()
 }

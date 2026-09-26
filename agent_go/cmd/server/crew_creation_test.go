@@ -452,6 +452,41 @@ func TestCreateCrewProjectAppliesQATemplateOnBuilderAction(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesSecurityTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"security-findings-analyst", "access-review-analyst", "security-remediation-coordinator"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Security Operator",
+				Role: "Security operator", Purpose: "Review authorized security evidence",
+				TemplateID: templateID, StepInstruction: "Return a source-linked finding or decision for review.",
+				IdempotencyKey: "security-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Security Crew lacks %s", relative)
+				}
+			}
+			var setup map[string]interface{}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			completed, ok := setup["completed_steps"].([]interface{})
+			if !ok || len(completed) != 0 {
+				t.Fatalf("Security setup unexpectedly completed: %+v", setup)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
 	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator"} {
 		t.Run(templateID, func(t *testing.T) {

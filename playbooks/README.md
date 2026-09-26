@@ -60,7 +60,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | --- | --- | --- |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles are locally installable with pending setup; existing packages remain under `browser-qa/`. |
-| Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Security Crew roles are planned; the role-permission package remains under `browser-qa/`. |
+| Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | The end-to-end launch-to-qualified-pipeline Playbook is planned. Existing Website Growth and Sales Crews are cross-listed, not duplicated. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 

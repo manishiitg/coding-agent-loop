@@ -32,7 +32,7 @@ func loadCrewAgentTemplate(id string) (*crewAgentTemplate, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, category := range []string{"website-growth", "finance", "sales", "customer-success", "engineering", "qa", "shopify"} {
+	for _, category := range []string{"website-growth", "finance", "sales", "customer-success", "engineering", "qa", "security", "shopify"} {
 		content, readErr := os.ReadFile(path.Join(root, "crew-agents", category, "catalog.json"))
 		if readErr != nil {
 			return nil, fmt.Errorf("read %s Crew catalog: %w", category, readErr)

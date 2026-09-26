@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:no-server": "VITE_API_BASE_URL=http://localhost:99999 vite",
-    "build": "npm run check:website-growth-catalog && npm run check:finance-crew-catalog && npm run check:sales-crew-catalog && npm run check:customer-success-crew-catalog && npm run check:engineering-crew-catalog && npm run check:qa-crew-catalog && npm run check:shopify-crew-catalog && npm run check:playbook-catalog && tsc -b && vite build && npm run build:report-preview && npm run check:release-assets && npm run check:bundle-budget",
+    "build": "npm run check:website-growth-catalog && npm run check:finance-crew-catalog && npm run check:sales-crew-catalog && npm run check:customer-success-crew-catalog && npm run check:engineering-crew-catalog && npm run check:qa-crew-catalog && npm run check:security-crew-catalog && npm run check:shopify-crew-catalog && npm run check:playbook-catalog && tsc -b && vite build && npm run build:report-preview && npm run check:release-assets && npm run check:bundle-budget",
     "check:playbook-catalog": "node scripts/check-playbook-catalog.mjs",
     "sync:website-growth-catalog": "node scripts/sync-website-growth-crew-catalog.mjs",
     "check:website-growth-catalog": "node scripts/sync-website-growth-crew-catalog.mjs --check",
@@ -20,6 +20,8 @@
     "check:engineering-crew-catalog": "node scripts/sync-engineering-crew-catalog.mjs --check",
     "sync:qa-crew-catalog": "node scripts/sync-qa-crew-catalog.mjs",
     "check:qa-crew-catalog": "node scripts/sync-qa-crew-catalog.mjs --check",
+    "sync:security-crew-catalog": "node scripts/sync-security-crew-catalog.mjs",
+    "check:security-crew-catalog": "node scripts/sync-security-crew-catalog.mjs --check",
     "sync:shopify-crew-catalog": "node scripts/sync-shopify-crew-catalog.mjs",
     "check:shopify-crew-catalog": "node scripts/sync-shopify-crew-catalog.mjs --check",
     "check:release-assets": "node scripts/check-release-assets.mjs",

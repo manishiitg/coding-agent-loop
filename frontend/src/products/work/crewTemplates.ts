@@ -21,9 +21,10 @@ import { salesSpecialists, type SalesSpecialistId } from './salesSpecialists'
 import { customerSuccessSpecialists, type CustomerSuccessSpecialistId } from './customerSuccessSpecialists'
 import { engineeringSpecialists, type EngineeringSpecialistId } from './engineeringSpecialists'
 import { qaSpecialists, type QASpecialistId } from './qaSpecialists'
+import { securitySpecialists, type SecuritySpecialistId } from './securitySpecialists'
 import { shopifySpecialists, type ShopifySpecialistId } from './shopifySpecialists'
 
-export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId | SalesSpecialistId | CustomerSuccessSpecialistId | EngineeringSpecialistId | QASpecialistId | ShopifySpecialistId
+export type CrewTemplateId = 'finance-analyst' | 'tax-export' | 'billing-operations-coordinator' | 'revenue-close-analyst' | 'spend-payables-coordinator' | 'website-growth-starter' | WebsiteGrowthSpecialistId | SalesSpecialistId | CustomerSuccessSpecialistId | EngineeringSpecialistId | QASpecialistId | SecuritySpecialistId | ShopifySpecialistId
 
 export type CrewTemplateSetupCheck = {
   id: string
@@ -209,7 +210,7 @@ export const crewTemplates: readonly CrewTemplate[] = [{
     'templates/website-growth-starter/SETUP.md': websiteGrowthSetup,
     'templates/website-growth-starter/TEMPLATE_SETUP.json': websiteGrowthSetupState,
   },
-}, ...websiteGrowthSpecialists, ...salesSpecialists, ...customerSuccessSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...shopifySpecialists]
+}, ...websiteGrowthSpecialists, ...salesSpecialists, ...customerSuccessSpecialists, ...engineeringSpecialists, ...qaSpecialists, ...securitySpecialists, ...shopifySpecialists]
 
 export function parseCrewTemplateSetupState(content: string, template: CrewTemplate): CrewTemplateSetupState | null {
   try {

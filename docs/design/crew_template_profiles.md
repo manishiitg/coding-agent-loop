@@ -1,6 +1,6 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 33 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 36 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
 Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The ten multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
@@ -211,6 +211,29 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **First result:** a required suite matrix for the exact SHA, build, and environment; a pass, fail, or needs-review proposal; and missing evidence or owner decisions.
 - **Setup proof:** verify one real release identity, required suite policy, result source, owner, and status destination. Reproduce a gate decision from the source records before enabling any publication route.
 - **Later run:** evaluate each new build independently, preserve previous failures and waivers, and count a published gate only from the destination receipt.
+
+## Security
+
+### Security Findings Analyst
+
+- **Use case:** triage an authorized application, dependency, code, or configuration finding against a named asset and build.
+- **First result:** a sourced finding queue with applicability, confidence, customer severity rule, owner, remediation options, and a verification criterion. Scanner output alone remains unconfirmed.
+- **Setup proof:** record written scope, allowed methods, stop conditions, source and evidence restrictions; inspect one real finding and affected build with the asset owner.
+- **Later run:** reconcile stable finding and asset IDs, check the deployed version and prior decision, and avoid duplicate tickets or unsupported closure.
+
+### Access Review Analyst
+
+- **Use case:** compare approved role, ownership, and tenant policy with observed application behavior.
+- **First result:** an actor-by-resource-by-action matrix with expected and observed UI and server results, exact build, evidence, and exceptions.
+- **Setup proof:** verify the policy revision, authorized test actors and isolated fixtures, target build, direct-route rules, and one safe matrix cell with the decision owner.
+- **Later run:** repeat the same denied cells after a reviewed fix, preserve older attempts, and distinguish a changed policy from a changed application.
+
+### Security Remediation Coordinator
+
+- **Use case:** follow a validated finding through approved change, deployment, independent retest, and closure.
+- **First result:** an action ledger joining finding, issue, change SHA, deployment, approval, retest, owner, and disposition. A merged fix without deployed retest remains open.
+- **Setup proof:** verify the finding source, approved fix or risk-acceptance policy, owner, deployment source, sensitive evidence handling, and one real remediation state.
+- **Later run:** re-read exact finding, change, deployment, and retest state; preserve failed checks and risk expiry; close only with owner decision and evidence from the affected environment.
 
 ## Shopify
 

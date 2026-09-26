@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(46)
+    expect(PLAYBOOK_CATALOG).toHaveLength(47)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -57,6 +57,14 @@ describe('small-team catalog', () => {
     expect(refund?.handoffs?.[0].artifact_type).toBe('refund-decision/v1')
     expect(refund?.setupChecks).toContain('action_ledger')
     expect(refund?.setupChecks).toContain('test_run')
+  })
+
+  it('exposes exact-invoice receivable recovery with a separate finance outcome', () => {
+    const recovery = PLAYBOOK_CATALOG.find(item => item.id === 'subscription-receivable-to-verified-outcome')
+    expect(recovery?.category).toBe('Finance')
+    expect(recovery?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['billing-operations-coordinator', 'finance-analyst'])
+    expect(recovery?.handoffs?.[0].artifact_type).toBe('receivable-review/v1')
+    expect(recovery?.setupChecks).toContain('balance_policy')
   })
 
   it('exposes campaign measurement to a reviewed experiment with optional competitor context', () => {

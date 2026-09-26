@@ -51,7 +51,8 @@ AgentWorks
     ├── Finance
     │   ├── Finance Operations Review
     │   ├── Invoice Intake to Reviewed Payable
-    │   └── Refund Request to Reconciled Outcome
+    │   ├── Refund Request to Reconciled Outcome
+    │   └── Subscription Receivable to Verified Outcome
     ├── Sales
     │   ├── Inbound Lead-to-Meeting Review
     │   ├── Discovery to Reviewed Proposal
@@ -83,7 +84,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
 | Marketing | Campaign Signal to Reviewed Experiment; Growth Analytics Workflows and Website Growth Loop are adjacent | Three Marketing Crews are locally installable with pending setup. Campaign Performance and Growth Experiment are required; Competitor context is optional. |
-| Finance | Finance Operations Review; Invoice Intake to Reviewed Payable; Refund Request to Reconciled Outcome | Four core Finance roles, Tax Export, and four billing capability packs are locally installable. The packs can share one Billing Operations Coordinator Crew; each has independent chat setup. Invoice intake reuses Operations Document Intake Assistant. Refund review hands an exact decision to Revenue & Close; provider and ledger actions remain separately approved. |
+| Finance | Finance Operations Review; Invoice Intake to Reviewed Payable; Refund Request to Reconciled Outcome; Subscription Receivable to Verified Outcome | Four core Finance roles, Tax Export, and four billing capability packs are locally installable. The packs can share one Billing Operations Coordinator Crew; each has independent chat setup. Invoice intake reuses Operations Document Intake Assistant. Refund and receivable routes bind exact money objects and keep customer contact, provider collection and ledger actions separately reviewed. |
 | Sales | Inbound Lead-to-Meeting Review; Discovery to Reviewed Proposal; Pipeline Health to Owned Action | Seven Sales Crew templates are locally installable. The proposal route requires reviewed discovery and current pricing. The pipeline route pairs comparable-snapshot analysis with a fresh seller next-step decision. |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
@@ -231,6 +232,7 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | [Finance Operations Review](agentic-engineering-platform/finance/finance-operations-review/SKILL.md) | Propose a Billing Operations Coordinator → Finance Analyst review of subscription billing exceptions and source-linked financial impact. Close and payables specialists are optional; their handoffs are not part of the first packaged route. |
 | [Invoice Intake to Reviewed Payable](agentic-engineering-platform/finance/invoice-intake-to-reviewed-payable/SKILL.md) | Propose a Document Intake Assistant → Spend & Payables Coordinator route. Validate invoice fields and page spans, re-read current AP records for duplicates and payment state, and stop at an owner-reviewed payable decision. Bill writes and payment need separate authorization and receipts. |
 | [Refund Request to Reconciled Outcome](agentic-engineering-platform/finance/refund-request-to-reconciled-outcome/SKILL.md) | Propose Billing Operations Coordinator with Refund Review → Revenue & Close Analyst. Validate the exact payment and remaining amount, record a reviewed decision, and distinguish unprocessed, provider-processed, and ledger-reconciled states. Refund execution stays a separate approved route. |
+| [Subscription Receivable to Verified Outcome](agentic-engineering-platform/finance/subscription-receivable-to-verified-outcome/SKILL.md) | Propose Billing Operations Coordinator with Invoice Chasing or Failed Payment Recovery → Finance Analyst for one exact invoice. Validate balance, retry and contact state, then distinguish open, partial, collected and verified-deposit outcomes using provider and finance evidence. |
 
 ### Marketing
 

@@ -213,6 +213,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'billing-to-close', from: 'billing', to: 'close', artifact_type: 'refund-decision/v1', required: true },
   ], setupChecks: ['goal_owner', 'request_scope', 'policy_amount', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'subscription-receivable-to-verified-outcome', title: 'Subscription Receivable to Verified Outcome', description: 'Investigate one overdue or failed-payment subscription invoice, prepare policy-safe follow-up, and verify collection without confusing a payment with a bank deposit.', version: '0.1.0', category: 'Finance', order: 4, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'billing', agent_playbook_id: 'billing-operations-coordinator', required: true, output: 'receivable-review/v1' },
+    { id: 'finance', agent_playbook_id: 'finance-analyst', required: true, output: 'receivable-outcome/v1' },
+  ], handoffs: [
+    { id: 'billing-to-finance', from: 'billing', to: 'finance', artifact_type: 'receivable-review/v1', required: true },
+  ], setupChecks: ['goal_owner', 'invoice_scope', 'balance_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'discovery-to-reviewed-proposal', title: 'Discovery to Reviewed Proposal', description: 'Prepare a sourced call brief and an unsent SaaS proposal from approved post-call discovery and current pricing, with distinct seller and commercial review.', version: '0.1.0', category: 'Sales', order: 2, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'briefing', agent_playbook_id: 'sales-call-briefing', required: true, output: 'sales-call-brief/v1' },
     { id: 'proposal', agent_playbook_id: 'proposal-drafter', required: true, output: 'sales-proposal-draft/v1' },

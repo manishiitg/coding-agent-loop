@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 60 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 63 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-three multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-four multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -23,14 +23,14 @@ Each profile answers: **when to use it, what a first result must contain, what s
 ### Invoice Chasing (`invoice-chasing`)
 
 - **Use case:** decide which genuinely overdue customer invoices need an owner-reviewed follow-up. Install this pack on Billing Operations Coordinator when the same owner and access apply.
-- **First result:** a ranked invoice queue with current open balance, due date, partial payments or credits, prior and scheduled contact, source IDs, and an unsent next reminder. The [pack skill](../../frontend/src/products/work/billingPacks.ts) contains a fictional partial-payment example.
+- **First result:** a ranked invoice queue with current open balance, due date, partial payments or credits, prior and scheduled contact, source IDs, and an unsent next reminder. The [pack skill](../../frontend/src/products/work/billingPacks.ts) contains a fictional partial-payment example. For a separate Finance verification, the [receivable Playbook](../../playbooks/agentic-engineering-platform/finance/subscription-receivable-to-verified-outcome/SKILL.md) binds one exact invoice.
 - **Setup proof:** bind the exact billing account and mode, cutoff, invoice terms, quiet period and contact owner; re-read one current invoice plus payments and contact history; have the owner review the queue. Its nine-check file remains pending until verified in chat.
 - **Later run:** re-read payment and provider reminder state, keep a stable invoice/contact key, and suppress duplicate or premature reminders. Sending requires a separate approved route and receipt.
 
 ### Failed Payment Recovery (`failed-payment-recovery`)
 
 - **Use case:** investigate a failed subscription payment and choose the next policy-safe action.
-- **First result:** a case brief that binds subscription, invoice, attempt, amount, failure, next retry, prior dunning, owner and unsent draft when contact is permitted.
+- **First result:** a case brief that binds subscription, invoice, attempt, amount, failure, next retry, prior dunning, owner and unsent draft when contact is permitted. The [receivable Playbook](../../playbooks/agentic-engineering-platform/finance/subscription-receivable-to-verified-outcome/SKILL.md) adds a validated Finance outcome for the same invoice.
 - **Setup proof:** probe a current authorized invoice and payment attempt, confirm the provider's retry state and the customer's contact policy, and review one proposed next step with the owner. A failed event alone is insufficient evidence of current state.
 - **Later run:** deduplicate by event and invoice, re-read payment and next-attempt state, and stop after recovery or policy exhaustion. No charge retry or message is activated by the pack.
 

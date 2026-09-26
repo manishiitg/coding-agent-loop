@@ -21,6 +21,7 @@ type Pack = {
   inadequateExample: string
   inadequateReason: string
   providerNote: string
+  automationOutput?: string
 }
 
 const packs: readonly Pack[] = [
@@ -47,6 +48,7 @@ const packs: readonly Pack[] = [
     inadequateExample: '“Invoice 42 is unpaid for 500 dollars. Email the customer now.”',
     inadequateReason: 'It ignores the partial payment and scheduled reminder, lacks exact customer and approval, and falsely implies a send.',
     providerNote: 'For Stripe, verify the invoice status and amount_remaining from the exact invoice object; draft, open, paid, uncollectible and void are distinct states. https://docs.stripe.com/api/invoices/object',
+    automationOutput: 'In Subscription Receivable to Verified Outcome, return only receivable-review/v1 JSON for one exact invoice. Preserve entity, provider account/mode, customer, cutoff, total, credits, prior successful collections, remaining amount, contact suppression, approval and delivery state. A draft is unsent until an approved exact action has a provider receipt.',
   },
   {
     id: 'failed-payment-recovery', name: 'Failed Payment Recovery', icon: '🔁',
@@ -71,6 +73,7 @@ const packs: readonly Pack[] = [
     inadequateExample: '“The card failed; retry it now and send an email.”',
     inadequateReason: 'It ignores the provider retry and dunning schedule, does not verify current invoice state, and proposes unapproved charge and contact actions.',
     providerNote: 'For Stripe, inspect invoice status, amount_remaining, attempt_count and next_payment_attempt on the current invoice; automatic retries and dunning may already be configured. https://docs.stripe.com/api/invoices/object',
+    automationOutput: 'In Subscription Receivable to Verified Outcome, return only receivable-review/v1 JSON for one exact invoice. Include the current failed/pending attempt and next provider retry with sources, current balance, prior contact and suppression. Do not turn a scheduled retry into a successful collection or propose duplicate customer contact.',
   },
   {
     id: 'refund-review', name: 'Refund Review', icon: '↩️',
@@ -151,6 +154,7 @@ function skill(pack: Pack): string {
     '## Fictional worked example', '', pack.exampleInput, '', pack.workedExample, '',
     'Inadequate: ' + pack.inadequateExample + ' Reason: ' + pack.inadequateReason, '',
     '## Later run', '', pack.repeatRule, '',
+    ...(pack.automationOutput ? ['## Automation handoff', '', pack.automationOutput, ''] : []),
     '## Boundaries', '', pack.boundary + ' Installation enables no schedule, trigger, function, Automation, provider write or customer message. Never copy another Crew’s credentials.', '',
   ].join('\n')
 }

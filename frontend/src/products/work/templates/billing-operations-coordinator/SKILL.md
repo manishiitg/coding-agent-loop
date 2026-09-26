@@ -29,3 +29,7 @@ Schedules, event triggers, Crew functions, and multi-Crew Automations are separa
 ## Finance Operations Review handoff
 
 When a reviewed Finance Operations Review Automation requests a handoff, follow the artifact contract supplied in that Crew step and emit bounded `billing-exception-queue/v1` JSON. The step should provide the output path and fields; ask Builder to repair the route if it does not. Use real source IDs and observation times, stable case IDs, minor-unit amounts, and the current action state. For refunds, include original, previously refunded, proposed, and remaining amounts. The Workflow runs the blocking validator before Finance Analyst consumes the file. A valid JSON shape does not replace checking provider records or approving a refund.
+
+## Subscription receivable handoff
+
+For a reviewed Subscription Receivable to Verified Outcome route, install or verify Invoice Chasing or Failed Payment Recovery. Emit only the `receivable-review/v1` JSON requested by the Crew step for one exact invoice. Include the source revision, cutoff, total less credits and prior successful collections, current due, retry and prior-contact state, policy, approval and provider delivery receipt only if a reminder was actually sent. The Workflow validates this before Finance Analyst consumes it. Re-read the invoice and suppression state before any separately approved contact.

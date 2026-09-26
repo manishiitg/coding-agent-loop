@@ -1426,11 +1426,22 @@ func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
 func shouldTryRetainedDeliveryBeforeQueue(ctx context.Context, req QueryRequest, sessionID string) bool {
 	trigger := strings.ToLower(strings.TrimSpace(req.TriggeredBy))
 	claims := GetUserFromContext(ctx)
-	return !conversationTurnQueueExecution(ctx) && !req.DisableLiveInputDelivery &&
-		!req.IsAutoNotification && !req.PulseLifecycleTurn &&
-		(claims == nil || claims.AccessToken == nil) &&
-		!isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
-		strings.TrimSpace(req.BotPlatform) == "" && !strings.HasPrefix(trigger, "bot:") &&
+	if conversationTurnQueueExecution(ctx) || req.DisableLiveInputDelivery ||
+		req.IsAutoNotification || req.PulseLifecycleTurn ||
+		(claims != nil && claims.AccessToken != nil) {
+		return false
+	}
+	// A person's follow-up in a bot conversation (Slack DM or thread,
+	// WhatsApp) steers the running CLI, like a message in the web chat
+	// (user decision 2026-09-26: always steer with tmux). Workflow bot turns
+	// carry the schedule builder's "cron" trigger, so the platform, not the
+	// trigger, marks them. A Slack workflow trigger run is a direct webhook
+	// execution with its own session and keeps its turn boundary.
+	if strings.TrimSpace(req.BotPlatform) != "" && ctx.Value(directWebhookExecutionKey{}) == nil {
+		return true
+	}
+	return !isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
+		!strings.HasPrefix(trigger, "bot:") &&
 		(trigger == "" || trigger == "manual" || trigger == "interactive" || trigger == "workflow_builder")
 }
 

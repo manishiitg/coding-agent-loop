@@ -55,8 +55,10 @@ in the shared bot's routes and refused a crew's own bot.
 
 A dry run feeds a synthetic mention through the real inbound path (route
 resolution, turn building, revalidation, access) and stops before the model.
-It backs the end-to-end tests (own crew bot, shared bot to a crew channel,
-workflow bot, WhatsApp to a crew) and the Slack tab's Save & test.
+It backs the end-to-end tests (`bot_dry_run_test.go`: own crew bot, legacy
+logical crew bot after migration, shared bot to a crew channel, workflow bot,
+unrouted channel) and the Slack tab's Save & test. It covers Slack only;
+WhatsApp keeps its own per-user routing and has no dry run yet.
 
 `dryRunSlackMention` (`bot_dry_run.go`) runs the app's `mentionMessage` (shared
 with the app-mention handler), a bot manager copied from the production one

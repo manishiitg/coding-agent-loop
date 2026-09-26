@@ -18,6 +18,8 @@ type Specialist = {
   boundary: string
   handoff: string
   repeatRule: string
+  sourceProbe: string
+  acceptanceCheck: string
   exampleInput: string
   workedExample: string
   inadequateExample: string
@@ -44,6 +46,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not publish positioning, launch campaigns, spend budget, scrape personal contacts, or treat research interest as contact permission without an authorized route and review.',
     handoff: 'Launch to Qualified Pipeline can consume gtm-launch-brief/v1 with launch ID, offer version, audience, market, message claim references, channels, budget bounds, owner decision, and metric definitions. Launch Coordination must validate the same offer and owner before using it.',
     repeatRule: 'On a later run, compare new customer and pipeline evidence against the recorded hypothesis and metric rule; preserve previous decisions and avoid rewriting history from one campaign result.',
+    sourceProbe: 'Read the current approved offer and claim source, at least two dated buyer observations for the proposed segment, and the CRM rule for a qualified demo. Record source IDs, audience fit, channel reach and baseline coverage; a website visit is not a buyer interview or a qualified lead.',
+    acceptanceCheck: 'Trace one proposed audience and message claim to exact buyer/product evidence, show one rejected segment, and define qualified pipeline with a sales acceptance rule and baseline or baseline-first window. Unsupported lift or market-size claims remain hypotheses.',
     exampleInput: 'Fictional input: offer=team-analytics-v2; market=US B2B SaaS; interviews=research-set-4; website=/teams; owner=gtm-lead; budget cap=$2,000; goal=qualified demo requests.',
     workedExample: 'Fictional output: launch=launch-24; offer=team-analytics-v2; audience=RevOps leaders at 20–200 seat SaaS firms; problem=manual renewal reporting supported by interview:7 and interview:11; message hypothesis=reduce weekly reporting effort, pending claim review; channels=site page and approved customer newsletter; qualified demo=request meets ICP and sales acceptance; baseline=not yet available; owner=gtm-lead; next=approve claims and channel plan.',
     inadequateExample: '“Target all companies; run ads; revenue will double.”',
@@ -68,6 +72,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not publish assets, send outreach, enroll contacts, spend on ads, alter CRM stages, or claim pipeline lift without approved actions and observed provider and sales records.',
     handoff: 'Launch to Qualified Pipeline can consume launch-signal-register/v1 with launch and offer IDs, campaign and source IDs, channel receipts, inbound event IDs, attribution confidence, consent and suppression state, and source refs. Lead Intake & Qualifier must independently read the current lead record before any contact.',
     repeatRule: 'Reconcile the same asset, campaign, event, and lead IDs; update only changed states, preserve approvals and receipts, and never issue duplicate distribution or lead follow-up.',
+    sourceProbe: 'Read the approved launch brief and exact asset revision, current CMS or channel state, provider publication/send receipt if any, and two inbound form or CRM events. Join by campaign/source IDs, record consent and suppression, and show a duplicate event explicitly.',
+    acceptanceCheck: 'Demonstrate that draft, approved, provider-executed and independently verified are separate states. Reconcile one inbound event to its lead without calling it qualified or contacted; missing receipt or contact eligibility blocks those claims.',
     exampleInput: 'Fictional input: launch=launch-24; approved brief=gtm-brief-24; asset=landing-v3; channel=newsletter; campaign=cmp-17; form source=form-2; owner=launch-owner.',
     workedExample: 'Fictional output: landing-v3 approved but not published; newsletter draft approved, provider send receipt absent; campaign cmp-17 has two form events e-91 and e-92, with e-92 a duplicate of e-91; lead l-55 linked to e-91 and queued for qualification; attribution=source-ID supported; owner=launch-owner; next=verify publish/send separately and pass l-55 to Sales without contacting it.',
     inadequateExample: '“Launch complete and two qualified leads generated.”',
@@ -75,19 +81,21 @@ const specialists: readonly Specialist[] = [
   },
 ]
 
+const gtmTemplateVersion = 2
+
 function checklist(spec: Specialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm GTM role and owner', instructions: 'Confirm whether ' + spec.name + ' is the Crew’s primary role or a supporting capability. Preserve an existing identity and name the accountable GTM owner.' },
     { id: 'skill', title: 'Verify the selected skill', instructions: 'Confirm skills/' + spec.id + '/SKILL.md exists and ' + spec.id + ' is selected for this Crew.' },
     { id: 'scope', title: 'Set offer, audience, and launch scope', instructions: 'Record the offer version, audience, market, budget, dates, owner, first job, and exclusions. Minimum input: ' + spec.minimumInput },
-    { id: 'access', title: 'Test source and channel access', instructions: 'Read a representative authorized source or export and record account, ID, freshness, and field coverage. ' + spec.optionalConnections + ' A named SaaS provider is not verified access.' },
-    { id: 'policy', title: 'Agree on claims and pipeline rules', instructions: 'Confirm approved product claims, channel and contact policy, qualified lead and meeting definitions, baseline or baseline-first rule, attribution limits, and review owner.' },
+    { id: 'access', title: 'Prove the GTM source join', instructions: spec.sourceProbe + ' ' + spec.optionalConnections + ' A named SaaS provider is not verified access.' },
+    { id: 'policy', title: 'Verify the launch decision rule', instructions: spec.acceptanceCheck + ' Record claim, channel, contact and review policy.' },
     { id: 'first_result', title: 'Produce the first sourced result', instructions: 'Use actual authorized evidence to produce ' + spec.firstResult + ' ' + spec.evidence + ' The fictional example does not complete this check.' },
     { id: 'review', title: 'Review the result and next action', instructions: 'Show source-linked facts, hypotheses, unknowns, exact proposed actions, owner, and approval boundaries. Record the owner decision.' },
     { id: 'delivery', title: 'Choose publishing and delivery routes', optional: true, instructions: 'Choose read-only chat or separately authorized CMS, campaign, CRM, and message actions. Read-only chat completes this decision. ' + spec.boundary },
     { id: 'recurrence', title: 'Choose repeat and Automation route', optional: true, instructions: 'Choose manual-only or a reviewed event or schedule with deduplication and cost rules. Manual-only completes this decision. ' + spec.repeatRule },
   ]
-  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2) + '\n'
+  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: gtmTemplateVersion, checks, completed_steps: [] }, null, 2) + '\n'
 }
 
 function skill(spec: Specialist): string {
@@ -100,6 +108,7 @@ function skill(spec: Specialist): string {
     '## First useful result', '',
     ...spec.method.map((step, index) => String(index + 1) + '. ' + step), '',
     'Deliver **' + spec.firstResult + '** ' + spec.evidence, '',
+    '## Source probe and acceptance', '', spec.sourceProbe, '', spec.acceptanceCheck, '',
     '## Follow-through', '', spec.repeatRule, '',
     '## Fictional worked example', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
@@ -113,14 +122,15 @@ function skill(spec: Specialist): string {
 function guide(spec: Specialist): string {
   return [
     '# ' + spec.name + ' setup', '',
-    'Template ' + spec.id + ' version 1. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
+    'Template ' + spec.id + ' version ' + gtmTemplateVersion + '. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
     '## First result', '',
     'Provide ' + spec.minimumInput + ' Ask: “' + spec.exampleRequests[0] + '”', '',
     'Expected output: **' + spec.firstResult + '** ' + spec.evidence, '',
     '## Fictional example and failure', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
     '## Source and connection choice', '',
-    spec.optionalConnections + ' Start with one representative authorized read or export. Record exact source IDs, dates, and missing coverage before claiming a connected result.', '',
+    spec.optionalConnections + ' ' + spec.sourceProbe, '',
+    '## Setup acceptance', '', spec.acceptanceCheck, '',
     '## Automation and recurring work', '',
     'Launch to Qualified Pipeline can coordinate this Crew with Website Growth and Sales. Builder must inspect existing Crews, verify handoffs, review a manual route, and record an owner-approved run policy. ' + spec.repeatRule + ' ' + spec.boundary, '',
   ].join('\n')
@@ -132,7 +142,7 @@ export const gtmSpecialists: readonly CrewTemplate[] = specialists.map(spec => {
   const setupGuidePath = base + '/SETUP.md'
   const setupPath = base + '/TEMPLATE_SETUP.json'
   return {
-    id: spec.id, version: 1, category: 'GTM', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: gtmTemplateVersion, category: 'GTM', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

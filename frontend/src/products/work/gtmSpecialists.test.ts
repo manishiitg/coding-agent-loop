@@ -7,8 +7,10 @@ describe('GTM Crew templates', () => {
     expect(gtm.map(item => item.id)).toEqual(['gtm-strategy-analyst', 'launch-coordinator'])
     for (const template of gtm) {
       expect(getCrewTemplate(template.id)).toBe(template)
+      expect(template.version).toBe(2)
       const skill = template.files['skills/' + template.id + '/SKILL.md']
       expect(skill).toContain('## Fictional worked example')
+      expect(skill).toContain('## Source probe and acceptance')
       expect(skill).toContain('## Automation handoff')
       const setup = parseCrewTemplateSetupState(template.files[template.setupPath], template)
       expect(setup?.checks.map(check => check.id)).toEqual([
@@ -18,5 +20,7 @@ describe('GTM Crew templates', () => {
     }
     expect(matchesCrewTemplateSearch(gtm[0], 'buyer evidence')).toBe(true)
     expect(gtm[1].files['skills/launch-coordinator/SKILL.md']).toContain('A launch asset marked done in a project board is not proof')
+    expect(gtm[0].files['skills/gtm-strategy-analyst/SKILL.md']).toContain('two dated buyer observations')
+    expect(gtm[1].files['skills/launch-coordinator/SKILL.md']).toContain('missing receipt or contact eligibility')
   })
 })

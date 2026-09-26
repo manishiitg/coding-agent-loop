@@ -24,6 +24,8 @@ type Specialist = {
   boundary: string
   handoff: string
   repeatRule: string
+  sourceProbe: string
+  acceptanceCheck: string
   exampleInput: string
   workedExample: string
   inadequateExample: string
@@ -50,6 +52,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not scrape behind access controls, copy protected customer data, claim market share, change prices, publish claims, or contact a competitor from installation.',
     handoff: 'Campaign Signal to Reviewed Experiment may attach competitor-context/v1 to an experiment plan only if competitor product, market, source window and own offer are bound. Competitive context cannot substitute for campaign performance evidence.',
     repeatRule: 'Retain watched URL/product keys and prior captures, compare only changed facts, recheck expiring prices and terms, and suppress unchanged alerts.',
+    sourceProbe: 'Capture the current primary vendor page and an earlier dated snapshot for the same product, plan, region, seat and term; record URL, revision, capture time and any inaccessible terms. An owner-supplied sales note may explain relevance but cannot replace a missing before snapshot.',
+    acceptanceCheck: 'Verify one claimed change against two comparable captures and show one unchanged or unverifiable claim. If region, plan, pricing basis or baseline differs, label the comparison unknown rather than a change or market trend.',
     exampleInput: 'Fictional input: offer=team analytics; buyer=20-seat SaaS operations team; competitors=A Pro and B Team; region=US; baseline=2026-09-01; watch=API export and annual price.',
     workedExample: 'Fictional output: A Pro now lists API export at 25 seats, versus 10 seats on archived 2026-09-01 page; current source=A pricing@2026-09-26; B Team price claim unchanged but contract term unavailable; relevance=medium for 20-seat buyers; owner question=check whether sales objections mention export thresholds.',
     inadequateExample: '“Competitor A is winning because it has better pricing. Cut our price today.”',
@@ -74,6 +78,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not pause campaigns, change spend or targeting, claim incremental lift, or publish a result from mismatched periods or unverified conversions.',
     handoff: 'Campaign Signal to Reviewed Experiment emits campaign-performance-brief/v1 for Growth Experiment Planner after account, campaign, period, metric and coverage checks. A recommendation is not an approved experiment.',
     repeatRule: 'Use stable campaign and event IDs, preserve metric definitions and prior periods, account for reporting lag and deduplicate conversions before raising a new alert.',
+    sourceProbe: 'Read one scoped platform spend/click export and downstream CRM qualified-event export for the same campaign, account, attribution window, currency and timezone. Record campaign and event IDs, late records, joins and unjoined share.',
+    acceptanceCheck: 'Recompute a qualified-event rate and cost from source numerators and denominators in two comparable windows; show one duplicate or unjoined event. A platform conversion count cannot silently become a CRM-qualified demo or a causal explanation.',
     exampleInput: 'Fictional input: campaign=cmp-42 account=ads-7; week=2026-09-14; spend=USD 1,200; clicks=400; qualified demos=8; prior comparable week spend=USD 1,000, clicks=300, demos=12; CRM coverage=95%.',
     workedExample: 'Fictional output: qualified demos per click fell from 4.0% to 2.0%; cost per qualified demo rose from USD 83.33 to USD 150.00; source=ads:cmp-42@rev8 and crm:demo-events@rev4; causal reason unknown; tracking gap=5% unjoined; next=review landing-page and audience changes before testing a single message.',
     inadequateExample: '“The ad platform failed. Double the budget to fix conversions.”',
@@ -98,6 +104,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not call a trial a paid customer, infer purchase from a click, claim causality, inspect unconsented sessions, or modify pricing, checkout or campaigns from installation.',
     handoff: 'Funnel and Conversion Intelligence emits funnel-observation/v1 to Growth Experiment Planner only after exact product, cohort, stage rule, window, source and count checks. A drop-off is an observed signal, not an approved experiment.',
     repeatRule: 'Preserve funnel definition and source revisions, re-read the same cohort keys and later paid events, wait for billing lag, and avoid counting users twice or comparing changed event semantics as a trend.',
+    sourceProbe: 'Read authorized signup and activation events plus the matching subscription paid-state source for one frozen cohort. Record event versions, account join, internal/test exclusions, billing lag, timezone and missing-source coverage.',
+    acceptanceCheck: 'Reproduce ordered unique-account stage counts and paid/eligible rate from source IDs; stage counts cannot increase downstream. Show a duplicate and a missing-billing case, and call a single complete window a baseline rather than a trend.',
     exampleInput: 'Fictional input: product=ArborDesk; cohort=UK self-serve new accounts; baseline Aug 2-31 and current Sep 1-30; signup/activated/paid events v2; eligible users 1,000 versus 1,200; authorized product event and billing exports.',
     workedExample: 'Fictional output: baseline signup=300, activated=180, paid=60 of 1,000 eligible users; current signup=360, activated=180, paid=48 of 1,200. Paid/eligible fell from 6.0% to 4.0%; activated/signup fell from 60% to 50%. Identity join=98%, billing current through Oct 3, cause unknown; next=review activation flow change and tracking before one bounded test.',
     inadequateExample: '“Our checkout redesign caused churn, so raise prices and email everyone.”',
@@ -122,6 +130,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not launch an experiment, change budget, publish variants, send messages, or claim a winner without owner approval and comparable outcome evidence.',
     handoff: 'Campaign Signal to Reviewed Experiment consumes campaign-performance-brief/v1 and emits growth-experiment-plan/v1. Funnel and Conversion Intelligence consumes funnel-observation/v1 and emits funnel-experiment-plan/v1. Activation and Retention Intelligence consumes a mature cohort-retention-observation/v1 and emits retention-experiment-plan/v1; pending_maturity must stop before planning. In every route, freeze the upstream ID, metric denominator, owner, guardrail and pending launch state; optional context never provides a measured baseline.',
     repeatRule: 'Retain experiment ID, policy revision, assignment and decision rule; re-read outcome and guardrail data for the agreed window, record null results, and avoid repeated launches.',
+    sourceProbe: 'Read the exact upstream campaign, funnel or retention artifact and current baseline source; bind its owner, eligible unit, metric denominator, evidence coverage and one changeable treatment. Read the guardrail and assignment capability before proposing launch.',
+    acceptanceCheck: 'Predeclare hypothesis, population, assignment, primary/guardrail calculations, minimum sample or duration, stop rule and decision owner. If baseline or maturity is missing, produce a baseline-first or pending plan; an approved plan is not a launched experiment.',
     exampleInput: 'Fictional input: source campaign brief=brief-42; demos/click dropped from 4.0% to 2.0%; audience=US operations leaders; owner=growth-lead; landing-page control=rev4.',
     workedExample: 'Fictional output: hypothesis=message mismatch after the audience expansion; test one headline variant against rev4 for eligible clicks; primary=qualified demos/eligible click in CRM, guardrail=unsubscribes and spend cap; sample target=owner-reviewed calculator result; stop after planned window or guardrail breach; publish=none pending approval.',
     inadequateExample: '“Try a new headline and see if it wins.”',
@@ -146,6 +156,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not launch, publish, spend, send, change allocation or claim an experiment is live from a plan, ticket or verbal approval. Writes require an explicit reviewed action route and provider receipt.',
     handoff: 'Growth Experimentation and Follow-Through emits experiment-execution-record/v1 to Growth Outcome Analyst after exact plan, owner approval, provider launch and exposure checks. A pending approval or missing launch receipt stops outcome claims.',
     repeatRule: 'Re-read provider state by stable experiment ID; record revised configuration or rollback separately, prevent duplicate launch actions and preserve the original pre-registered readout rule.',
+    sourceProbe: 'Read the frozen experiment plan revision, exact owner approval, provider variant/flag/campaign object and current exposure state for the same experiment ID. Record rollback owner, provider receipt if any, observation time and conflicting launches.',
+    acceptanceCheck: 'Separate pending approval, approved configuration, provider-confirmed launch and actual exposure. Reject a ticket-only launch claim or mismatched plan/variant; do not pass an execution record to Outcome without a matching provider receipt and exposure evidence.',
     exampleInput: 'Fictional input: experiment exp-guided-setup-7, frozen plan rev3, approved by growth owner at 09:00, 50/50 account assignment, guardrail support blockers, readout after 30 days; feature flag ff-guided-setup-7.',
     workedExample: 'Fictional output: plan rev3 and approval apr-7 match flag revision 4; provider receipt launch-7 confirms Oct 1 rollout to UK self-serve eligible accounts at 50/50. Exposure source exp-7 is linked; rollback owner product-lead; the final Oct 31 exposure reaches day 30 on Nov 30, so readout starts after that and source lag. No winner is asserted.',
     inadequateExample: '“The Jira ticket is done, so the experiment is live and winning.”',
@@ -170,6 +182,8 @@ const specialists: readonly Specialist[] = [
     boundary: 'Do not declare a win from an immature window, missing control, underpowered sample or guardrail breach; do not change the pre-registered target after seeing outcomes or ship the variant from a readout.',
     handoff: 'Growth Experimentation and Follow-Through consumes experiment-execution-record/v1 and emits experiment-outcome-readout/v1 only for a provider-confirmed launch. A readout is measured or inconclusive, with separate owner decision and action receipts.',
     repeatRule: 'Keep experiment and assignment IDs stable, preserve each source revision and original policy, wait for late outcomes, and supersede a prior readout only with a cited correction.',
+    sourceProbe: 'Read the validated launch receipt, frozen plan and assignment revision, eligible/exposed units for control and treatment, primary outcomes and guardrail source for the predeclared window. Record identity joins, data lag, exclusions and provider revisions.',
+    acceptanceCheck: 'Recalculate each arm\'s primary and guardrail numerator/denominator under the frozen rule. A missing launch, immature window, sample shortfall, changed assignment or incomplete join yields inconclusive, never a winner or rollout instruction.',
     exampleInput: 'Fictional input: exp-guided-setup-7 launched at 50/50 under plan rev3; day-30 window closed; 200 eligible control and 200 eligible treatment accounts; support-blocker guardrail threshold 5%.',
     workedExample: 'Fictional output: control retained 100/200=50%; treatment retained 114/200=57%; observed difference +7 percentage points. Support blockers 6/200=3% control and 8/200=4% treatment, below the frozen 5% threshold. Power review target was 250 per variant, so status=inconclusive and no winner or ship action is claimed.',
     inadequateExample: '“Treatment is 7 points higher, so publish it to everyone.”',
@@ -177,19 +191,21 @@ const specialists: readonly Specialist[] = [
   },
 ]
 
+const marketingTemplateVersion = 2
+
 function checklist(spec: Specialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm marketing role and owner', instructions: 'Confirm whether ' + spec.name + ' is this Crew’s primary role or an added capability. Preserve existing identity and name the accountable owner.' },
     { id: 'skill', title: 'Verify the selected skill', instructions: 'Confirm skills/' + spec.id + '/SKILL.md exists and ' + spec.id + ' is selected for this Crew.' },
     { id: 'scope', title: 'Set exact job and measurement scope', instructions: 'Record offer, market, campaign or experiment identity, period and time zone, owner, allowed sources, and first job. Minimum input: ' + spec.minimumInput },
-    { id: 'access', title: 'Probe representative source access', instructions: 'Read one actual authorized source or export. Record stable IDs, revisions, timestamps, denominator or baseline coverage, and missing access. ' + spec.optionalConnections },
-    { id: 'policy', title: 'Confirm evidence and action boundary', instructions: 'Record comparable metric definitions, citation and privacy rules, approval owner, alert or decision threshold, and exact action boundary. ' + spec.boundary },
+    { id: 'access', title: 'Prove the specialist source join', instructions: spec.sourceProbe + ' ' + spec.optionalConnections },
+    { id: 'policy', title: 'Verify the specialist acceptance rule', instructions: spec.acceptanceCheck + ' Record citation, privacy, approval and action boundaries. ' + spec.boundary },
     { id: 'first_result', title: 'Produce first sourced result', instructions: 'Use real authorized input to produce ' + spec.firstResult + ' ' + spec.evidence + ' Fictional examples do not complete this check.' },
     { id: 'review', title: 'Review result with owner', instructions: 'Show calculations, source coverage, uncertainty, proposed decision, and owner correction. Record the review decision.' },
     { id: 'delivery', title: 'Choose read-only or action route', optional: true, instructions: 'Choose read-only chat or a separately authorized campaign, page, experiment, report, or contact write route. Read-only completes this choice.' },
     { id: 'recurrence', title: 'Choose repeat rule', optional: true, instructions: 'Choose manual-only or a reviewed event/schedule with stable IDs, deduplication, cost, and notifications. Manual-only completes this choice. ' + spec.repeatRule },
   ]
-  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2) + '\n'
+  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: marketingTemplateVersion, checks, completed_steps: [] }, null, 2) + '\n'
 }
 
 function skill(spec: Specialist): string {
@@ -202,6 +218,7 @@ function skill(spec: Specialist): string {
     '## First useful result', '',
     ...spec.method.map((step, index) => String(index + 1) + '. ' + step), '',
     'Deliver **' + spec.firstResult + '** ' + spec.evidence, '',
+    '## Source probe and acceptance', '', spec.sourceProbe, '', spec.acceptanceCheck, '',
     '## Follow-through', '', spec.repeatRule, '',
     '## Fictional worked example', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
@@ -215,14 +232,15 @@ function skill(spec: Specialist): string {
 function guide(spec: Specialist): string {
   return [
     '# ' + spec.name + ' setup', '',
-    'Template ' + spec.id + ' version 1. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
+    'Template ' + spec.id + ' version ' + marketingTemplateVersion + '. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
     '## First result', '',
     'Provide ' + spec.minimumInput + ' Ask: “' + spec.exampleRequests[0] + '”', '',
     'Expected output: **' + spec.firstResult + '** ' + spec.evidence, '',
     '## Fictional example and failure', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
     '## Source and connection choice', '',
-    spec.optionalConnections + ' Start with one representative authorized read or export. Record exact source, policy and owner IDs and missing coverage.', '',
+    spec.optionalConnections + ' ' + spec.sourceProbe, '',
+    '## Setup acceptance', '', spec.acceptanceCheck, '',
     '## Automation and recurring work', '',
     'A multi-Crew Automation is useful when ownership, access or review boundaries differ. Builder must inspect existing Crews, verify handoffs, run one manual case, and record owner-approved run policy. ' + spec.repeatRule + ' ' + spec.boundary, '',
   ].join('\n')
@@ -234,7 +252,7 @@ export const marketingSpecialists: readonly CrewTemplate[] = specialists.map(spe
   const setupGuidePath = base + '/SETUP.md'
   const setupPath = base + '/TEMPLATE_SETUP.json'
   return {
-    id: spec.id, version: 1, category: 'Marketing', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: marketingTemplateVersion, category: 'Marketing', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

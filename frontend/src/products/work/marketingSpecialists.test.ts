@@ -14,8 +14,10 @@ describe('Marketing Crew templates', () => {
     ])
     for (const template of marketing) {
       expect(getCrewTemplate(template.id)).toBe(template)
+      expect(template.version).toBe(2)
       const skill = template.files['skills/' + template.id + '/SKILL.md']
       expect(skill).toContain('## Fictional worked example')
+      expect(skill).toContain('## Source probe and acceptance')
       expect(skill).toContain('## Automation handoff')
       expect(skill).toContain('Installation enables no schedule')
       const setup = parseCrewTemplateSetupState(template.files[template.setupPath], template)
@@ -30,5 +32,11 @@ describe('Marketing Crew templates', () => {
     expect(marketing[3].files['skills/growth-experiment-planner/SKILL.md']).toContain('funnel-experiment-plan/v1')
     expect(marketing[4].files['skills/experiment-run-coordinator/SKILL.md']).toContain('provider receipt')
     expect(marketing[5].files['skills/growth-outcome-analyst/SKILL.md']).toContain('inconclusive')
+    expect(marketing[0].files['skills/competitor-intelligence-analyst/SKILL.md']).toContain('same product, plan, region, seat and term')
+    expect(marketing[1].files['skills/campaign-performance-analyst/SKILL.md']).toContain('Recompute a qualified-event rate and cost')
+    expect(marketing[2].files['skills/funnel-analyst/SKILL.md']).toContain('paid/eligible rate')
+    expect(marketing[3].files['skills/growth-experiment-planner/SKILL.md']).toContain('baseline-first or pending plan')
+    expect(marketing[4].files['skills/experiment-run-coordinator/SKILL.md']).toContain('ticket-only launch claim')
+    expect(marketing[5].files['skills/growth-outcome-analyst/SKILL.md']).toContain('immature window, sample shortfall')
   })
 })

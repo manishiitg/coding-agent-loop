@@ -201,6 +201,14 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'billing-to-close', from: 'billing', to: 'close', artifact_type: 'refund-decision/v1', required: true },
   ], setupChecks: ['goal_owner', 'request_scope', 'policy_amount', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'discovery-to-reviewed-proposal', title: 'Discovery to Reviewed Proposal', description: 'Prepare a sourced call brief and an unsent SaaS proposal from approved post-call discovery and current pricing, with distinct seller and commercial review.', version: '0.1.0', category: 'Sales', order: 2, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'briefing', agent_playbook_id: 'sales-call-briefing', required: true, output: 'sales-call-brief/v1' },
+    { id: 'proposal', agent_playbook_id: 'proposal-drafter', required: true, output: 'sales-proposal-draft/v1' },
+    { id: 'research', agent_playbook_id: 'account-researcher', required: false, output: 'account-research-brief/v1' },
+  ], handoffs: [
+    { id: 'briefing-to-proposal', from: 'briefing', to: 'proposal', artifact_type: 'sales-call-brief/v1', required: true },
+    { id: 'research-to-briefing', from: 'research', to: 'briefing', artifact_type: 'account-research-brief/v1', required: false },
+  ], setupChecks: ['goal_owner', 'account_meeting', 'claim_policy', 'pricing_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.3.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

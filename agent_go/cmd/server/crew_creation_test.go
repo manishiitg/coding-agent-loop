@@ -344,6 +344,42 @@ func TestCreateCrewProjectAppliesSalesTemplateOnBuilderAction(t *testing.T) {
 	}
 }
 
+func TestCreateCrewProjectAppliesExpandedSalesTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"sales-call-briefing", "proposal-drafter", "pipeline-analyst"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Sales Operator",
+				Role: "Sales operations", Purpose: "Review a sourced sales result",
+				TemplateID: templateID, StepInstruction: "Return a sourced result for owner review.",
+				IdempotencyKey: "sales-expansion-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Sales Crew lacks %s", relative)
+				}
+			}
+			var setup struct {
+				CompletedSteps []string `json:"completed_steps"`
+			}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			if len(setup.CompletedSteps) != 0 {
+				t.Fatalf("Sales setup unexpectedly completed: %+v", setup)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectAppliesCustomerSuccessTemplateOnBuilderAction(t *testing.T) {
 	svc, mock, ctx := newCrewCreationTestEnv(t)
 	req := CreateCrewRequest{

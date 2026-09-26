@@ -10,8 +10,12 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const { salesSpecialists } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 
 if (salesSpecialists.length !== 3) throw new Error(`Expected three Sales Crew templates, found ${salesSpecialists.length}`)
+const expansionSource = fs.readFileSync(path.join(frontendRoot, 'src/products/work/salesExpansion.ts'), 'utf8')
+const compiledExpansion = ts.transpileModule(expansionSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
+const { salesExpansion } = await import(`data:text/javascript;base64,${Buffer.from(compiledExpansion).toString('base64')}`)
+if (salesExpansion.length !== 3) throw new Error(`Expected three additional Sales Crew templates, found ${salesExpansion.length}`)
 const ids = new Set()
-const catalog = salesSpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
+const catalog = [...salesSpecialists, ...salesExpansion].map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error(`Duplicate Sales Crew template ${id}`)
   ids.add(id)
   const setup = JSON.parse(files[setupPath])

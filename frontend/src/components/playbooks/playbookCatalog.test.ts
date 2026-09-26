@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(41)
+    expect(PLAYBOOK_CATALOG).toHaveLength(42)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -88,6 +88,16 @@ describe('small-team catalog', () => {
     expect(sales?.agentSlots?.find(slot => slot.id === 'research')?.required).toBe(false)
     expect(sales?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('lead-qualification-brief/v1')
     expect(sales?.setupChecks).toContain('action_ledger')
+  })
+
+  it('exposes a distinct Sales proposal route with a required call brief handoff', () => {
+    const proposal = PLAYBOOK_CATALOG.find(item => item.id === 'discovery-to-reviewed-proposal')
+    expect(proposal?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual([
+      'sales-call-briefing', 'proposal-drafter',
+    ])
+    expect(proposal?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('sales-call-brief/v1')
+    expect(proposal?.setupChecks).toContain('pricing_policy')
+    expect(proposal?.setupChecks).toContain('test_run')
   })
 
   it('exposes the GTM launch route and reuses the Sales qualification handoff', () => {

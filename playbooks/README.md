@@ -53,7 +53,8 @@ AgentWorks
     │   ├── Invoice Intake to Reviewed Payable
     │   └── Refund Request to Reconciled Outcome
     ├── Sales
-    │   └── Inbound Lead-to-Meeting Review
+    │   ├── Inbound Lead-to-Meeting Review
+    │   └── Discovery to Reviewed Proposal
     ├── Customer Success
     │   └── New Customer to First Value
     ├── Customer Support
@@ -78,6 +79,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | --- | --- | --- |
 | Marketing | Campaign Signal to Reviewed Experiment; Growth Analytics Workflows and Website Growth Loop are adjacent | Three Marketing Crews are locally installable with pending setup. Campaign Performance and Growth Experiment are required; Competitor context is optional. |
 | Finance | Finance Operations Review; Invoice Intake to Reviewed Payable; Refund Request to Reconciled Outcome | Four core Finance roles, Tax Export, and four billing capability packs are locally installable. The packs can share one Billing Operations Coordinator Crew; each has independent chat setup. Invoice intake reuses Operations Document Intake Assistant. Refund review hands an exact decision to Revenue & Close; provider and ledger actions remain separately approved. |
+| Sales | Inbound Lead-to-Meeting Review; Discovery to Reviewed Proposal | Six Sales Crew templates are locally installable. The proposal route requires a seller-reviewed post-call discovery note and current pricing before drafting; Pipeline Analyst is a standalone Crew job. |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
 | Security | Finding to Verified Remediation; Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
@@ -227,6 +229,7 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | Playbook | Outcome |
 | --- | --- |
 | [Inbound Lead-to-Meeting Review](agentic-engineering-platform/sales/inbound-lead-to-meeting-review/SKILL.md) | Propose a Lead Intake & Qualifier → Sales Follow-up Coordinator route with optional account research, a reviewed booking offer, and delivery or booking status only when provider evidence exists. |
+| [Discovery to Reviewed Proposal](agentic-engineering-platform/sales/discovery-to-reviewed-proposal/SKILL.md) | Propose Sales Call Briefing Assistant → Proposal Drafter with optional account research. Validate exact meeting and opportunity identity, require approved post-call discovery and current pricing, and stop at an unsent owner-reviewed draft. |
 
 ### Customer Success
 

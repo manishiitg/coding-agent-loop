@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 55 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 58 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The eighteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The nineteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -165,6 +165,27 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Later run:** retain experiment ID and predeclared rule, re-read comparable outcome and guardrail records, report null or incomplete results, and require a separate approved route for any launch.
 
 ## Sales
+
+### Sales Call Briefing Assistant (`sales-call-briefing`)
+
+- **Use case:** prepare a seller for one exact buyer meeting without inventing buying intent or attendee authority.
+- **First result:** a dated brief binding meeting, account and opportunity IDs to verified CRM/invite facts, approved product proof, unknowns and discovery questions. The [installable skill](../../frontend/src/products/work/salesExpansion.ts) includes a fictional good and bad brief.
+- **Setup proof:** resolve company identity, read one authorized current invitation and CRM record, check approved claims and source freshness, and have the seller review a real brief. Nine checks stay pending until verified in chat.
+- **Later run:** re-read the same meeting and opportunity, show changes in attendees or stage, and retire a cancelled meeting rather than repeat stale claims.
+
+### Proposal Drafter (`proposal-drafter`)
+
+- **Use case:** prepare an unsent SaaS proposal from seller-approved discovery and current product and pricing material.
+- **First result:** versioned draft with sourced scope, line-item arithmetic, currency, assumptions, exclusions, open questions and commercial approval state.
+- **Setup proof:** bind exact account/opportunity and approved discovery revision, probe the current price list and offer, reproduce one line calculation, and have the commercial owner review claims and gaps.
+- **Later run:** re-read changed discovery and pricing, show a revision diff, and preserve an approved or sent version. Sending and CRM changes require separate approval and provider evidence.
+
+### Pipeline Analyst (`pipeline-analyst`)
+
+- **Use case:** explain observed pipeline movement and stale opportunities from comparable CRM records.
+- **First result:** dated brief with stable opportunity IDs, stage movements, amount and currency, source coverage, stale-rule results and owner decisions.
+- **Setup proof:** read authorized prior and current snapshots, verify stage definitions, reporting window, currency policy and one movement calculation with the pipeline owner. A single snapshot supports current-state review only.
+- **Later run:** compare the same IDs under unchanged definitions, flag changed rules or missing records, and do not turn stage movements into new revenue or a claimed forecast.
 
 ### Lead Intake & Qualifier (`lead-intake-qualifier`)
 
@@ -421,4 +442,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing nineteen Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-three Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

@@ -19,6 +19,18 @@ Read `templates/spend-payables-coordinator/TEMPLATE_SETUP.json` and `SETUP.md`. 
 4. Produce a queue with one row per bill or exception: source IDs, due date, amount/currency, approval owner, current state, policy reason, proposed next step, and evidence gap. Separate **ready for owner review**, **needs more evidence**, and **already paid/scheduled**. Do not represent an uncoded bill as an approved payment.
 5. Summarize spend by vendor/category and compare to a supplied budget only when periods and definitions match. Ask the owner to review sample matches, classifications, and priorities before completing setup.
 
+## Fictional worked example
+
+Input: document `invoice-document-88` version `v1`, hash `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, claims vendor `vendor-42`, invoice `INV-88`, USD 108.00. Intake `intake-88`, AP snapshot `ap:vendor-42@rev-7`, and policy `policy:ap-v3` refer to the same fictional entity. The AP search finds no exact duplicate at 10:10 UTC; approval is pending. No current payment source or provider receipt is supplied.
+
+First result: review `review-88` links the document hash and version to the intake and AP snapshot. It records duplicate_state **none within the checked AP scope**, approval_state **pending**, disposition **ready_for_owner_review**, action_state **none**, USD 108.00, policy reference and `ap-owner`. Ask the owner to confirm invoice fields, required evidence and current paid/scheduled status before an approval proposal. Keep document intake, AP review, approval and payment as separate states. On a later run, recheck the AP revision and duplicate search while retaining the document and review IDs.
+
+## Inadequate output to reject
+
+“INV-88 is approved and paid because it appears once in the AP export.” Reject: one export match does not prove approval, current payment state or a provider receipt. Do not create a bill or initiate a payment from this review.
+
+This fictional example does not complete setup. Reproduce a bill against authorized AP and payment-status sources and save the owner's decision.
+
 ## Boundaries
 
 The default skill reads and prepares decisions. Do not create a vendor, change bank details, approve an expense or bill, initiate a payment, or post ledger entries from template installation. Payment execution requires verified payee details, a separate authorized write route, exact amount/currency approval, duplicate check immediately before execution, and a recorded provider receipt. If bank details changed, escalate to the owner's independent verification process. A schedule or Automation needs separate setup and testing.

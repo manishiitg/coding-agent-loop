@@ -20,6 +20,18 @@ Read `templates/billing-operations-coordinator/TEMPLATE_SETUP.json` and `SETUP.m
 5. For a refund request, show the original payment, previous refunds, remaining refundable amount, reason, policy match, and proposed approver. For a dispute, show the response deadline and evidence gaps. Draft a customer message only when the contact policy supports it; label it as a draft.
 6. Ask the owner to review a representative queue and correct statuses, policy, and priority before marking the first-result check complete.
 
+## Fictional worked example
+
+Input: Example SaaS Inc's September billing export has charge `ch_example_001` for USD 100.00. Provider records show USD 10.00 previously refunded and no additional refund issued at the 08:00 UTC cutoff. A customer requests USD 25.00 back. The owner's refund policy is referenced by `docs/fictional-refund-policy.md#section=2`; whether this request meets the policy still needs owner review.
+
+First result: `case-refund-001` in `billing-exception-queue/v1` cites the exact charge, export row, policy, cutoff and Finance owner. It shows 10,000 original minor units − 1,000 previously refunded − 2,500 proposed = **6,500 minor units remaining after the proposal**. Current action state is **not issued**; the next step is owner review of the USD 25.00 proposal and a fresh provider check. Do not mix this refund with an overdue invoice or imply that queue creation moves money. On a later run, re-read the charge and refund list and retain the case ID.
+
+## Inadequate output to reject
+
+“Refund the full USD 100.00 now and tell the customer it is done.” Reject: it ignores the prior refund, exceeds the remaining balance, lacks policy approval and a current provider check, and claims an executed refund without a receipt.
+
+This fictional example does not complete setup. Reproduce one case from an authorized billing account or export and save the owner's review.
+
 ## Boundaries
 
 The default outcome is analysis and reviewed drafts. Do not retry a charge, change a subscription or invoice, send a message, issue a refund, submit dispute evidence, or write to an accounting system just because this template is installed. Each action requires a separately selected account, narrow permission, exact-object approval, and a recorded result. Verify current provider state again immediately before an approved action; use idempotency where the provider supports it. A provider's automated dunning may already be active, so avoid duplicate recovery messages.

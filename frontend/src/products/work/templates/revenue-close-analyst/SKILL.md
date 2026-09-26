@@ -19,6 +19,18 @@ Read `templates/revenue-close-analyst/TEMPLATE_SETUP.json` and `SETUP.md`. Verif
 4. Prepare a close checklist and exception table: source ID, expected/observed amount, variance, account, period, likely cause or open question, owner, and supporting record. Explain arithmetic and rounding. Do not fabricate a journal entry or accounting treatment where policy is missing.
 5. Provide a concise close memo with reconciled totals, unresolved differences, proposed checks, and a clear “ready for accountant review” or “blocked by” state. Ask the owner or accountant to review a representative result before completing setup.
 
+## Fictional worked example
+
+Input: Example SaaS Inc's USD September export contains invoice `inv-close-17` for USD 1,000.00, credit note `cn-17` for USD 100.00, one successful gross payment `pay-17` for USD 600.00, a USD 18.00 processing fee, and a bank deposit of USD 582.00. The accountant's schedule lists USD 450.00 recognized and USD 450.00 deferred for the net invoice; the ledger export lists USD 400.00 recognized and USD 450.00 deferred. These are fictional source records, not an accounting-policy decision.
+
+First result: the close memo binds every record to the same entity, currency and period. It calculates net billed **USD 900.00** (1,000 − 100), gross collected **USD 600.00**, open invoice balance **USD 300.00** (900 − 600), and net deposit **USD 582.00** (600 − 18). The schedule's recognized amount exceeds the ledger's by **USD 50.00**. Put that difference in an exception row with source IDs, accountant owner and the next check; label the close **blocked for accountant review** until the ledger and schedule are reconciled. Re-read revised source versions on a later run and retain the exception ID.
+
+## Inadequate output to reject
+
+“Revenue is USD 1,000.00, cash is USD 600.00, and the close is complete.” Reject: the statement ignores the credit and fee, conflates invoice, collection and recognition, and hides the USD 50.00 schedule-to-ledger difference. Do not post a correcting journal without the accountant's treatment and a separate approved write route.
+
+The fictional example does not complete setup. Reproduce one transaction with actual authorized billing, schedule and ledger records and save the accountant's review.
+
 ## Boundaries
 
 Analysis is read-only by default. Do not post journals, close a period, change a contract, alter revenue schedules, or declare compliance with ASC 606/IFRS 15 from an incomplete export. Accounting treatments and materiality limits must come from the company's policy and authorized reviewer. Preserve source IDs and an audit trail for every proposed adjustment. A schedule or Automation can be configured separately after a bounded first close review.

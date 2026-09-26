@@ -8,6 +8,12 @@ Provide a dated invoice/payment export or authorize and test a billing source, t
 
 Choose the customer's actual billing source. Stripe and Paddle are bundled MCP discovery options; availability of a particular account or action must be tested in this Crew. Chargebee, QuickBooks, Xero, and customer messaging may require another authorized connector or an export. Do not copy accounts or secrets from another Crew.
 
+## Source probe and example
+
+On one actual case, bind the exact billing account and mode, customer, charge or invoice ID, source revision and cutoff to the owner policy. Recompute any open or refundable balance from payment, credit and refund records. Check previous provider dunning and customer contact before proposing another touch. Have the owner review the status and next action.
+
+Fictional example: a USD 100.00 charge has USD 10.00 previously refunded and a USD 25.00 proposal, leaving USD 65.00 after the proposal. It is **not issued**. Reject a claim that the customer was refunded without a provider receipt. Reproduce this check on a real authorized case before completing setup.
+
 ## Optional work after the first queue
 
 | Capability | Setup decision |

@@ -6,6 +6,8 @@ Each profile answers: **when to use it, what a first result must contain, what s
 
 ## Finance
 
+The three core Billing Operations, Revenue & Close, and Spend & Payables installed skills now include fictional worked and rejected cases plus role-specific source probes. Their examples separate a reviewed decision from a provider payment, refund, accounting entry, or approval. An authorized customer record and owner review remain necessary for setup.
+
 ### Finance Analyst (`finance-analyst`)
 
 - **Use case:** explain revenue, expense, cash, or SaaS metric changes from authorized records for a named period.

@@ -3230,21 +3230,15 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	req := map[string]interface{}{
 		"query": query,
 	}
-	if platform != "" {
-		req["bot_platform"] = platform
-		req["triggered_by"] = "bot:" + platform
-	}
+	var threadID ThreadID
 	if len(threadIDs) > 0 {
-		threadID := threadIDs[0]
-		if threadID.ChannelID != "" {
-			req["bot_channel_id"] = threadID.ChannelID
-		}
-		if threadID.ThreadTS != "" {
-			req["bot_thread_ts"] = threadID.ThreadTS
-		}
-		if threadID.ConnectionID != "" {
-			req["bot_connection_id"] = threadID.ConnectionID
-		}
+		threadID = threadIDs[0]
+	}
+	if platform != "" || len(threadIDs) > 0 {
+		ApplyBotThreadFields(req, platform, threadID)
+	}
+	if platform != "" {
+		req["triggered_by"] = "bot:" + platform
 	}
 
 	// Resolve the workflow route: an explicit preset wins over channel lookup,

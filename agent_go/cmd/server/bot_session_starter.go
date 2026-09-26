@@ -482,12 +482,7 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	principalID := services.BotPrincipalIDForRoute(thread.Platform, route)
 	req := api.scheduler.buildWorkshopRequest(ctx, &ScheduleContext{WorkspacePath: route.WorkspacePath, WorkflowID: route.WorkflowID, WorkflowLabel: manifest.Label, OwnerUserID: principalID, Capabilities: manifest.Capabilities, Schedule: WorkflowSchedule{Name: manifest.Label}, TriggerSource: "bot:" + thread.Platform})
 	req["query"] = query
-	req["bot_platform"] = thread.Platform
-	req["bot_channel_id"] = thread.ChannelID
-	req["bot_thread_ts"] = thread.ThreadTS
-	if thread.ConnectionID != "" {
-		req["bot_connection_id"] = thread.ConnectionID
-	}
+	services.ApplyBotThreadFields(req, thread.Platform, thread)
 	req["bot_route_grant"] = route.BotGrant
 	req["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
 	req["execution_options"].(map[string]interface{})["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)

@@ -240,20 +240,7 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	}
 	// The channel prompt (WhatsApp's markup subset) applies to this turn only;
 	// the app's own turns in the same conversation send no bot_platform.
-	reqMap["bot_platform"] = msg.Platform
+	services.ApplyBotThreadFields(reqMap, msg.Platform, threadID)
 	reqMap["triggered_by"] = "bot:" + msg.Platform
-	if threadID.ChannelID != "" {
-		reqMap["bot_channel_id"] = threadID.ChannelID
-	}
-	if threadID.ThreadTS != "" {
-		reqMap["bot_thread_ts"] = threadID.ThreadTS
-	}
-	// The arrival app identifies a crew's own Slack bot: without it the
-	// query-boundary revalidation looked the channel up in the shared bot's
-	// routes, found none, and refused with "Slack bot route was revoked"
-	// (RTS 2026-09-26).
-	if threadID.ConnectionID != "" {
-		reqMap["bot_connection_id"] = threadID.ConnectionID
-	}
 	return reqMap, conversation.SessionID, true, nil
 }

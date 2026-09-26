@@ -88,3 +88,31 @@ func (s *SlackService) RewriteSlackScopes(ctx context.Context, resolve ScopeReso
 	})
 	return rescoped, err
 }
+
+// ApplyBotThreadFields sets the thread fields every bot turn carries:
+// platform, channel, thread and arrival connection. All bot turn builders
+// (workflow, crew conversation, default chat) use it so none can omit one; the
+// crew builder once dropped the connection and revalidation refused the
+// crew's own Slack bot (RTS 2026-09-26). The trigger stays with each builder
+// (a bot workflow turn is scheduled-shaped, a chat turn is "bot:<platform>").
+// platform may be empty when threadID names it.
+func ApplyBotThreadFields(req map[string]interface{}, platform string, threadID ThreadID) {
+	if req == nil {
+		return
+	}
+	if platform = strings.TrimSpace(platform); platform == "" {
+		platform = strings.TrimSpace(threadID.Platform)
+	}
+	if platform != "" {
+		req["bot_platform"] = platform
+	}
+	if threadID.ChannelID != "" {
+		req["bot_channel_id"] = threadID.ChannelID
+	}
+	if threadID.ThreadTS != "" {
+		req["bot_thread_ts"] = threadID.ThreadTS
+	}
+	if threadID.ConnectionID != "" {
+		req["bot_connection_id"] = threadID.ConnectionID
+	}
+}

@@ -18,6 +18,8 @@ type Specialist = {
   boundary: string
   handoff: string
   repeatRule: string
+  sourceProbe: string
+  acceptanceCheck: string
   workflowPlaybook: string
   exampleInput: string
   workedExample: string
@@ -43,8 +45,10 @@ const specialists: readonly Specialist[] = [
     ],
     evidence: 'A scanner severity is an input, not a verified business risk; retain source IDs, scope proof, confidence, and missing checks.',
     boundary: 'Do not test outside written scope, run intrusive probes without permission, expose exploit details or secrets, accept risk, or change code without an authorized review route.',
-    handoff: 'Application Security Assessment and Remediation can consume security-finding/v1 keyed by asset, environment, build, finding ID, evidence, confidence, severity rule, owner, and retest criterion. A remediation Crew must recheck scope and current status.',
+    handoff: 'Finding to Verified Remediation consumes security-finding/v1 keyed by asset, environment, build, finding ID, evidence, confidence, severity rule, owner, and retest criterion. Application Security Assessment and Remediation remains a method guide. A remediation Crew must recheck scope and current status.',
     repeatRule: 'On another run, reconcile stable finding and asset IDs, recheck version and deployment state, carry unresolved evidence forward, and avoid duplicate tickets or false closure.',
+    sourceProbe: 'Read the written authorization, exact in-scope asset/environment/build, one detector finding and its evidence. If applicability depends on deployed code or package version, join to the deployed artifact or SBOM; a scanner title and repository dependency alone are insufficient.',
+    acceptanceCheck: 'Reproduce one applicability and customer-severity decision from scope, deployed evidence and policy. Keep a scanner-only or stale result unconfirmed; withhold confirmed severity, remediation deadline and closure claims until the required source and owner decision exist.',
     workflowPlaybook: 'security-engineering/application-security/application-security-assessment-remediation',
     exampleInput: 'Fictional input: written scope=staging api.example.test only; finding=scan-44; asset=checkout-api; build=sha:a55c1; report=outdated dependency; severity policy=appsec-v2; owner=security-lead.',
     workedExample: 'Fictional output: finding=scan-44; asset=checkout-api; build=sha:a55c1; source=dependency-report:run-18; observed package version=2.3.1; deployed applicability=unknown pending SBOM confirmation; confidence=medium; customer severity=pending; owner=checkout-owner; proposed next=verify deployed SBOM then review fixed version; closure proof=deployed artifact and repeat scan.',
@@ -68,8 +72,10 @@ const specialists: readonly Specialist[] = [
     ],
     evidence: 'Every claimed permission result needs actor, role, tenant, resource, action, expected policy, observed status, build, and source evidence.',
     boundary: 'Do not use real users or production identities without authorization, broaden privileges, make destructive privileged changes, or infer policy from current UI behavior.',
-    handoff: 'Role and Permission Validation can consume access-review-matrix/v1 keyed by policy revision, build, environment, actor role, tenant, resource, action, expected/observed result, attempt ID, and evidence. Security remediation receives only approved exceptions.',
+    handoff: 'Access Exception to Verified Fix consumes access-review-matrix/v1 keyed by policy revision, build, environment, actor role and tenant, resource and tenant, action, expected/observed direct result, attempt ID, and evidence. Role and Permission Validation remains the test-method guide. Security remediation receives only validated, owner-reviewed exceptions.',
     repeatRule: 'Preserve earlier matrix attempts, compare policy and build revisions, and re-execute the same denied cells after an approved fix before closing an exception.',
+    sourceProbe: 'Read the approved role/tenant policy revision, isolated actor and resource fixture, exact build, and one expected allow or deny cell. Capture both UI state and a direct server attempt with actor, tenant, resource, action, HTTP result, trace ID and observation time.',
+    acceptanceCheck: 'Verify the observed direct response against the predeclared policy cell. A hidden UI link does not prove a server denial; an unknown or blocked response is untested. For a cross-tenant exception, retain the same safe actor/resource cell for a later deployed retest.',
     workflowPlaybook: 'browser-qa/role-permission-validation',
     exampleInput: 'Fictional input: policy=roles-v4; build=sha:b912e; staging tenant A/member and tenant B/resource-7; expected=deny tenant A member read of tenant B invoice; test actor=test-member-a.',
     workedExample: 'Fictional output: cell=roles-v4/member/tenant-b-invoice/read; build=sha:b912e; actor=test-member-a; expected=403; UI=invoice link absent; direct API GET /invoices/7 observed=200 with tenant B fields; verdict=fail; evidence=trace:access-07 redacted; owner=authorization-team; retest=same cell after deployed fix.',
@@ -93,8 +99,10 @@ const specialists: readonly Specialist[] = [
     ],
     evidence: 'A merged PR or passing unit test is not deployed remediation. Show actual deployment identity, retest target and result, and decision receipt.',
     boundary: 'Do not merge, deploy, change severity, accept risk, close a finding, or publish sensitive details without the required owner approval and authorized tool route.',
-    handoff: 'Application Security Assessment and Remediation can consume security-remediation-ledger/v1 keyed by finding, asset, issue, change SHA, deployed build, approval, retest run, risk-acceptance expiry, and disposition. The finding source remains authoritative.',
+    handoff: 'Finding to Verified Remediation uses security-remediation-ledger/v1 keyed by finding, asset, issue, approved change SHA, affected deployed build, independent retest and disposition. Access Exception to Verified Fix uses access-remediation-ledger/v1 tied to the exact policy cell, actor, resource and direct retest. Each Playbook supplies its own validator and output path; the finding or policy source remains authoritative.',
     repeatRule: 'Re-read current finding, change, deployment, and retest records; preserve prior failures and risk decisions; do not duplicate tickets or close on a stale build.',
+    sourceProbe: 'Read one exact finding and issue, owner approval, PR/commit, build and affected deployment record; fetch the retest criterion and current retest run separately. Record source IDs and observation times for every state transition, including an absent deployment or failed retest.',
+    acceptanceCheck: 'Prove the approved change SHA reached the affected environment and an independent reviewer tested the finding-specific criterion on that deployed build before closure. A merged PR, passing unit test, old-build scan or self-reviewed retest must leave the finding open.',
     workflowPlaybook: 'security-engineering/application-security/application-security-assessment-remediation',
     exampleInput: 'Fictional input: finding=sec-81; asset=checkout-api; approved fix=PR-92; affected staging build=sha:c100a; required retest=deny unauthenticated /orders access; owner=appsec-owner.',
     workedExample: 'Fictional output: finding=sec-81; PR-92 merged at sha:c101b; deployed build=sha:c100a remains old; retest=not run against fix; state=awaiting deployment; owner=release-owner; next=deploy approved sha:c101b then rerun auth test; closure=blocked. No risk acceptance recorded.',
@@ -103,19 +111,21 @@ const specialists: readonly Specialist[] = [
   },
 ]
 
+const securityTemplateVersion = 2
+
 function checklist(spec: Specialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm Security role and owner', instructions: 'Confirm whether ' + spec.name + ' is the Crew’s primary role or a supporting capability. Preserve an existing identity and name the accountable Security and asset owners.' },
     { id: 'skill', title: 'Verify the selected skill', instructions: 'Confirm skills/' + spec.id + '/SKILL.md exists and ' + spec.id + ' is selected for this Crew.' },
     { id: 'scope', title: 'Record written scope and authorization', instructions: 'Record asset, environment, methods, time and rate bounds, stop conditions, evidence restrictions, owner, and first job. Minimum input: ' + spec.minimumInput },
-    { id: 'access', title: 'Probe authorized source access', instructions: 'Read one representative authorized source or export; record exact ID, revision, freshness, and coverage. ' + spec.optionalConnections + ' A named product is not a verified connection.' },
-    { id: 'policy', title: 'Set evidence, severity, and decision rules', instructions: 'Record policy revision, applicability or permission criteria, confidence, owner review, sensitive evidence handling, risk acceptance, and deployed retest rule. Unknown stays unknown.' },
+    { id: 'access', title: 'Prove the role-specific source join', instructions: spec.sourceProbe + ' ' + spec.optionalConnections + ' A named product is not verified access.' },
+    { id: 'policy', title: 'Verify the role-specific acceptance rule', instructions: spec.acceptanceCheck + ' Record policy revision, evidence restrictions and decision owner. Unknown stays unknown.' },
     { id: 'first_result', title: 'Produce the first sourced result', instructions: 'Use real authorized evidence to produce ' + spec.firstResult + ' ' + spec.evidence + ' A fictional fixture does not complete this check.' },
     { id: 'review', title: 'Review finding and next action', instructions: 'Show scope, exact source links, unknowns, owner, proposed action, review boundary, and any risk acceptance expiry. Record the owner decision.' },
     { id: 'delivery', title: 'Choose action and disclosure route', optional: true, instructions: 'Choose read-only chat or a separately authorized ticket, status, remediation, or notification route. Read-only chat completes this decision. ' + spec.boundary },
     { id: 'recurrence', title: 'Choose repeat and Automation route', optional: true, instructions: 'Choose manual-only or a reviewed trigger or schedule with deduplication, scope gate, and retest. Manual-only completes this decision. ' + spec.repeatRule },
   ]
-  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2) + '\n'
+  return JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: securityTemplateVersion, checks, completed_steps: [] }, null, 2) + '\n'
 }
 
 function skill(spec: Specialist): string {
@@ -128,6 +138,7 @@ function skill(spec: Specialist): string {
     '## First useful result', '',
     ...spec.method.map((step, index) => String(index + 1) + '. ' + step), '',
     'Deliver **' + spec.firstResult + '** ' + spec.evidence, '',
+    '## Source probe and acceptance', '', spec.sourceProbe, '', spec.acceptanceCheck, '',
     '## Follow-through', '', spec.repeatRule, '',
     '## Fictional worked example', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
@@ -141,14 +152,16 @@ function skill(spec: Specialist): string {
 function guide(spec: Specialist): string {
   return [
     '# ' + spec.name + ' setup', '',
-    'Template ' + spec.id + ' version 1. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
+    'Template ' + spec.id + ' version ' + securityTemplateVersion + '. Progress lives in templates/' + spec.id + '/TEMPLATE_SETUP.json and is verified in Crew chat.', '',
     '## First result', '',
     'Provide ' + spec.minimumInput + ' Ask: “' + spec.exampleRequests[0] + '”', '',
     'Expected output: **' + spec.firstResult + '** ' + spec.evidence, '',
     '## Fictional example and failure', '', spec.exampleInput, '', spec.workedExample, '',
     'Inadequate: ' + spec.inadequateExample + ' Reason: ' + spec.inadequateReason, '',
     '## Source and connection choice', '',
-    spec.optionalConnections + ' Start with a representative authorized read or safe test. Record exact asset, build, source IDs, and evidence restrictions.', '',
+    spec.optionalConnections + ' ' + spec.sourceProbe, '',
+    '## Setup acceptance', '', spec.acceptanceCheck, '',
+    '## Compatible Automation handoff', '', spec.handoff, '',
     '## Workflow and recurring work', '',
     'Existing Workflow Playbook: ' + spec.workflowPlaybook + '. Builder must verify written scope, bindings, handoffs, a manual route, and the owner-approved run policy before recurrence. ' + spec.repeatRule + ' ' + spec.boundary, '',
   ].join('\n')
@@ -160,7 +173,7 @@ export const securitySpecialists: readonly CrewTemplate[] = specialists.map(spec
   const setupGuidePath = base + '/SETUP.md'
   const setupPath = base + '/TEMPLATE_SETUP.json'
   return {
-    id: spec.id, version: 1, category: 'Security', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: securityTemplateVersion, category: 'Security', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

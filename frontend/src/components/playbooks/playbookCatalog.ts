@@ -349,7 +349,23 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], setupChecks: ['goal_owner', 'metric_policy', 'team_bindings', 'site_scope', 'capabilities', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
 ] as const
 
-export const PLAYBOOK_CATEGORIES = [...new Set(PLAYBOOK_CATALOG.map(playbook => playbook.category))]
+const ENGINEERING_PLAYBOOK_SPECIALTIES = new Set([
+  'Browser QA', 'Engineering Operations Intelligence', 'FinOps', 'Performance Engineering',
+  'QA', 'Reliability Operations', 'Security', 'Security Engineering',
+])
+
+// Group related methods in the picker without changing package identities or
+// the category stored in an installed Playbook manifest.
+export function playbookBrowseCategory(playbook: Pick<PlaybookCatalogItem, 'category'>): string {
+  return ENGINEERING_PLAYBOOK_SPECIALTIES.has(playbook.category) ? 'Engineering' : playbook.category
+}
+
+export function playbookBrowsePath(playbook: Pick<PlaybookCatalogItem, 'category'>): string {
+  const parent = playbookBrowseCategory(playbook)
+  return parent === playbook.category ? parent : `${parent} / ${playbook.category}`
+}
+
+export const PLAYBOOK_CATEGORIES = [...new Set(PLAYBOOK_CATALOG.map(playbookBrowseCategory))]
 
 export function isNewerPlaybookVersion(candidate: string, installed: string): boolean {
   const parse = (value: string) => value.split('.').map(part => Number.parseInt(part, 10))

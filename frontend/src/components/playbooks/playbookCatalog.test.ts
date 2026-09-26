@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNewerPlaybookVersion, PLAYBOOK_CATALOG } from './playbookCatalog'
+import { isNewerPlaybookVersion, playbookBrowseCategory, playbookBrowsePath, PLAYBOOK_CATALOG } from './playbookCatalog'
 
 describe('isNewerPlaybookVersion', () => {
   it('compares semantic versions without treating older catalog data as an update', () => {
@@ -11,6 +11,12 @@ describe('isNewerPlaybookVersion', () => {
 })
 
 describe('small-team catalog', () => {
+  it('groups QA and Security packages within Engineering browse without changing their identities', () => {
+    expect(playbookBrowsePath({ category: 'QA' })).toBe('Engineering / QA')
+    expect(playbookBrowsePath({ category: 'Security' })).toBe('Engineering / Security')
+    expect(playbookBrowseCategory({ category: 'Browser QA' })).toBe('Engineering')
+    expect(playbookBrowseCategory({ category: 'Shopify' })).toBe('Shopify')
+  })
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])

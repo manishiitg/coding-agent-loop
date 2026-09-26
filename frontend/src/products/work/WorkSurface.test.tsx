@@ -102,6 +102,27 @@ describe('CreateWorkProjectDialog', () => {
     await act(async () => { root.unmount() })
   })
 
+  it('browses QA and Security beneath Engineering without changing their template IDs', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    await act(async () => {
+      root.render(<CreateWorkProjectDialog onClose={() => {}} onCreate={vi.fn()} submitting={false} error={null} />)
+    })
+    const category = container.querySelector('[aria-label="Filter template category"]') as HTMLSelectElement
+    expect([...category.options].map(option => option.value)).toContain('Engineering')
+    expect([...category.options].map(option => option.value)).not.toContain('QA')
+    expect([...category.options].map(option => option.value)).not.toContain('Security')
+    await act(async () => {
+      category.value = 'Engineering'
+      category.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(container.textContent).toContain('13 results')
+    expect(container.textContent).toContain('Engineering · QA ·')
+    expect(container.textContent).toContain('Engineering · Security ·')
+    await act(async () => { root.unmount() })
+  })
+
   it('finds the Sales lead intake template and keeps message delivery pending', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)

@@ -68,6 +68,17 @@ export type CrewTemplate = {
   files: Readonly<Record<string, string>>
 }
 
+// Browse hierarchy only. Installed IDs, skill paths and setup files retain
+// their original specialty identity so existing Crews need no migration.
+export function crewTemplateBrowseCategory(template: Pick<CrewTemplate, 'category'>): string {
+  return template.category === 'QA' || template.category === 'Security' ? 'Engineering' : template.category
+}
+
+export function crewTemplateBrowsePath(template: Pick<CrewTemplate, 'category' | 'subcategory'>): string {
+  const parent = crewTemplateBrowseCategory(template)
+  return [parent, template.category === parent ? '' : template.category, template.subcategory || ''].filter(Boolean).join(' · ')
+}
+
 export const crewTemplates: readonly CrewTemplate[] = [{
   id: 'finance-analyst',
   version: 1,
@@ -253,6 +264,6 @@ export function getCrewTemplate(id: CrewTemplateId): CrewTemplate {
 }
 
 export function matchesCrewTemplateSearch(template: CrewTemplate, search: string): boolean {
-  const haystack = `${template.name} ${template.category} ${template.subcategory || ''} ${template.purpose} ${template.firstResult} ${template.minimumInput} ${template.optionalConnections} ${template.exampleRequests.join(' ')}`.toLowerCase()
+  const haystack = `${template.name} ${crewTemplateBrowsePath(template)} ${template.purpose} ${template.firstResult} ${template.minimumInput} ${template.optionalConnections} ${template.exampleRequests.join(' ')}`.toLowerCase()
   return search.trim().toLowerCase().split(/\s+/).filter(Boolean).every(term => haystack.includes(term))
 }

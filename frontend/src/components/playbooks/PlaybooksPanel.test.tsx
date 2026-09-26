@@ -73,7 +73,7 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     expect(container.textContent).toContain('Workflow guide')
     expect(container.textContent).toContain('AgentWorks')
     expect(container.textContent).toContain('Agentic Engineering Platform 1 small-team playbook · 0 Crew proposals · 1 Workflow guide')
-    expect(container.textContent).toContain('Browser QA1')
+    expect(container.textContent).toContain('Engineering1')
     expect(container.querySelector('[aria-label="Playbook catalog hierarchy"]')).not.toBeNull()
     expect(container.textContent).toContain('Ask about this playbook')
     expect(playbooksApi.install).not.toHaveBeenCalled()
@@ -110,7 +110,7 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Back to catalog')) || null)
     await click([...container.querySelectorAll('[role="tab"]')].find(button => button.textContent?.includes('Installed')) || null)
     expect(container.textContent).toContain('Basic Browser Setup')
-    expect(container.textContent).toContain('Browser QA · v0.6.0 · draft')
+    expect(container.textContent).toContain('Engineering / Browser QA · v0.6.0 · draft')
   } finally {
     await act(async () => root.unmount())
   }

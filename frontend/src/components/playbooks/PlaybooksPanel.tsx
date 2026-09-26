@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
-import { isNewerPlaybookVersion, PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
+import { isNewerPlaybookVersion, playbookBrowseCategory, playbookBrowsePath, PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow'
@@ -53,17 +53,17 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
     return () => { active = false }
   }, [workspacePath])
 
-  const categories = useMemo(() => [...new Set(catalog.map(playbook => playbook.category))], [catalog])
+  const categories = useMemo(() => [...new Set(catalog.map(playbookBrowseCategory))], [catalog])
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return catalog
-      .filter(playbook => !needle || `${playbook.title} ${playbook.description} ${playbook.category} ${(playbook.setupInputs || []).map(input => input.label).join(' ')} ${(playbook.outputs || []).join(' ')}`.toLowerCase().includes(needle))
-      .sort((a, b) => a.category.localeCompare(b.category) || a.order - b.order)
+      .filter(playbook => !needle || `${playbook.title} ${playbook.description} ${playbookBrowsePath(playbook)} ${(playbook.setupInputs || []).map(input => input.label).join(' ')} ${(playbook.outputs || []).join(' ')}`.toLowerCase().includes(needle))
+      .sort((a, b) => playbookBrowseCategory(a).localeCompare(playbookBrowseCategory(b)) || a.category.localeCompare(b.category) || a.order - b.order)
   }, [catalog, query])
 
   const visibleGroups = useMemo(() => categories
-    .map(groupCategory => ({ category: groupCategory, playbooks: visible.filter(playbook => playbook.category === groupCategory) }))
+    .map(groupCategory => ({ category: groupCategory, playbooks: visible.filter(playbook => playbookBrowseCategory(playbook) === groupCategory) }))
     .filter(group => group.playbooks.length > 0), [categories, visible])
   const visibleProposalCount = visible.filter(item => item.agentSlots?.length).length
   const visibleGuideCount = visible.length - visibleProposalCount
@@ -150,7 +150,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><BookMarked className="h-5 w-5" /></div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-medium text-primary">AgentWorks / Agentic Engineering Platform / {selected.category}</div>
+              <div className="text-xs font-medium text-primary">AgentWorks / Agentic Engineering Platform / {playbookBrowsePath(selected)}</div>
               <h3 className="mt-1 text-lg font-semibold text-foreground">{selected.title}</h3>
               <span className="mt-2 inline-flex rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{isCrewProposal ? 'Crew automation proposal' : 'Workflow guide'}</span>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">{selected.description}</p>
@@ -293,7 +293,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
       </div>
 
       {loading ? <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading playbooks…</div> : tab === 'installed' ? (
-        installed.length > 0 ? <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">{installed.map(item => { const latest = catalog.find(value => value.id === item.id); const hasUpdate = Boolean(latest && isNewerPlaybookVersion(latest.version, item.version)); return <button key={item.id} type="button" onClick={() => { if (latest) setSelected(latest) }} className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{item.title}</span>{hasUpdate && <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">Update available</span>}</div><div className="mt-0.5 text-xs text-muted-foreground">{item.category} · v{item.version} · {item.status}{hasUpdate ? ` · latest v${latest?.version}` : ''}</div></div><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>})}</div> : (
+        installed.length > 0 ? <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">{installed.map(item => { const latest = catalog.find(value => value.id === item.id); const hasUpdate = Boolean(latest && isNewerPlaybookVersion(latest.version, item.version)); return <button key={item.id} type="button" onClick={() => { if (latest) setSelected(latest) }} className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{item.title}</span>{hasUpdate && <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">Update available</span>}</div><div className="mt-0.5 text-xs text-muted-foreground">{playbookBrowsePath(item)} · v{item.version} · {item.status}{hasUpdate ? ` · latest v${latest?.version}` : ''}</div></div><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>})}</div> : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"><BookMarked className="h-5 w-5" /></div>
           <h3 className="mt-3 text-sm font-semibold text-foreground">No playbooks installed</h3>
@@ -330,7 +330,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                             <div key={playbook.id} className="group flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/40 hover:bg-muted/20">
                               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:text-primary"><BookMarked className="h-4 w-4" /></div>
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div>
+                                <div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span>{playbookBrowseCategory(playbook) !== playbook.category && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{playbook.category}</span>}<span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div>
                                 <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p>
                                 <span className="mt-2 inline-flex rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{playbook.agentSlots?.length ? 'Crew automation proposal' : 'Workflow guide'}</span>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">

@@ -80,6 +80,7 @@ import type {
   SlackUsableBotsResponse,
   ProjectSlackSelectionResponse,
   SlackTestResponse,
+  SlackDryRunResponse,
   SlackTestReplyResponse,
   GmailConfigRequest,
   GmailConfigResponse,
@@ -1520,6 +1521,13 @@ export const agentApi = {
 
   testSlackConnectionEntry: async (id: string): Promise<SlackTestResponse> => {
     const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/test`)
+    return apiResponse.data
+  },
+
+  // Runs a mention of the app in a channel through the real inbound path
+  // and stops before the model: nothing is posted, no turn starts.
+  dryRunSlackConnection: async (id: string, channelId: string, text?: string): Promise<SlackDryRunResponse> => {
+    const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/dry-run`, { channel_id: channelId, text })
     return apiResponse.data
   },
 

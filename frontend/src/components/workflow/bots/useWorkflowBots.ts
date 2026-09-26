@@ -10,6 +10,7 @@ import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 import { slackConnectionStatus } from './slackConnectionStatus'
 import { resolveWorkflowSlackConnection, sameBotWorkspacePath, selectedWorkflowSlackReady } from './slackWorkflowConnection'
+import { withSlackDryRun } from './slackDryRun'
 
 type WaRoute = WhatsAppRoute
 
@@ -1014,7 +1015,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         id = await saveWorkflowSlackConnection()
         if (!id) return
       }
-      setSlackConnTestResult(await agentApi.testSlackConnectionEntry(id))
+      const result = await agentApi.testSlackConnectionEntry(id)
+      setSlackConnTestResult(result.success ? await withSlackDryRun(id, result, target ? 'crew' : 'workflow') : result)
     } catch (err) {
       setSlackConnTestResult({ success: false, message: err instanceof Error ? err.message : 'Connection test failed' })
     } finally { setSlackConnTesting(false) }

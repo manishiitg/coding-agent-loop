@@ -1,6 +1,6 @@
 # Bot destinations: one canonical scope for crews
 
-Status: in progress (2026-09-26).
+Status: shipped 2026-09-26 (phases 1–3 and Save & test).
 
 ## Problem
 
@@ -57,3 +57,22 @@ A dry run feeds a synthetic mention through the real inbound path (route
 resolution, turn building, revalidation, access) and stops before the model.
 It backs the end-to-end tests (own crew bot, shared bot to a crew channel,
 workflow bot, WhatsApp to a crew) and the Slack tab's Save & test.
+
+`dryRunSlackMention` (`bot_dry_run.go`) runs the app's `mentionMessage` (shared
+with the app-mention handler), a bot manager copied from the production one
+(`RunDryRun`; the wiring lives in `wireBotManager` for startup and tests), and
+the query boundary (`revalidateExecutionPrincipal` plus `admitQueryTarget`,
+shared with `handleQuery`). It skips only `bindSlackInvocation`, which
+allocates a workflow trigger's run folder. A refusal carries the reply the
+user would get. Save & test calls it through
+`POST /api/human-feedback/slack/connections/{id}/dry-run` after the token
+checks pass (`frontend/.../bots/slackDryRun.ts`).
+
+## Tolerant comparisons
+
+Before the invariant, several checks were taught to accept both forms
+(`SameSlackScopePath`, `slackRouteFolderMatches`, `workspacePathsMatchForUser`
+in route checks, the owner lookup in `dedicatedSlackProfileRoute`). With the
+migration and the storage guard they are no longer load-bearing; they stay as
+defense for records written by an older client during an upgrade. New code
+relies on the invariant, not on them.

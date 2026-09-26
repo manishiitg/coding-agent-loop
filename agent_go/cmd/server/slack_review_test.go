@@ -500,12 +500,18 @@ func TestSlackProfileTurnUsesWebConversationWithoutWhatsApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bot, sid, handled, err := api.botProfileTurn(context.Background(), "bot-route", services.BotIncomingMessage{Platform: "slack", UserID: "external-sender", Text: "hello", PresetProfile: &services.ProfileRoute{ProfileID: profile.ID, ConversationKey: "main", WorkspaceUserID: "alice"}}, services.ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1.2"})
+	bot, sid, handled, err := api.botProfileTurn(context.Background(), "bot-route", services.BotIncomingMessage{Platform: "slack", UserID: "external-sender", Text: "hello", PresetProfile: &services.ProfileRoute{ProfileID: profile.ID, ConversationKey: "main", WorkspaceUserID: "alice"}}, services.ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1.2", ConnectionID: "slack_own"})
 	if err != nil || !handled || sid != conversation.SessionID {
 		t.Fatalf("Slack binding: %s %v %v", sid, handled, err)
 	}
+	// The arrival app identifies a crew's own bot at revalidation.
+	if bot["bot_connection_id"] != "slack_own" || bot["bot_thread_ts"] != "1.2" {
+		t.Fatalf("Slack crew turn lost its arrival app or thread: %v %v", bot["bot_connection_id"], bot["bot_thread_ts"])
+	}
 	delete(bot, "bot_platform")
 	delete(bot, "bot_channel_id")
+	delete(bot, "bot_connection_id")
+	delete(bot, "bot_thread_ts")
 	delete(bot, "triggered_by")
 	delete(bot, "_trusted_resume_target")
 	expected, err := queryRequestToMap(web)

@@ -86,6 +86,17 @@ func (api *StreamingAPI) dedicatedSlackProfileRoute(ctx context.Context, profile
 	route := services.ChannelRoute{ProfileID: profileID, WorkspacePath: workspacePath, BotGrant: "run", WorkshopMode: "run"}
 	ownerID := services.RouteWorkspaceUserID(route, "")
 	if ownerID == "" {
+		// A crew app saved with the logical path: resolve its owner from the
+		// one user tree that holds the project (startup repairs the stored
+		// scope; this covers a repair that could not run yet).
+		logical := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/")
+		if owners := crewProjectOwners(ctx, profileID, logical); len(owners) == 1 {
+			ownerID = owners[0]
+			workspacePath = agentProfileRuntimeWorkspace(ownerID, logical)
+			route.WorkspacePath = workspacePath
+		}
+	}
+	if ownerID == "" {
 		return nil, fmt.Errorf("project path has no owner")
 	}
 	if api == nil || api.agentProfiles == nil {

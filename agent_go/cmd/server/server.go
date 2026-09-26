@@ -2658,6 +2658,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Per-message and per-route gates still silence unrouted channels while
 	// the platform switch is off.
 	if slackSvc != nil {
+		repairLogicalCrewSlackConnections(context.Background(), slackSvc)
 		botConfig, _ := chatStore.GetBotConnectorConfig(context.Background(), "slack")
 		if slackBotConnectorWantedAtStartup(botConfig, slackSvc) && registerSlackBotConnector(botManager, slackSvc) {
 			log.Printf("✅ Slack bot mode enabled")

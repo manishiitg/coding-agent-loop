@@ -867,3 +867,37 @@ func TestLegacyLogicalCrewSlackConnectionStaysManageableByItsOwner(t *testing.T)
 		t.Fatal("another user managed alice's crew bot")
 	}
 }
+
+// RTS 2026-09-26: a crew app saved with the logical path answered every
+// mention with "This Slack route is no longer configured". Startup repairs its
+// scope from the one user tree holding the project and selects it for the crew.
+func TestRepairLogicalCrewSlackConnection(t *testing.T) {
+	_, workspace := setupSlackConnectionTest(t)
+	physical := "_users/alice/Chats/Work/projects/alpha"
+	workspace.files[physical+"/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","capabilities":{}}`
+	svc, err := ensureSlackService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := svc.CreateSlackConnection(context.Background(), services.SlackConnectionInput{
+		DisplayName: "SDE", BotToken: "xoxb-" + "repair-alpha", AppToken: "xapp-repair-alpha",
+		Enabled: false, WorkspacePath: "Chats/Work/projects/alpha", ProfileID: "work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repairLogicalCrewSlackConnections(context.Background(), svc)
+
+	repaired, ok := svc.GetConnection(conn.ID)
+	if !ok || repaired.WorkspacePath != physical {
+		t.Fatalf("scope = %q, want %q", repaired.WorkspacePath, physical)
+	}
+	// GetConnection masks tokens; the tail shows they were kept.
+	if !strings.HasSuffix(repaired.BotToken, "lpha") || !strings.HasSuffix(repaired.AppToken, "lpha") || repaired.Enabled {
+		t.Fatalf("repair changed tokens or enabled state: %+v", repaired)
+	}
+	if selected, err := productSlackConnectionID(context.Background(), "work", physical); err != nil || selected != conn.ID {
+		t.Fatalf("crew did not select its repaired app: %q, %v", selected, err)
+	}
+}

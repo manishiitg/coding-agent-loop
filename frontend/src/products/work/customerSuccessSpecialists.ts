@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type CustomerSuccessSpecialistId = 'customer-onboarding-coordinator' | 'product-adoption-analyst' | 'customer-health-coordinator'
+export type CustomerSuccessSpecialistId = 'customer-onboarding-coordinator' | 'product-adoption-analyst' | 'customer-health-coordinator' | 'lifecycle-analyst'
 
 type Specialist = {
   id: CustomerSuccessSpecialistId
@@ -21,6 +21,11 @@ type Specialist = {
   specialistProbe: string
   workedExample: string
   inadequateExample: string
+  setupScope?: string
+  automationRoute?: string
+  setupCase?: string
+  setupSource?: string
+  setupAccessScope?: string
 }
 
 const specialists: readonly Specialist[] = [
@@ -79,6 +84,38 @@ Reviewable output: readout readout-example-001 links register-example-001 and ru
     inadequateExample: '“All 20 invited seats adopted the product because one report was exported.” Reject: one valid first-value event proves only the agreed account-level predicate; it does not establish seat adoption or usage breadth.',
   },
   {
+    id: 'lifecycle-analyst', name: 'Lifecycle Analyst', icon: '🔁', subcategory: 'Retention',
+    role: 'SaaS activation and cohort retention analyst',
+    purpose: 'Compare mature signup cohorts under one activation and retention policy, exposing denominators, censoring and coverage before an owner decision.',
+    firstResult: 'A source-linked cohort observation with fixed activation and day-30 retention rules, eligible and mature counts, rates, coverage, and a bounded owner question.',
+    minimumInput: 'Product and tenant, signup cohort windows, activation and retention definitions, maturity cutoff, event and subscription sources, identity rule, timezone, and review owner.',
+    optionalConnections: 'Product analytics, warehouse exports and subscription billing through scoped MCPs or files; one mature cohort supports a baseline-first readout.',
+    exampleRequests: ['Compare day-30 retention for these two signup cohorts without counting immature accounts as churn.', 'Give me the first activation and retention baseline for our new SaaS cohort.'],
+    method: [
+      'Freeze exact product, tenant, signup cohort windows, eligible-account definition, activation event, day-30 retention predicate, identity join and timezone.',
+      'Read authorized product and subscription records; exclude internal/test accounts, duplicates and wrong-tenant events while recording source freshness and missing joins.',
+      'Separate mature eligible accounts from still-censored accounts; never count a cohort whose day-30 outcome window has not closed as churn.',
+      'Compute activation per eligible and retention per mature eligible with explicit numerators, denominators, policy version and comparable cohort lengths.',
+      'Report observed differences and alternative explanations as hypotheses, then ask the owner which instrumentation or experience question merits a bounded test.',
+    ],
+    evidence: 'Show cohort IDs and windows, cutoff, rule versions, distinct source references, account-level join coverage, excluded immature counts and rate arithmetic.',
+    boundary: 'Do not declare churn for immature cohorts, infer a feature caused retention, assign an individual account a risk label from cohort averages, contact customers, or change product experience from installation.',
+    handoff: 'Activation and Retention Intelligence emits cohort-retention-observation/v1 to Growth Experiment Planner only after exact cohort maturity, identity, source and rate checks. A cohort difference is an observed signal, not a causal result or approved test.',
+    deeperMethod: `## Cohort maturity and repeat rule
+
+Keep activation and retention predicates versioned. Compare equal-duration signup cohorts at the same day-30 maturity rule; wait for late billing or event records. If a cohort is immature, return pending_maturity with null retention and no trend. If only one mature cohort exists, return baseline_first. On repeats, preserve prior cohort IDs and reopen a rate only for a sourced correction; changed event semantics start a new baseline.`,
+    specialistProbe: 'Join one authorized signup cohort to product activation events and active subscription records by exact product, tenant and account IDs. Reproduce eligible, matured, activated and retained counts with day-30 cutoff. Check excluded test accounts, late records and source coverage separately; show an immature cohort as pending rather than churn and have the owner review the result.',
+    workedExample: `Fictional input: ArborDesk UK self-serve cohorts under lifecycle policy v2. June cohort has 200 eligible accounts and July cohort has 220, both mature at the 2026-09-02 cutoff. Product event and subscription exports are authorized, with about 98% identity join coverage. Day-7 activation means first scheduling workflow; day-30 retention means active paid subscription plus qualifying use in days 23–30.
+
+Reviewable output: June activated 140/200=70%, retained 120/200=60%; July activated 140/220≈63.64%, retained 110/220=50%. Difference: minus 10 percentage points in day-30 retention, with about 2% unmatched accounts in each cohort. Cause unknown. Next: check whether activation event semantics or customer mix changed before proposing a guided setup experiment. No account is labeled likely to churn.`,
+    inadequateExample: '“August retention is zero because its 30-day window has not finished; the new setup caused churn.” Reject: immature accounts are censored, and the source records cannot establish causality.',
+    setupScope: 'Confirm product, tenant, signup cohort policy, activation and retention rule versions, maturity cutoff, owner, timeframe and authorized event/billing scope.',
+    automationRoute: 'Activation and Retention Intelligence',
+    setupCase: 'Reproduce one real authorized cohort case and record the owner\'s decision.',
+    setupSource: 'Select live cohort sources only after the owner authorizes product, tenant, identity and time scope and a representative read succeeds.',
+    setupAccessScope: 'Record exact product, tenant, signup window, source revision, observation cutoff and missing access.',
+  },
+  {
     id: 'customer-health-coordinator', name: 'Customer Health Coordinator', icon: '💚', subcategory: 'Account health',
     role: 'Customer success account health coordinator',
     purpose: 'Combine first-value progress, support history, and renewal timing into a sourced account review and owner action.',
@@ -111,8 +148,8 @@ function checklist(spec: Specialist): string {
   const checks = [
     { id: 'identity', title: 'Confirm the Customer Success role', instructions: `Confirm whether ${spec.name} is this Crew's primary role or a supporting capability. Preserve an existing Crew identity and record the named owner.` },
     { id: 'skill', title: 'Verify the selected skill', instructions: `Confirm skills/${spec.id}/SKILL.md exists and ${spec.id} is selected for this Crew.` },
-    { id: 'scope', title: 'Set account and outcome scope', instructions: `Confirm the customer/account, purchased scope, intended first result, owner, timeframe, and authorized source scope. Minimum input: ${spec.minimumInput}` },
-    { id: 'access', title: 'Test source access', instructions: `Read one representative authorized source or export. ${spec.optionalConnections} Record exact account, date coverage, and missing access; a named provider is not a connected account.` },
+    { id: 'scope', title: 'Set account or cohort scope', instructions: `${spec.setupScope ?? 'Confirm the customer/account, purchased scope, intended first result, owner, timeframe, and authorized source scope.'} Minimum input: ${spec.minimumInput}` },
+    { id: 'access', title: 'Test source access', instructions: `Read one representative authorized source or export. ${spec.optionalConnections} ${spec.setupAccessScope ?? 'Record exact account, date coverage, and missing access.'} A named provider is not a connected account.` },
     { id: 'definitions', title: 'Agree on evidence and action rules', instructions: spec.specialistProbe },
     { id: 'first_result', title: 'Produce the first result', instructions: `Produce ${spec.firstResult} ${spec.evidence} Use actual authorized data; a fictional example alone does not complete this check.` },
     { id: 'review', title: 'Review the first result', instructions: 'Show a representative result to the owner and record corrections, decision, and next action before completing setup.' },
@@ -181,15 +218,15 @@ ${spec.workedExample}
 
 Reject: ${spec.inadequateExample}
 
-The example does not prove source access. Reproduce one real account case and record the owner's decision.
+The example does not prove source access. ${spec.setupCase ?? "Reproduce one real account case and record the owner's decision."}
 
 ## Source and connection choice
 
-${spec.optionalConnections} A file or export supports a first read-only result. Select a live account only after the owner authorizes scope and a representative read succeeds.
+${spec.optionalConnections} A file or export supports a first read-only result. ${spec.setupSource ?? 'Select a live account only after the owner authorizes scope and a representative read succeeds.'}
 
 ## Optional recurring work
 
-A schedule can repeat this Crew's own review. A separately proposed New Customer to First Value Automation coordinates distinct Crews; Builder must test handoffs manually before recurrence. ${spec.boundary}
+A schedule can repeat this Crew's own review. A separately proposed ${spec.automationRoute ?? 'New Customer to First Value'} Automation coordinates distinct Crews; Builder must test handoffs manually before recurrence. ${spec.boundary}
 `
 }
 

@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 64 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 65 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-eight multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-nine multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -235,7 +235,7 @@ The three inbound Sales skills include fictional worked and rejected cases align
 
 ## Customer Success
 
-The three installed Customer Success skills now include a fictional input and reviewable output, a failed output, and a role-specific identity or evidence probe. Their shared example follows the account and artifact IDs in New Customer to First Value. A real customer account and owner decision are still required to complete setup.
+The four installed Customer Success skills now include a fictional input and reviewable output, a failed output, and a role-specific identity or evidence probe. Their shared example follows the account and artifact IDs in New Customer to First Value. A real customer account and owner decision are still required to complete setup.
 
 ### Customer Onboarding Coordinator (`customer-onboarding-coordinator`)
 
@@ -250,6 +250,13 @@ The three installed Customer Success skills now include a fictional input and re
 - **First result:** [first-value readout](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/examples/first-value-readout.json) with event definition, observed state, source records, coverage gaps, and owner action.
 - **Setup proof:** verify account-to-event identity mapping, the observation window, a representative authorized product event or export, and the agreed rule for first value. Missing instrumentation is a blocker or unknown, not proof of no adoption.
 - **Later run:** compare the same event rule and account identity, record newly observed evidence, and preserve earlier unknowns or changed instrumentation.
+
+### Lifecycle Analyst (`lifecycle-analyst`)
+
+- **Use case:** measure day-7 activation and day-30 retention for defined SaaS signup cohorts, distinct from an individual account's first-value readout.
+- **First result:** [mature comparable cohorts](../../playbooks/agentic-engineering-platform/growth-analytics/activation-retention-intelligence/examples/cohort-retention-observation.json), [one baseline](../../playbooks/agentic-engineering-platform/growth-analytics/activation-retention-intelligence/examples/cohort-retention-baseline-first.json), or [pending maturity](../../playbooks/agentic-engineering-platform/growth-analytics/activation-retention-intelligence/examples/cohort-retention-pending-maturity.json), each with exact populations, rates or unknowns, source coverage and limitations.
+- **Setup proof:** freeze versioned cohort and event rules, verify a representative authorized signup/product/billing join, recompute denominators and day-30 maturity, and review unmatched accounts with the owner. [Activation and Retention Intelligence](../../playbooks/agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) accepts only validated mature evidence for its experiment slot.
+- **Later run:** wait until the full signup cohort matures and billing lag settles, preserve policy and source revisions, and start a new baseline when instrumentation changes. A cohort difference is neither causal proof nor an individual churn label.
 
 ### Customer Health Coordinator (`customer-health-coordinator`)
 
@@ -494,4 +501,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-three Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-four Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

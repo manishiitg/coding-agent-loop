@@ -211,7 +211,7 @@ All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engin
 | --- | --- |
 | [Growth Data Foundation](agentic-engineering-platform/growth-analytics/growth-data-foundation/SKILL.md) | Connect and normalize traffic, product, billing, and feedback data with durable customer identity, event quality, freshness, and provenance. |
 | [Funnel and Conversion Intelligence](agentic-engineering-platform/growth-analytics/funnel-conversion-intelligence/SKILL.md) | Propose a Funnel Analyst → Growth Experiment Planner route with ordered signup-to-paid counts, exact cohort and paid-state checks, and an owner-reviewed experiment proposal. |
-| [Activation and Retention Intelligence](agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) | Find success-predicting behaviors, explain cohort retention divergence, and measure feature adoption impact on retention and revenue. |
+| [Activation and Retention Intelligence](agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) | Compare mature SaaS signup cohorts under one rule with Lifecycle Analyst → Growth Experiment Planner, a pending experiment plan and maturity-aware checks. |
 | [Growth Experimentation and Follow-Through](agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/SKILL.md) | Prioritize evidence-backed experiments, create tracked actions, and verify shipped changes against pre-registered KPI targets. |
 | [SEO Intelligence](agentic-engineering-platform/growth-analytics/seo-intelligence/SKILL.md) | Find winnable keywords, diagnose technical SEO issues, close content gaps, and track rankings with page-level briefs. |
 | [AI Visibility Intelligence](agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) | Propose a two-Crew sampled answer-citation route that separates direct citations from mentions and failed runs, then reviews an exact-question page opportunity before any change. |
@@ -294,7 +294,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 33 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 34 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

@@ -192,6 +192,16 @@ describe('small-team catalog', () => {
     expect(success?.setupChecks).toContain('first_value_rule')
   })
 
+  it('exposes maturity-aware retention as a two-Crew proposal', () => {
+    const retention = PLAYBOOK_CATALOG.find(item => item.id === 'activation-retention-intelligence')
+    expect(retention?.version).toBe('0.2.0')
+    expect(retention?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'lifecycle-analyst', 'growth-experiment-planner',
+    ])
+    expect(retention?.handoffs?.[0].artifact_type).toBe('cohort-retention-observation/v1')
+    expect(retention?.setupChecks).toHaveLength(10)
+  })
+
   it('exposes the Customer Support case route with optional escalation', () => {
     const support = PLAYBOOK_CATALOG.find(item => item.id === 'support-case-to-reviewed-resolution')
     expect(support?.category).toBe('Customer Support')

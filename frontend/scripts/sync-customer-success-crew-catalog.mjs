@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/custom
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { customerSuccessSpecialists } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 
-if (customerSuccessSpecialists.length !== 3) throw new Error(`Expected three Customer Success Crew templates, found ${customerSuccessSpecialists.length}`)
+if (customerSuccessSpecialists.length !== 4) throw new Error(`Expected four Customer Success Crew templates, found ${customerSuccessSpecialists.length}`)
 const ids = new Set()
 const catalog = customerSuccessSpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error(`Duplicate Customer Success Crew template ${id}`)

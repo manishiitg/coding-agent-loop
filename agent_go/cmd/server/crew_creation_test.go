@@ -380,6 +380,39 @@ func TestCreateCrewProjectAppliesExpandedSalesTemplateOnBuilderAction(t *testing
 	}
 }
 
+func TestCreateCrewProjectAppliesProductFeedbackTemplateOnBuilderAction(t *testing.T) {
+	templateID := "product-feedback-coordinator"
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Product Feedback",
+		Role: "Product feedback coordinator", Purpose: "Review a sourced feedback theme",
+		TemplateID: templateID, StepInstruction: "Return a product owner decision brief.",
+		IdempotencyKey: "product-feedback-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := created.WorkspacePath
+	for _, relative := range []string{
+		"skills/" + templateID + "/SKILL.md",
+		"templates/" + templateID + "/SETUP.md",
+		"templates/" + templateID + "/TEMPLATE_SETUP.json",
+	} {
+		if mock.files[base+"/"+relative] == "" {
+			t.Fatalf("Product Crew lacks %s", relative)
+		}
+	}
+	var setup struct {
+		CompletedSteps []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if len(setup.CompletedSteps) != 0 {
+		t.Fatalf("Product setup unexpectedly completed: %+v", setup)
+	}
+}
+
 func TestCreateCrewProjectAppliesCustomerSuccessTemplateOnBuilderAction(t *testing.T) {
 	svc, mock, ctx := newCrewCreationTestEnv(t)
 	req := CreateCrewRequest{

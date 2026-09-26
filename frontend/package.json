@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:no-server": "VITE_API_BASE_URL=http://localhost:99999 vite",
-    "build": "npm run check:website-growth-catalog && npm run check:finance-crew-catalog && npm run check:marketing-crew-catalog && npm run check:sales-crew-catalog && npm run check:customer-success-crew-catalog && npm run check:customer-support-crew-catalog && npm run check:operations-crew-catalog && npm run check:engineering-crew-catalog && npm run check:qa-crew-catalog && npm run check:security-crew-catalog && npm run check:gtm-crew-catalog && npm run check:shopify-crew-catalog && npm run check:playbook-catalog && tsc -b && vite build && npm run build:report-preview && npm run check:release-assets && npm run check:bundle-budget",
+    "build": "npm run check:website-growth-catalog && npm run check:finance-crew-catalog && npm run check:marketing-crew-catalog && npm run check:sales-crew-catalog && npm run check:customer-success-crew-catalog && npm run check:customer-support-crew-catalog && npm run check:product-crew-catalog && npm run check:operations-crew-catalog && npm run check:engineering-crew-catalog && npm run check:qa-crew-catalog && npm run check:security-crew-catalog && npm run check:gtm-crew-catalog && npm run check:shopify-crew-catalog && npm run check:playbook-catalog && tsc -b && vite build && npm run build:report-preview && npm run check:release-assets && npm run check:bundle-budget",
     "check:playbook-catalog": "node scripts/check-playbook-catalog.mjs",
     "sync:website-growth-catalog": "node scripts/sync-website-growth-crew-catalog.mjs",
     "check:website-growth-catalog": "node scripts/sync-website-growth-crew-catalog.mjs --check",
@@ -20,6 +20,8 @@
     "check:customer-success-crew-catalog": "node scripts/sync-customer-success-crew-catalog.mjs --check",
     "sync:customer-support-crew-catalog": "node scripts/sync-customer-support-crew-catalog.mjs",
     "check:customer-support-crew-catalog": "node scripts/sync-customer-support-crew-catalog.mjs --check",
+    "sync:product-crew-catalog": "node scripts/sync-product-crew-catalog.mjs",
+    "check:product-crew-catalog": "node scripts/sync-product-crew-catalog.mjs --check",
     "sync:operations-crew-catalog": "node scripts/sync-operations-crew-catalog.mjs",
     "check:operations-crew-catalog": "node scripts/sync-operations-crew-catalog.mjs --check",
     "sync:engineering-crew-catalog": "node scripts/sync-engineering-crew-catalog.mjs",

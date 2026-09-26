@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(42)
+    expect(PLAYBOOK_CATALOG).toHaveLength(43)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -98,6 +98,16 @@ describe('small-team catalog', () => {
     expect(proposal?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('sales-call-brief/v1')
     expect(proposal?.setupChecks).toContain('pricing_policy')
     expect(proposal?.setupChecks).toContain('test_run')
+  })
+
+  it('exposes a Support-to-Product feedback decision with a validated theme handoff', () => {
+    const feedback = PLAYBOOK_CATALOG.find(item => item.id === 'feedback-theme-to-product-decision')
+    expect(feedback?.category).toBe('Product')
+    expect(feedback?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'feedback-review-analyst', 'product-feedback-coordinator',
+    ])
+    expect(feedback?.handoffs?.[0].artifact_type).toBe('feedback-theme-brief/v1')
+    expect(feedback?.setupChecks).toContain('action_ledger')
   })
 
   it('exposes the GTM launch route and reuses the Sales qualification handoff', () => {

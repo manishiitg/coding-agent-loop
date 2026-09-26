@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 58 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 59 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The nineteen multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -261,6 +261,15 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** verify one authorized feedback export, source scope, review policy, owner, and a theme against representative and counterexample records.
 - **Later run:** compare the same source and window rules, retain prior theme IDs and owner decisions, and avoid counting duplicate reviews as new signals.
 
+## Product
+
+### Product Feedback Coordinator (`product-feedback-coordinator`)
+
+- **Use case:** turn one validated customer feedback theme into a product owner decision against current issues and roadmap records.
+- **First result:** a sourced `product-feedback-decision/v1` with exact tenant, product, segment, theme and period; the feedback numerator, denominator and coverage; a current issue match or explicit no-match; evidence gaps; owner, proposed next step and action state. See the [illustrative decision](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/product-feedback-decision.json).
+- **Setup proof:** validate a [bounded theme brief](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/feedback-theme-brief.json), read the authorized current issue source, verify match policy and product owner, and review one real theme with counterexamples. An issue write or customer promise needs a separate exact approval and receipt.
+- **Later run:** re-read the issue state and a comparable feedback window, retain the theme and issue IDs, distinguish a new signal from repeated records, and reopen the decision only for changed evidence or owner policy.
+
 ## Operations
 
 The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/SKILL.md) Automation Playbook composes Meeting Actions Coordinator → Project Status Reporter with optional Chief of Staff review. The fictional [meeting register](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/meeting-action-register.json) and [project status](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/project-action-status.json) show its handoff; [false completion](../../playbooks/agentic-engineering-platform/operations/meeting-decision-to-owned-follow-through/examples/invalid-project-action-status.json) is rejected.
@@ -442,4 +451,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-three Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-four Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

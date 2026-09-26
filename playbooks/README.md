@@ -59,6 +59,8 @@ AgentWorks
     │   └── New Customer to First Value
     ├── Customer Support
     │   └── Support Case to Reviewed Resolution
+    ├── Product
+    │   └── Feedback Theme to Product Decision
     ├── Operations
     │   └── Meeting Decision to Owned Follow-through
     ├── GTM
@@ -73,7 +75,7 @@ AgentWorks
 
 ## Browse categories and package locations
 
-The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats **Engineering, QA, Security, GTM, Shopify, and Customer Support** as first-class browse categories. Package directories retain their canonical IDs; a browse category can link to an existing package without copying it or installing a Crew.
+The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats **Engineering, QA, Security, GTM, Shopify, Customer Support, and Product** as first-class browse categories. Package directories retain their canonical IDs; a browse category can link to an existing package without copying it or installing a Crew.
 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
@@ -84,7 +86,8 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
 | Security | Finding to Verified Remediation; Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
-| Customer Support | Support Case to Reviewed Resolution | Four Support Crews are locally installable with pending setup. Triage and Reply form the required route; Escalation is optional. Feedback analysis remains a standalone Crew task. |
+| Customer Support | Support Case to Reviewed Resolution; Feedback Theme to Product Decision crosses into Product | Four Support Crews are locally installable with pending setup. Triage and Reply form the required support-case route; Escalation is optional. Feedback & Review Analyst also supplies a validated theme to Product. |
+| Product | Feedback Theme to Product Decision | Product Feedback Coordinator is locally installable with pending setup. The route reuses Support's Feedback & Review Analyst, verifies current issue state and prepares an owner decision before any issue write or customer promise. |
 | Operations | Meeting Decision to Owned Follow-through; Invoice Intake to Reviewed Payable crosses into Finance | Six Operations Crews are locally installable with pending setup. Meeting Actions and Project Status form the required route; Chief of Staff review is optional. Document Intake also supports the invoice route; order and vendor work can start as standalone Crew jobs. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
@@ -117,6 +120,12 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Playbook | Outcome |
 | --- | --- |
 | [Support Case to Reviewed Resolution](agentic-engineering-platform/customer-support/support-case-to-reviewed-resolution/SKILL.md) | Propose Support Triage Assistant → Support Reply Drafter with optional Escalation Coordinator; validate exact case and thread handoffs, approve contact separately, and distinguish provider delivery from observed case resolution. |
+
+### Product Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Feedback Theme to Product Decision](agentic-engineering-platform/product/feedback-theme-to-product-decision/SKILL.md) | Propose Feedback & Review Analyst → Product Feedback Coordinator; validate the bounded theme and source coverage, inspect current issues, and prepare a product owner decision. Issue changes and customer promises require separate approval and receipts. |
 
 ### Operations Automation
 
@@ -237,7 +246,7 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | --- | --- |
 | [New Customer to First Value](agentic-engineering-platform/customer-success/new-customer-to-first-value/SKILL.md) | Propose Customer Onboarding Coordinator → Product Adoption Analyst handoffs for an agreed first-value result, with optional account health review. |
 
-These three Playbooks are installed as **chat-led Workflow proposals** with ten setup checks each. Installation copies guidance and pending checks. Builder must inspect existing Crews, customer sources and policies, agree on the concrete plan, wire and validate handoffs, and run a real manual case before any optional recurrence or external action is activated. See the [Crew category, use-case, and agent catalog](../docs/design/crew_template_catalog.md) for available versus planned Crew templates.
+The multi-Crew Automation Playbooks are installed as **chat-led Workflow proposals** with ten setup checks each. Installation copies guidance and pending checks. Builder must inspect existing Crews, customer sources and policies, agree on the concrete plan, wire and validate handoffs, and run a real manual case before any optional recurrence or external action is activated. See the [Crew category, use-case, and agent catalog](../docs/design/crew_template_catalog.md) for available versus planned Crew templates.
 
 ## Authoring contract
 

@@ -209,6 +209,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
     { id: 'briefing-to-proposal', from: 'briefing', to: 'proposal', artifact_type: 'sales-call-brief/v1', required: true },
     { id: 'research-to-briefing', from: 'research', to: 'briefing', artifact_type: 'account-research-brief/v1', required: false },
   ], setupChecks: ['goal_owner', 'account_meeting', 'claim_policy', 'pricing_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'feedback-theme-to-product-decision', title: 'Feedback Theme to Product Decision', description: 'Validate a bounded customer feedback theme, compare it with current product work, and prepare an owner-reviewed decision without silently creating roadmap work.', version: '0.1.0', category: 'Product', order: 1, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'feedback', agent_playbook_id: 'feedback-review-analyst', required: true, output: 'feedback-theme-brief/v1' },
+    { id: 'product', agent_playbook_id: 'product-feedback-coordinator', required: true, output: 'product-feedback-decision/v1' },
+  ], handoffs: [
+    { id: 'feedback-to-product', from: 'feedback', to: 'product', artifact_type: 'feedback-theme-brief/v1', required: true },
+  ], setupChecks: ['goal_owner', 'feedback_scope', 'product_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.3.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

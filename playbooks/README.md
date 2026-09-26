@@ -83,7 +83,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
-| Marketing | Campaign Signal to Reviewed Experiment; Growth Analytics Workflows and Website Growth Loop are adjacent | Three Marketing Crews are locally installable with pending setup. Campaign Performance and Growth Experiment are required; Competitor context is optional. |
+| Marketing | Campaign Signal to Reviewed Experiment; Growth Analytics Workflows and Website Growth Loop are adjacent | Four Marketing Crews are locally installable with pending setup. Campaign and Funnel Analysts feed distinct Growth Experiment Planner routes; Competitor context is optional. |
 | Website Growth | Website Growth Loop for the full site journey; SEO Intelligence for a focused technical issue to buyer-question review | Eleven Website Growth Crews are locally installable. SEO Intelligence binds SEO Analyst and Search Opportunity Mapper with a pending chat checklist and blocking artifact validation; Search Console is optional for a baseline-first run. |
 | Finance | Finance Operations Review; Invoice Intake to Reviewed Payable; Refund Request to Reconciled Outcome; Subscription Receivable to Verified Outcome | Four core Finance roles, Tax Export, and four billing capability packs are locally installable. The packs can share one Billing Operations Coordinator Crew; each has independent chat setup. Invoice intake reuses Operations Document Intake Assistant. Refund and receivable routes bind exact money objects and keep customer contact, provider collection and ledger actions separately reviewed. |
 | Sales | Inbound Lead-to-Meeting Review; Discovery to Reviewed Proposal; Pipeline Health to Owned Action | Seven Sales Crew templates are locally installable. The proposal route requires reviewed discovery and current pricing. The pipeline route pairs comparable-snapshot analysis with a fresh seller next-step decision. |
@@ -210,7 +210,7 @@ All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engin
 | Playbook | Outcome |
 | --- | --- |
 | [Growth Data Foundation](agentic-engineering-platform/growth-analytics/growth-data-foundation/SKILL.md) | Connect and normalize traffic, product, billing, and feedback data with durable customer identity, event quality, freshness, and provenance. |
-| [Funnel and Conversion Intelligence](agentic-engineering-platform/growth-analytics/funnel-conversion-intelligence/SKILL.md) | Analyze signup-to-purchase funnels, detect conversion changes, and attribute them to segments, pages, devices, or sources with session evidence. |
+| [Funnel and Conversion Intelligence](agentic-engineering-platform/growth-analytics/funnel-conversion-intelligence/SKILL.md) | Propose a Funnel Analyst → Growth Experiment Planner route with ordered signup-to-paid counts, exact cohort and paid-state checks, and an owner-reviewed experiment proposal. |
 | [Activation and Retention Intelligence](agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) | Find success-predicting behaviors, explain cohort retention divergence, and measure feature adoption impact on retention and revenue. |
 | [Growth Experimentation and Follow-Through](agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/SKILL.md) | Prioritize evidence-backed experiments, create tracked actions, and verify shipped changes against pre-registered KPI targets. |
 | [SEO Intelligence](agentic-engineering-platform/growth-analytics/seo-intelligence/SKILL.md) | Find winnable keywords, diagnose technical SEO issues, close content gaps, and track rankings with page-level briefs. |
@@ -294,7 +294,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 32 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 33 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

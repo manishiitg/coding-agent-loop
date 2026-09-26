@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { crewTemplates, getCrewTemplate, matchesCrewTemplateSearch, parseCrewTemplateSetupState } from './crewTemplates'
 
 describe('Marketing Crew templates', () => {
-  it('offers three distinct jobs with evidence-backed pending setup', () => {
+  it('offers four distinct jobs with evidence-backed pending setup', () => {
     const marketing = crewTemplates.filter(item => item.category === 'Marketing')
     expect(marketing.map(item => item.id)).toEqual([
       'competitor-intelligence-analyst',
       'campaign-performance-analyst',
+      'funnel-analyst',
       'growth-experiment-planner',
     ])
     for (const template of marketing) {
@@ -23,6 +24,7 @@ describe('Marketing Crew templates', () => {
     }
     expect(matchesCrewTemplateSearch(marketing[0], 'competitor positioning')).toBe(true)
     expect(marketing[1].files['skills/campaign-performance-analyst/SKILL.md']).toContain('causal')
-    expect(marketing[2].files['skills/growth-experiment-planner/SKILL.md']).toContain('stop rule')
+    expect(marketing[2].files['skills/funnel-analyst/SKILL.md']).toContain('funnel-observation/v1')
+    expect(marketing[3].files['skills/growth-experiment-planner/SKILL.md']).toContain('funnel-experiment-plan/v1')
   })
 })

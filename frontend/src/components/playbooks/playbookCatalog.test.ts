@@ -47,6 +47,15 @@ describe('small-team catalog', () => {
     expect(ai?.setupChecks).toContain('manual_test')
   })
 
+  it('offers a signup-to-paid funnel handoff to a reviewed experiment', () => {
+    const funnel = PLAYBOOK_CATALOG.find(item => item.id === 'funnel-conversion-intelligence')
+    expect(funnel?.version).toBe('0.2.0')
+    expect(funnel?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['funnel-analyst', 'growth-experiment-planner'])
+    expect(funnel?.handoffs?.[0].artifact_type).toBe('funnel-observation/v1')
+    expect(funnel?.setupChecks).toContain('identity_source')
+    expect(funnel?.setupChecks).toContain('manual_test')
+  })
+
   it('offers FinOps with cost, delivery and independent finance verification', () => {
     const finops = PLAYBOOK_CATALOG.find(item => item.id === 'cost-anomaly-to-verified-savings')
     expect(finops?.version).toBe('0.6.0')

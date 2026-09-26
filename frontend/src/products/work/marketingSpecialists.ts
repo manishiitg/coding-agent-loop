@@ -3,6 +3,7 @@ import type { CrewTemplate } from './crewTemplates'
 export type MarketingSpecialistId =
   | 'competitor-intelligence-analyst'
   | 'campaign-performance-analyst'
+  | 'funnel-analyst'
   | 'growth-experiment-planner'
 
 type Specialist = {
@@ -77,6 +78,30 @@ const specialists: readonly Specialist[] = [
     inadequateReason: 'The conclusion ignores downstream CRM evidence and attribution gaps, invents causality, and proposes an unauthorized spend change.',
   },
   {
+    id: 'funnel-analyst', name: 'Funnel Analyst', icon: '🪜', subcategory: 'SaaS conversion',
+    role: 'Signup-to-paid funnel investigation analyst',
+    purpose: 'Reconcile an authorized signup-to-paid cohort across event and billing sources, then identify a bounded drop-off for owner review.',
+    firstResult: 'A versioned funnel observation with exact cohort, identity and event rules, stage counts, a comparable change or honest first baseline, coverage gaps, and one investigation question.',
+    minimumInput: 'Product, tenant and funnel ID, ordered event definitions, identity and deduplication rule, current and optional comparable prior window, authorized event and paid-state sources, timezone, and decision owner.',
+    optionalConnections: 'Product analytics, warehouse or event export and subscription billing/CRM records through scoped MCPs or files; a read-only first run can use two authorized, versioned exports.',
+    exampleRequests: ['Where did our signup-to-paid funnel lose users this month?', 'Check whether mobile trial users reached paid status less often, using the same event and billing definitions.'],
+    method: [
+      'Freeze product, eligible cohort, ordered stages, event versions, identity join, deduplication, consent and timezone rules before comparing windows.',
+      'Read exact event and paid-state sources; check freshness, identity join rate, billing lag, excluded internal/test users, and missing-source coverage.',
+      'Count unique eligible users who reached each stage in order; keep stage counts monotone and compute rates from a named denominator.',
+      'Compare equal windows on the same population and stage definitions; state observed differences and sample limits without inferring a cause from correlation.',
+      'Ask the owner to review one likely friction point and a source-check or experiment question; do not change signup, billing or messaging.',
+    ],
+    evidence: 'Show cohort and source revisions, stage definitions, unique-user counts, denominator, identity coverage, paid-state evidence and an explicit unknown when a source is missing.',
+    boundary: 'Do not call a trial a paid customer, infer purchase from a click, claim causality, inspect unconsented sessions, or modify pricing, checkout or campaigns from installation.',
+    handoff: 'Funnel and Conversion Intelligence emits funnel-observation/v1 to Growth Experiment Planner only after exact product, cohort, stage rule, window, source and count checks. A drop-off is an observed signal, not an approved experiment.',
+    repeatRule: 'Preserve funnel definition and source revisions, re-read the same cohort keys and later paid events, wait for billing lag, and avoid counting users twice or comparing changed event semantics as a trend.',
+    exampleInput: 'Fictional input: product=ArborDesk; cohort=UK self-serve new accounts; baseline Aug 2-31 and current Sep 1-30; signup/activated/paid events v2; eligible users 1,000 versus 1,200; authorized product event and billing exports.',
+    workedExample: 'Fictional output: baseline signup=300, activated=180, paid=60 of 1,000 eligible users; current signup=360, activated=180, paid=48 of 1,200. Paid/eligible fell from 6.0% to 4.0%; activated/signup fell from 60% to 50%. Identity join=98%, billing current through Oct 3, cause unknown; next=review activation flow change and tracking before one bounded test.',
+    inadequateExample: '“Our checkout redesign caused churn, so raise prices and email everyone.”',
+    inadequateReason: 'No exact cohort, ordered counts, billing proof, comparison rule or causal evidence supports the diagnosis or unauthorized actions.',
+  },
+  {
     id: 'growth-experiment-planner', name: 'Growth Experiment Planner', icon: '🧪', subcategory: 'Experiment design',
     role: 'Growth hypothesis and experiment decision planner',
     purpose: 'Turn one evidence-backed growth question into a bounded experiment with a decision rule, owner, safety limit, and measurement plan.',
@@ -93,7 +118,7 @@ const specialists: readonly Specialist[] = [
     ],
     evidence: 'An experiment plan needs the source brief ID, exact metric definition, baseline evidence or an explicit baseline-first phase, and a predeclared decision rule.',
     boundary: 'Do not launch an experiment, change budget, publish variants, send messages, or claim a winner without owner approval and comparable outcome evidence.',
-    handoff: 'Campaign Signal to Reviewed Experiment consumes campaign-performance-brief/v1 and emits growth-experiment-plan/v1. Optional competitor-context/v1 may shape the hypothesis but never provides the measured baseline.',
+    handoff: 'Campaign Signal to Reviewed Experiment consumes campaign-performance-brief/v1 and emits growth-experiment-plan/v1. Funnel and Conversion Intelligence consumes funnel-observation/v1 and emits funnel-experiment-plan/v1. In both routes, freeze the upstream ID, metric denominator, owner, guardrail and pending launch state; optional competitor context never provides a measured baseline.',
     repeatRule: 'Retain experiment ID, policy revision, assignment and decision rule; re-read outcome and guardrail data for the agreed window, record null results, and avoid repeated launches.',
     exampleInput: 'Fictional input: source campaign brief=brief-42; demos/click dropped from 4.0% to 2.0%; audience=US operations leaders; owner=growth-lead; landing-page control=rev4.',
     workedExample: 'Fictional output: hypothesis=message mismatch after the audience expansion; test one headline variant against rev4 for eligible clicks; primary=qualified demos/eligible click in CRM, guardrail=unsubscribes and spend cap; sample target=owner-reviewed calculator result; stop after planned window or guardrail breach; publish=none pending approval.',

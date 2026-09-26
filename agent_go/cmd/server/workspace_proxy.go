@@ -16,6 +16,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/wsauth"
 )
 
 // workspaceProxyHandler creates an http.Handler that reverse-proxies to the workspace API.
@@ -105,6 +107,9 @@ func workspaceProxyHandler() http.Handler {
 		// auth of its own; it must carry the identity this server verified,
 		// never whatever the browser put in the header.
 		r.Header.Set("X-User-ID", GetUserIDFromContext(r.Context()))
+		// The workspace service token is this server's alone; the transport
+		// (wsauth, installed at startup) attaches it upstream.
+		r.Header.Del(wsauth.HeaderName)
 		// A write to a workflow's dashboard files refreshes open Report views.
 		if rel := workspaceProxyRelativePath(r); isWorkflowWorkspaceProxyWrite(r) && liveFeedReportPath(rel) {
 			defer publishReportChanged(strings.TrimPrefix(strings.TrimPrefix(rel, "api/documents/"), "api/folders/"))

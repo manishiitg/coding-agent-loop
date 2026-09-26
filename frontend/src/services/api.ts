@@ -407,7 +407,9 @@ function getWorkspaceApiBaseUrl(): string {
     logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'origin-proxy', resolved, runtime })
     return resolved
   }
-  const resolved = 'http://127.0.0.1:8081'
+  // Through the agent server's /api/wp proxy: the workspace service itself
+  // requires a token the browser never holds.
+  const resolved = `${getApiBaseUrl().replace(/\/+$/, '')}/api/wp`
   logResolvedUrlOnce('workspaceApiBaseUrl', { source: 'dev-fallback', resolved, runtime })
   return resolved
 }

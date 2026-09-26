@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/wsauth"
 	"io"
 	"net/http"
 	"net/url"
@@ -306,11 +307,11 @@ func NewLedger(workspaceAPIURL string) *Ledger {
 		baseURL: strings.TrimRight(strings.TrimSpace(workspaceAPIURL), "/"),
 		client: &http.Client{
 			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
+			Transport: wsauth.Transport(&http.Transport{
 				MaxIdleConns:        20,
 				MaxIdleConnsPerHost: 20,
 				IdleConnTimeout:     90 * time.Second,
-			},
+			}),
 		},
 	}
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "playbook_id": "new-customer-to-first-value",
-  "playbook_version": "0.1.0",
+  "playbook_version": "0.2.0",
   "checks": [
     {
       "id": "goal_owner",

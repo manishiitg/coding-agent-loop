@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-one multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-two multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -221,10 +221,10 @@ The three inbound Sales skills include fictional worked and rejected cases align
 
 ### Deal Follow-through Coordinator (`deal-follow-through-coordinator`)
 
-- **Use case:** turn one validated stale-opportunity exception into a current, seller-owned next-step decision.
-- **First result:** an exact-opportunity [action register](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/deal-action-register.json) with current CRM and activity revision, prior-contact coverage, owner, stable action key, pending decision and next check. It records no send or CRM write without a matching receipt.
-- **Setup proof:** validate a [comparable-snapshot exception](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/pipeline-exception-brief.json), re-read current opportunity and activity records, check contact and duplicate rules, and have the seller review a real next step. An export can support the read-only decision.
-- **Later run:** keep opportunity and action keys, re-read stage, owner, activity, replies and opt-outs, retire superseded suggestions, and count execution only from separately approved provider evidence.
+- **Use case:** turn a validated stale-opportunity exception into a seller-owned next step, or prepare an executed deal for CS acceptance.
+- **First result:** an exact-opportunity [action register](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/deal-action-register.json) with pending decision, or a [contract-backed Sales handoff](../../playbooks/agentic-engineering-platform/customer-success/signed-deal-to-onboarding-handoff/examples/sales-cs-handoff.json) with purchased scope and agreed first result. Neither claims a send, CRM write or onboarding start.
+- **Setup proof:** for pipeline work, validate a [comparable-snapshot exception](../../playbooks/agentic-engineering-platform/sales/pipeline-health-to-owned-action/examples/pipeline-exception-brief.json) and re-read current activity and contact state. For a signed handoff, verify executed agreement/revision, CRM account, entitlement and receiving CS owner. A Closed Won stage alone is insufficient.
+- **Later run:** keep opportunity and action or handoff keys, re-read current stage, contract, entitlement and owner as relevant, retire superseded suggestions, and count execution only from separately approved provider evidence.
 
 ### Lead Intake & Qualifier (`lead-intake-qualifier`)
 
@@ -253,9 +253,9 @@ The four installed Customer Success skills now include a fictional input and rev
 
 ### Customer Onboarding Coordinator (`customer-onboarding-coordinator`)
 
-- **Use case:** turn an authorized signed-customer handoff into an owned path to first value.
+- **Use case:** accept or return an exact signed-customer handoff, then turn an authorized handoff into an owned path to first value.
 - **First result:** milestone register with purchased scope, owner, target date, evidence, blockers, and next customer decision. See the [illustrative register](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/examples/onboarding-milestone-register.json).
-- **Setup proof:** match CRM/handoff account identity to the onboarding tracker, agree on the customer's actual first-value definition, and review one milestone and evidence source with the owner.
+- **Setup proof:** for a Sales handoff, re-read current contract and entitlement and record [receiving-owner acceptance](../../playbooks/agentic-engineering-platform/customer-success/signed-deal-to-onboarding-handoff/examples/onboarding-acceptance.json) or a blocker. Then match account identity to the onboarding tracker, agree on the first-value definition, and review one milestone and evidence source with the owner.
 - **Later run:** update stable milestone IDs and slippage reasons; do not claim completion from a plan or contact the customer without an approved route.
 
 ### Product Adoption Analyst (`product-adoption-analyst`)

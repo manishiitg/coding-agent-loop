@@ -68,7 +68,7 @@ def known_refs(raw: object, available: set[str], label: str, *, allow_empty: boo
         require(text(value, f"{label}[{index}]") in available, f"{label} cites an unknown source")
 
 
-def validate_onboarding(raw: object) -> dict:
+def validate_onboarding(raw: object, accepted_handoff: object | None = None) -> dict:
     register = base(raw, "onboarding-milestone-register")
     for field in ("register_id", "account_id", "tenant_id", "owner", "handoff_ref"):
         text(register.get(field), field)
@@ -94,6 +94,19 @@ def validate_onboarding(raw: object) -> dict:
         if state == "blocked":
             text(milestone.get("blocker"), f"{label}.blocker")
     items(register.get("limitations"), "limitations", allow_empty=True)
+    if accepted_handoff is not None:
+        acceptance = obj(accepted_handoff, "accepted_handoff")
+        require(acceptance.get("artifact_type") == "onboarding-acceptance/v1" and acceptance.get("decision") == "accepted", "signed-deal handoff needs accepted CS decision")
+        artifact_id = text(acceptance.get("artifact_id"), "accepted_handoff.artifact_id")
+        receipt = obj(acceptance.get("owner_acceptance"), "accepted_handoff.owner_acceptance")
+        require(receipt.get("owner_id") == acceptance.get("receiver_owner_id") and receipt.get("handoff_key") == acceptance.get("handoff_key") and receipt.get("contract_revision") == acceptance.get("contract_revision") and receipt.get("decision") == "accepted", "signed-deal handoff lacks exact receiving-owner receipt")
+        timestamp(receipt.get("decided_at"), "accepted_handoff.owner_acceptance.decided_at")
+        require(register["account_id"] == acceptance.get("customer_account_id") and register["tenant_id"] == acceptance.get("tenant_id"), "onboarding account differs from accepted handoff")
+        require(register.get("purchased_scope") == acceptance.get("accepted_scope"), "onboarding purchased scope differs from accepted handoff")
+        require(register.get("first_value_goal") == acceptance.get("first_value_goal"), "onboarding first-value goal differs from accepted handoff")
+        require(rule["id"] == acceptance.get("first_value_rule") and rule["target_at"] == acceptance.get("target_at"), "onboarding first-value rule differs from accepted handoff")
+        handoff_source = next((ref for ref in register["source_refs"] if ref["id"] == register["handoff_ref"]), None)
+        require(handoff_source is not None and artifact_id in handoff_source["uri"], "onboarding source does not cite exact accepted handoff")
     return register
 
 
@@ -176,6 +189,7 @@ def main() -> int:
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--onboarding", type=Path)
     parser.add_argument("--adoption", type=Path)
+    parser.add_argument("--accepted-handoff", type=Path, help="Validated onboarding-acceptance/v1 for the signed-deal route")
     args = parser.parse_args()
     if args.kind in {"adoption", "health"} and args.onboarding is None:
         parser.error(f"{args.kind} validation requires --onboarding")
@@ -183,12 +197,15 @@ def main() -> int:
         parser.error("health validation requires --adoption")
     if args.kind == "onboarding" and (args.onboarding or args.adoption):
         parser.error("onboarding validation accepts no handoff files")
+    if args.accepted_handoff and args.kind != "onboarding":
+        parser.error("--accepted-handoff applies to onboarding validation only")
     try:
         artifact = json.loads(args.artifact.read_text())
         onboarding = json.loads(args.onboarding.read_text()) if args.onboarding else None
         adoption = json.loads(args.adoption.read_text()) if args.adoption else None
+        accepted_handoff = json.loads(args.accepted_handoff.read_text()) if args.accepted_handoff else None
         if args.kind == "onboarding":
-            validate_onboarding(artifact)
+            validate_onboarding(artifact, accepted_handoff)
         elif args.kind == "adoption":
             validate_adoption(artifact, onboarding)
         else:

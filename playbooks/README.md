@@ -254,6 +254,7 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | Playbook | Outcome |
 | --- | --- |
 | [New Customer to First Value](agentic-engineering-platform/customer-success/new-customer-to-first-value/SKILL.md) | Propose Customer Onboarding Coordinator → Product Adoption Analyst handoffs for an agreed first-value result, with optional account health review. |
+| [Signed Deal to Onboarding Handoff](agentic-engineering-platform/customer-success/signed-deal-to-onboarding-handoff/SKILL.md) | Verify an executed agreement and current entitlement, then require receiving CS owner acceptance before the existing first-value route starts. |
 
 The multi-Crew Automation Playbooks are installed as **chat-led Workflow proposals** with ten setup checks each. Installation copies guidance and pending checks. Builder must inspect existing Crews, customer sources and policies, agree on the concrete plan, wire and validate handoffs, and run a real manual case before any optional recurrence or external action is activated. See the [Crew category, use-case, and agent catalog](../docs/design/crew_template_catalog.md) for available versus planned Crew templates.
 

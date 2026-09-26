@@ -26,6 +26,15 @@ class CustomerSuccessHandoffTest(unittest.TestCase):
         validator.validate_adoption(self.adoption, self.onboarding)
         validator.validate_health(self.health, self.onboarding, self.adoption)
 
+    def test_signed_deal_acceptance_feeds_exact_onboarding_register(self) -> None:
+        sales_package = PACKAGE.parent / "signed-deal-to-onboarding-handoff"
+        accepted = json.loads((sales_package / "examples/onboarding-acceptance.json").read_text())
+        register = json.loads((sales_package / "examples/onboarding-register-from-accepted.json").read_text())
+        validator.validate_onboarding(register, accepted)
+        accepted["decision"] = "needs_resolution"
+        with self.assertRaisesRegex(validator.InvalidArtifact, "accepted CS decision"):
+            validator.validate_onboarding(register, accepted)
+
     def test_completion_needs_evidence_and_known_source(self) -> None:
         self.onboarding["milestones"][0]["evidence_refs"] = []
         with self.assertRaisesRegex(validator.InvalidArtifact, "non-empty list"):

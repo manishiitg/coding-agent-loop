@@ -230,6 +230,17 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
     if any(cycle_from(slot_id) for slot_id in edges):
         fail(errors, manifest_path, "agent handoff graph contains a cycle")
     setup_checks = manifest.get("setup_checks", [])
+    if len(slots) > 1:
+        if not isinstance(setup_checks, list) or not 5 <= len(setup_checks) <= 10:
+            fail(errors, manifest_path, "multi-Crew Playbook needs five to ten tracked setup checks")
+        negative_examples = [
+            example for example in (package / "examples").glob("*.json")
+            if any(term in example.stem for term in ("invalid", "rejected", "false"))
+        ]
+        if not negative_examples:
+            fail(errors, manifest_path, "multi-Crew Playbook needs a rejected example artifact")
+        if not (package / "scripts" / "test_validate_handoff.py").is_file():
+            fail(errors, manifest_path, "multi-Crew Playbook needs an executable handoff contract suite")
     if setup_checks:
         setup_path = package / "SETUP.json"
         try:

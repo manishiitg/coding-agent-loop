@@ -31,7 +31,7 @@ Save account and tenant IDs, source scope, rule version, owners, Crew and run ID
 
 ## Validation and reporting
 
-Validate `onboarding-milestone-register/v1` before Adoption reads it. Validate `first-value-readout/v1` against the same register and rule; validate optional `customer-health-brief/v1` before reporting. Check source truth separately from structure. The reporting dashboard shows milestone states, first-value status, source coverage, blockers, owners, target dates, and run cost. Test one real manual route before recurrence.
+Validate `onboarding-milestone-register/v1` before Adoption reads it. When this follows Signed Deal to Onboarding Handoff, validate that package's artifact pair first, then validate onboarding with `--accepted-handoff` to join exact account, purchased scope, rule, target and accepted artifact. Validate `first-value-readout/v1` against the register and rule; validate optional `customer-health-brief/v1` before reporting. Check source truth separately. The reporting dashboard shows milestone states, first-value status, coverage, blockers, owners, dates and cost. Test one real manual route before recurrence.
 
 ## Guardrails
 

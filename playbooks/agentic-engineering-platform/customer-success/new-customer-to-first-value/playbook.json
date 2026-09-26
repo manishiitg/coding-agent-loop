@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "new-customer-to-first-value",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "changelog": [
+    { "version": "0.2.0", "summary": "Adds an exact accepted Sales handoff join before onboarding when the signed-deal route is selected." },
     { "version": "0.1.0", "summary": "Adds a chat-led onboarding-to-adoption proposal with validated first-value evidence and an optional account health review." }
   ],
   "title": "New Customer to First Value",

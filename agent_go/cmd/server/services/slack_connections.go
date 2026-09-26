@@ -60,8 +60,34 @@ type SlackConnectionRoute struct {
 
 // SameDestination reports whether the route points at the given scope.
 func (r SlackConnectionRoute) SameDestination(workspacePath, profileID string) bool {
-	return strings.TrimSpace(r.WorkspacePath) == strings.TrimSpace(workspacePath) &&
+	return SameSlackScopePath(r.WorkspacePath, workspacePath) &&
 		strings.TrimSpace(r.ProfileID) == strings.TrimSpace(profileID)
+}
+
+// SameSlackScopePath reports whether two scope paths name the same folder. A
+// crew has a logical form ("Chats/Work/projects/<id>", the owner's own) and a
+// physical one ("_users/<owner>/Chats/Work/projects/<id>"); a logical path
+// equals the physical path with the same suffix. Two physical paths must match
+// exactly, so different owners' folders never compare equal.
+func SameSlackScopePath(a, b string) bool {
+	a, b = cleanSlackScopePath(a), cleanSlackScopePath(b)
+	if a == b {
+		return true
+	}
+	aPhysical, bPhysical := strings.HasPrefix(a, "_users/"), strings.HasPrefix(b, "_users/")
+	if aPhysical == bPhysical {
+		return false
+	}
+	physical, logical := a, b
+	if bPhysical {
+		physical, logical = b, a
+	}
+	parts := strings.SplitN(physical, "/", 3)
+	return logical != "" && len(parts) == 3 && parts[2] == logical
+}
+
+func cleanSlackScopePath(path string) string {
+	return strings.Trim(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"), "/")
 }
 
 // NormalizeSlackChannelID canonicalizes a channel ID used as a route key.

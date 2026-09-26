@@ -841,3 +841,29 @@ func TestCrewSlackBotAcceptsTheLogicalProjectPath(t *testing.T) {
 		t.Fatalf("crew did not select its bot: %q, %v", selected, err)
 	}
 }
+
+// A crew bot saved before scopes were made physical keeps the logical path.
+// Its owner must still manage it (and can re-save it to repair the scope);
+// another user must not.
+func TestLegacyLogicalCrewSlackConnectionStaysManageableByItsOwner(t *testing.T) {
+	api, workspace := setupSlackConnectionTest(t)
+	profiles := agentprofiles.NewRegistry()
+	if err := profiles.RegisterProfile(agentprofiles.Profile{
+		ID: "work", Name: "Work", Version: 1, SystemPromptTemplate: "test", BuiltIn: true,
+		Runtime: agentprofiles.RuntimePolicy{
+			Workspace: agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.agentProfiles = profiles
+	workspace.files["_users/alice/Chats/Work/projects/alpha/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","capabilities":{}}`
+	legacy := services.SlackConnection{ID: "slack_legacy", WorkspacePath: "Chats/Work/projects/alpha", ProfileID: "work"}
+
+	if err := requireSlackConnectionAccess(slackConnectionRequest(t, "PUT", "alice", ""), api, legacy); err != nil {
+		t.Fatalf("owner locked out of a legacy crew bot: %v", err)
+	}
+	if err := requireSlackConnectionAccess(slackConnectionRequest(t, "PUT", "bob", ""), api, services.SlackConnection{ID: "slack_alice", WorkspacePath: "_users/alice/Chats/Work/projects/alpha", ProfileID: "work"}); err == nil {
+		t.Fatal("another user managed alice's crew bot")
+	}
+}

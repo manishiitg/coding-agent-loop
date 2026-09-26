@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/mail"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -224,7 +223,8 @@ func requireSlackRouteProfileOwner(ctx context.Context, api *StreamingAPI, route
 	if err != nil {
 		return "", fmt.Errorf("profile route %s has no authorized conversation: %w", profileID, err)
 	}
-	if filepath.Clean(binding.WorkspacePath) != filepath.Clean(strings.TrimSpace(route.WorkspacePath)) {
+	// The crew UI sends the logical path, the binding holds the physical one.
+	if !workspacePathsMatchForUser(userID, binding.WorkspacePath, route.WorkspacePath) {
 		return "", fmt.Errorf("Slack route profile %s does not match the selected product workspace", profileID)
 	}
 	return userID, nil

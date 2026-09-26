@@ -1312,9 +1312,11 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 			}
 			conn.Enabled = input.Enabled
 			nextPath, nextProfile := strings.TrimSpace(input.WorkspacePath), strings.TrimSpace(input.ProfileID)
-			if nextPath != conn.WorkspacePath || nextProfile != conn.ProfileID {
+			if !SameSlackScopePath(nextPath, conn.WorkspacePath) || nextProfile != conn.ProfileID {
 				// Channel routes were granted by the old scope's owner; a
 				// rescoped app must not keep answering for their destinations.
+				// Repairing a crew path's form (logical to physical) is not a
+				// rescope and keeps them.
 				conn.ChannelRoutes = nil
 			}
 			conn.WorkspacePath = nextPath

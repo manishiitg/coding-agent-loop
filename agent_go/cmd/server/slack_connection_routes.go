@@ -231,6 +231,10 @@ func requireProductSlackScopeOwner(ctx context.Context, api *StreamingAPI, profi
 		return fmt.Errorf("agent profiles are unavailable; cannot verify product ownership")
 	}
 	userID := productWorkspaceUserID(ctx)
+	// A connection saved before scopes were made physical still holds the
+	// logical path, which names the caller's own crew; resolve it so its owner
+	// is not locked out of the bot (and can re-save it to repair the scope).
+	workspacePath = productConversationRuntimeWorkspace(userID, workspacePath)
 	profile, err := api.agentProfiles.Resolve(profileID, 0, userID)
 	if err != nil {
 		return fmt.Errorf("agent profile %q is unavailable: %w", profileID, err)

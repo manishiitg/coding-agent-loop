@@ -202,6 +202,16 @@ describe('small-team catalog', () => {
     expect(retention?.setupChecks).toHaveLength(10)
   })
 
+  it('exposes exact experiment execution and outcome as a two-Crew proposal', () => {
+    const experiment = PLAYBOOK_CATALOG.find(item => item.id === 'growth-experimentation-follow-through')
+    expect(experiment?.version).toBe('0.3.0')
+    expect(experiment?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'experiment-run-coordinator', 'growth-outcome-analyst',
+    ])
+    expect(experiment?.handoffs?.[0].artifact_type).toBe('experiment-execution-record/v1')
+    expect(experiment?.setupChecks).toHaveLength(10)
+  })
+
   it('exposes the Customer Support case route with optional escalation', () => {
     const support = PLAYBOOK_CATALOG.find(item => item.id === 'support-case-to-reviewed-resolution')
     expect(support?.category).toBe('Customer Support')

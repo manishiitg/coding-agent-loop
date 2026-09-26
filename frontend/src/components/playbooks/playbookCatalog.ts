@@ -190,7 +190,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'lifecycle-to-experiment', from: 'lifecycle', to: 'experiment', artifact_type: 'cohort-retention-observation/v1', required: true },
   ], setupChecks: ['goal_owner', 'cohort_policy', 'maturity_rule', 'identity_source', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'manual_test', 'activation_choice'] },
-  { id: 'growth-experimentation-follow-through', title: 'Growth Experimentation and Follow-Through', description: 'Prioritize evidence-backed experiments, create tracked actions, and verify KPI improvement after shipping.', version: '0.2.0', category: 'Growth Analytics', order: 4, inputCount: 6, toolCount: 4, teamScope: 'small_team' },
+  { id: 'growth-experimentation-follow-through', title: 'Growth Experimentation and Follow-Through', description: 'Track one owner-approved growth experiment from exact provider launch evidence to a guarded, reproducible outcome readout; leave underpowered results inconclusive.', version: '0.3.0', changelog: [{ version: '0.3.0', summary: 'Adds a chat-led Experiment Run Coordinator to Growth Outcome Analyst route with frozen policy, launch receipts, inconclusive readouts and executable checks.' }, { version: '0.2.0', summary: 'Accepts findings from SEO and AI Visibility Intelligence in addition to funnel and lifecycle sources.' }, { version: '0.1.0', summary: 'Initial playbook release.' }], category: 'Growth Analytics', order: 4, inputCount: 7, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'run', agent_playbook_id: 'experiment-run-coordinator', required: true, output: 'experiment-execution-record/v1' },
+    { id: 'outcome', agent_playbook_id: 'growth-outcome-analyst', required: true, output: 'experiment-outcome-readout/v1' },
+  ], handoffs: [
+    { id: 'run-to-outcome', from: 'run', to: 'outcome', artifact_type: 'experiment-execution-record/v1', required: true },
+  ], setupChecks: ['goal_owner', 'frozen_plan', 'approval_rule', 'provider_scope', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'manual_test', 'activation_choice'] },
   { id: 'seo-intelligence', title: 'SEO Intelligence', description: 'Coordinate a technical SEO analyst and buyer-question mapper to find source-backed search opportunities on an approved site, with review before any page change.', version: '0.2.0', category: 'Growth Analytics', order: 5, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'technical_seo', agent_playbook_id: 'seo-analyst', required: true, output: 'seo-issue-list/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'seo-opportunity-list/v1' },

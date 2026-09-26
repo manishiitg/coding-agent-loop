@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 65 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 67 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-nine multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -179,6 +179,20 @@ The three core Billing Operations, Revenue & Close, and Spend & Payables install
 - **First result:** falsifiable hypothesis, eligible unit, one treatment, primary and guardrail metrics, baseline, sample or duration rule, stop condition, owner and next decision. The [campaign plan](../../playbooks/agentic-engineering-platform/marketing/campaign-signal-to-reviewed-experiment/examples/growth-experiment-plan.json) and [funnel plan](../../playbooks/agentic-engineering-platform/growth-analytics/funnel-conversion-intelligence/examples/funnel-experiment-plan.json) remain unlaunched.
 - **Setup proof:** review a real source brief, baseline or baseline-first decision, metric definitions, target population, change authority and safety guardrail with the owner before proposing a test.
 - **Later run:** retain experiment ID and predeclared rule, re-read comparable outcome and guardrail records, report null or incomplete results, and require a separate approved route for any launch.
+
+### Experiment Run Coordinator (`experiment-run-coordinator`)
+
+- **Use case:** verify whether one frozen and approved growth experiment actually launched in its provider, with rollout and rollback ownership.
+- **First result:** [execution record](../../playbooks/agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/examples/experiment-execution-record.json) with exact plan revision, dated approval, provider launch/exposure receipts and readout window, or an honest [pending approval](../../playbooks/agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/examples/experiment-pending-approval.json).
+- **Setup proof:** probe one approved plan revision, decision source and current provider object. A work item or plan status is not a launch receipt. Review any action route and rollback owner separately.
+- **Later run:** re-read provider state under the same experiment and variant IDs; preserve configuration revisions, prevent duplicate launches, and report rollback or changed allocation as a new state.
+
+### Growth Outcome Analyst (`growth-outcome-analyst`)
+
+- **Use case:** measure a provider-confirmed growth experiment against its frozen primary and guardrail rules.
+- **First result:** [inconclusive](../../playbooks/agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/examples/experiment-inconclusive-readout.json) or [measured](../../playbooks/agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/examples/experiment-measured-readout.json) readout with exact arm counts, rates, source revisions, sample/window gates and owner question.
+- **Setup proof:** verify the execution artifact and exposure-to-outcome identity join; reproduce one numerator, denominator and guardrail rate from authorized records. An unfinished window or missing sample stays pending or inconclusive.
+- **Later run:** wait for source lag, preserve the original plan and earlier readouts, and supersede only with sourced corrections. Shipping or rollback remains a separately approved action.
 
 ## Sales
 
@@ -501,4 +515,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-four Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-five Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

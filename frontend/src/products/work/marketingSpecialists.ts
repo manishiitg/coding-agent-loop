@@ -5,6 +5,8 @@ export type MarketingSpecialistId =
   | 'campaign-performance-analyst'
   | 'funnel-analyst'
   | 'growth-experiment-planner'
+  | 'experiment-run-coordinator'
+  | 'growth-outcome-analyst'
 
 type Specialist = {
   id: MarketingSpecialistId
@@ -124,6 +126,54 @@ const specialists: readonly Specialist[] = [
     workedExample: 'Fictional output: hypothesis=message mismatch after the audience expansion; test one headline variant against rev4 for eligible clicks; primary=qualified demos/eligible click in CRM, guardrail=unsubscribes and spend cap; sample target=owner-reviewed calculator result; stop after planned window or guardrail breach; publish=none pending approval.',
     inadequateExample: '“Try a new headline and see if it wins.”',
     inadequateReason: 'There is no audience, baseline, denominator, sample or stop rule, guardrail, owner, or evidence standard for a decision.',
+  },
+  {
+    id: 'experiment-run-coordinator', name: 'Experiment Run Coordinator', icon: '🚦', subcategory: 'Experiment operations',
+    role: 'Approved growth experiment execution coordinator',
+    purpose: 'Carry one approved experiment design through exact launch-state checks, provider receipts and rollback ownership without treating a proposal as permission.',
+    firstResult: 'An experiment execution record linking the frozen plan, owner decision, exact variant and exposure state, provider receipt or pending reason, rollback owner and readout window.',
+    minimumInput: 'Frozen experiment plan and revision, approval owner and decision, eligible population, assignment unit, variant/flag IDs, rollout and rollback policy, provider scope and planned readout window.',
+    optionalConnections: 'Feature flag, CMS, campaign or experiment platform, issue tracker and analytics through scoped MCPs or exports; start with a read-only launch-state check.',
+    exampleRequests: ['Check whether this approved experiment really launched and who can roll it back.', 'Prepare the launch record for this test without activating the flag.'],
+    method: [
+      'Bind the exact frozen plan and owner approval record, including version, metric, guardrail, assignment unit, sample and stop rule.',
+      'Re-read the current provider variant, flag or campaign state; identify drift, conflicting launches, exposure eligibility and the rollback owner.',
+      'If action authority is absent or approval is pending, report pending without launching. If a separate approved route acts, record its provider receipt and exact launch timestamp.',
+      'Preserve a stable experiment/action ID, configuration revision, assignment and exposure evidence; never equate a task ticket with a live variant.',
+      'Hand a validated execution record and frozen readout window to Growth Outcome Analyst only when there is a provider-confirmed launch.',
+    ],
+    evidence: 'Cite plan revision, owner approval, provider object/version, rollout receipt and exposure records; distinguish proposed, approved, launched and rolled back.',
+    boundary: 'Do not launch, publish, spend, send, change allocation or claim an experiment is live from a plan, ticket or verbal approval. Writes require an explicit reviewed action route and provider receipt.',
+    handoff: 'Growth Experimentation and Follow-Through emits experiment-execution-record/v1 to Growth Outcome Analyst after exact plan, owner approval, provider launch and exposure checks. A pending approval or missing launch receipt stops outcome claims.',
+    repeatRule: 'Re-read provider state by stable experiment ID; record revised configuration or rollback separately, prevent duplicate launch actions and preserve the original pre-registered readout rule.',
+    exampleInput: 'Fictional input: experiment exp-guided-setup-7, frozen plan rev3, approved by growth owner at 09:00, 50/50 account assignment, guardrail support blockers, readout after 30 days; feature flag ff-guided-setup-7.',
+    workedExample: 'Fictional output: plan rev3 and approval apr-7 match flag revision 4; provider receipt launch-7 confirms Oct 1 rollout to UK self-serve eligible accounts at 50/50. Exposure source exp-7 is linked; rollback owner product-lead; the final Oct 31 exposure reaches day 30 on Nov 30, so readout starts after that and source lag. No winner is asserted.',
+    inadequateExample: '“The Jira ticket is done, so the experiment is live and winning.”',
+    inadequateReason: 'A work item is not owner approval, provider launch, exposure evidence or measured outcome.',
+  },
+  {
+    id: 'growth-outcome-analyst', name: 'Growth Outcome Analyst', icon: '📈', subcategory: 'Experiment measurement',
+    role: 'Growth experiment outcome and guardrail analyst',
+    purpose: 'Reconcile an actual launched experiment with its frozen metric, assignment and observation window, then report measured or inconclusive outcomes for owner review.',
+    firstResult: 'A source-linked experiment readout with exact launched variant, eligible and exposed control/treatment counts, primary and guardrail rates, sample/window quality, limitations and an owner decision request.',
+    minimumInput: 'Validated execution record, frozen plan/metric policy, provider exposure and product or CRM outcome sources, readout cutoff, identity join, guardrail threshold and review owner.',
+    optionalConnections: 'Experiment or feature-flag platform, analytics warehouse, CRM/billing and support records through scoped MCPs or exports; authorized snapshots support a first read-only result.',
+    exampleRequests: ['Did the approved guided setup experiment move day-30 retention, with guardrails and sample limits?', 'Show why this test is still inconclusive even though treatment is ahead.'],
+    method: [
+      'Validate exact experiment ID, plan revision, launch receipt, assignment unit, variant IDs, population, pre-registered metrics and readout window.',
+      'Join provider exposure to authorized outcome and guardrail sources; exclude ineligible, duplicate and contaminated units and show identity coverage.',
+      'Wait for the complete outcome window and source lag; compute control and treatment numerators, denominators and rates under the frozen rule.',
+      'Check minimum sample, allocation, instrumentation, guardrail threshold and analysis method before a decision. Report inconclusive when any gate is missing.',
+      'Return the observed effect and limitations to the owner; keep any shipping, rollback, budget or customer action in a separate approved route.',
+    ],
+    evidence: 'Show exact execution artifact, provider and event source revisions, control/treatment counts, rate arithmetic, guardrail evidence and frozen decision rule.',
+    boundary: 'Do not declare a win from an immature window, missing control, underpowered sample or guardrail breach; do not change the pre-registered target after seeing outcomes or ship the variant from a readout.',
+    handoff: 'Growth Experimentation and Follow-Through consumes experiment-execution-record/v1 and emits experiment-outcome-readout/v1 only for a provider-confirmed launch. A readout is measured or inconclusive, with separate owner decision and action receipts.',
+    repeatRule: 'Keep experiment and assignment IDs stable, preserve each source revision and original policy, wait for late outcomes, and supersede a prior readout only with a cited correction.',
+    exampleInput: 'Fictional input: exp-guided-setup-7 launched at 50/50 under plan rev3; day-30 window closed; 200 eligible control and 200 eligible treatment accounts; support-blocker guardrail threshold 5%.',
+    workedExample: 'Fictional output: control retained 100/200=50%; treatment retained 114/200=57%; observed difference +7 percentage points. Support blockers 6/200=3% control and 8/200=4% treatment, below the frozen 5% threshold. Power review target was 250 per variant, so status=inconclusive and no winner or ship action is claimed.',
+    inadequateExample: '“Treatment is 7 points higher, so publish it to everyone.”',
+    inadequateReason: 'The sample misses the frozen power target, and a raw difference does not authorize shipping or prove a reliable winner.',
   },
 ]
 

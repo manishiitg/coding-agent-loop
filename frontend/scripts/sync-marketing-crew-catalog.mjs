@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(frontendRoot, 'src/products/work/market
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
 const { marketingSpecialists } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'))
 
-if (marketingSpecialists.length !== 4) throw new Error('Expected four Marketing Crew templates, found ' + marketingSpecialists.length)
+if (marketingSpecialists.length !== 6) throw new Error('Expected six Marketing Crew templates, found ' + marketingSpecialists.length)
 const ids = new Set()
 const catalog = marketingSpecialists.map(({ id, version, name, role, purpose, selectedSkills, files, setupPath }) => {
   if (ids.has(id)) throw new Error('Duplicate Marketing Crew template ' + id)

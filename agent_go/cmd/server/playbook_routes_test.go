@@ -254,6 +254,44 @@ func TestRetentionInstallationCopiesMaturityContractAndPendingSetup(t *testing.T
 	}
 }
 
+func TestExperimentFollowThroughCopiesReceiptContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("growth-experimentation-follow-through")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(item.AgentSlots) != 2 || len(item.Handoffs) != 1 || len(item.SetupChecks) != 10 {
+		t.Fatalf("experiment team contract = %+v", item)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/experiment"
+	const skill = "agentworks-playbook-growth-experimentation-follow-through"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py", "examples/frozen-experiment-plan.json", "examples/experiment-execution-record.json", "examples/experiment-pending-approval.json", "examples/experiment-pending-window.json", "examples/experiment-inconclusive-readout.json", "examples/experiment-measured-readout.json", "examples/invalid-experiment-execution.json", "examples/invalid-experiment-readout.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("experiment installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+		Checks     []struct {
+			ID string `json:"id"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 || len(setup.Checks) != 10 {
+		t.Fatalf("experiment setup is not pending with ten checks: %+v", setup)
+	}
+}
+
 func TestWorkflowGuideInstallationDoesNotClaimCrewSetup(t *testing.T) {
 	item, err := findPlaybook("basic-browser-setup")
 	if err != nil {

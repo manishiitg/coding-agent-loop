@@ -147,11 +147,25 @@ func TestSharedAssetLinksLargeDownloadsAndRevocation(t *testing.T) {
 			t.Fatal("restricted download accepted", restriction.Name, denied.Code)
 		}
 	}
+	// One token per account: each Issue above revoked the reader's previous
+	// token, so issue the full token again before checking removal —
+	// otherwise the refusal below would come from the replaced token, not
+	// from the lost workflow access this step is about.
+	token, raw, err = store.Issue(context.Background(), accesstokens.Token{Name: "reader", UserID: "reader", Username: "reader", Scopes: []string{"files:read"}, WorkflowIDs: []string{"invoices"}, ExpiresAt: now.Add(time.Hour)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+raw)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, request)
+	if w.Code != 200 {
+		t.Fatal("the reader's reissued token was refused before removal", w.Code, w.Body.String())
+	}
 	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","access":{"owners":["owner"],"readers":[]}}`)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, request)
 	if w.Code != 403 && w.Code != 404 {
-		t.Fatal("removed reader retains PAT download access", w.Code)
+		t.Fatal("removed reader retains PAT download access", w.Code, w.Body.String())
 	}
 	if err = store.Revoke(context.Background(), token.ID, "reader", now); err != nil {
 		t.Fatal(err)

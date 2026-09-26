@@ -74,7 +74,7 @@ func TestCodingCLILifecycleMatrixHermeticTmux(t *testing.T) {
 			}
 
 			killLifecycleContractTmux(t, tmuxSession)
-			api.reapRateLimitedCodingSessionsOnce(map[string]codingWatchdogObservation{})
+			reapUntilMissingPaneConfirmed(api)
 
 			snapshot := mustLifecycleTerminal(t, store, sessionID+":"+executionID)
 			if snapshot.State != "failed" || snapshot.ProcessState != "closed" || snapshot.TmuxSession != "" || snapshot.CloseReason == "" {
@@ -129,7 +129,7 @@ func TestCodingCLILifecycleMatrixHermeticTmux(t *testing.T) {
 			}
 
 			killLifecycleContractTmux(t, tmuxSession)
-			api.reapRateLimitedCodingSessionsOnce(map[string]codingWatchdogObservation{})
+			reapUntilMissingPaneConfirmed(api)
 
 			if got := api.activeSessions[sessionID].Status; got != "error" {
 				t.Fatalf("main session status = %q, want error", got)
@@ -385,4 +385,15 @@ func mustLifecycleTerminal(t *testing.T, store *terminals.Store, terminalID stri
 		t.Fatalf("terminal %s not found", terminalID)
 	}
 	return snapshot
+}
+
+// reapUntilMissingPaneConfirmed runs the watchdog as many passes as it takes
+// to confirm a vanished pane (codingWatchdogMissingConfirmChecks), sharing
+// its streak like the real ticker, so cleanup that is still settling is not
+// mistaken for a crash.
+func reapUntilMissingPaneConfirmed(api *StreamingAPI) {
+	streak := map[string]codingWatchdogObservation{}
+	for i := 0; i < codingWatchdogMissingConfirmChecks; i++ {
+		api.reapRateLimitedCodingSessionsOnce(streak)
+	}
 }

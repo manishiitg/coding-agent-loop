@@ -523,7 +523,12 @@ func TestChatSubmissionLiveInputDiscoversSavedWorkflowAfterRestart(t *testing.T)
 	events := internalevents.NewEventStore(10)
 	defer events.Stop()
 	events.SetSessionOwner(session, owner)
-	api := &StreamingAPI{eventStore: events, runningAgents: map[string]*mcpagent.Agent{session: testCodingAgent(llm.ProviderOpenAI, "gpt-5")}, agentCancelFuncs: map[string]context.CancelFunc{session: func() {}}}
+	api := &StreamingAPI{eventStore: events, runningAgents: map[string]*mcpagent.Agent{session: testCodingAgent(llm.ProviderOpenAI, "gpt-5")}, agentCancelFuncs: map[string]context.CancelFunc{session: func() {}},
+		// This test is about the durable project after a restart; delivery
+		// into the retained CLI is simulated.
+		internalUserMessageDeliveryHandler: func(context.Context, *mcpagent.Agent, mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			return mcpagent.UserMessageDeliveryResult{DeliveryStatus: mcpagent.UserMessageDeliveryStatusQueuedForInjection}, nil
+		}}
 	r := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session+"/live-input", bytes.NewBufferString(`{"message":"follow up after restart"}`))
 	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: owner}))
 	r = mux.SetURLVars(r, map[string]string{"session_id": session})

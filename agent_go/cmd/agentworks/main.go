@@ -329,10 +329,12 @@ func openLoginBrowser(link string) {
 		command = "open"
 	}
 	cmd := exec.Command(command, link)
-	_ = cmd.Start()
-	if cmd.Process != nil {
-		_ = cmd.Process.Release()
+	if err := cmd.Start(); err != nil {
+		return
 	}
+	// Reap the opener in the background: it exits as soon as the browser
+	// takes the link, and an unwaited child stays <defunct> (PLAT-150).
+	go func() { _ = cmd.Wait() }()
 }
 
 func skillsCommand(o *options) *cobra.Command {

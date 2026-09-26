@@ -351,12 +351,22 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 
 	sessionID := "queued-delivery-session"
 	runningAgent := testCodingAgent(llm.ProviderOpenAI, "gpt-5")
+	delivered := 0
 	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
 		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
 		agentCancelMux:   sync.RWMutex{},
+		// A turn in flight takes the message into its queue (an idle agent
+		// refuses it; see TestHandleLiveInputMessageIdleAgentRefusalIsDefinite).
+		internalUserMessageDeliveryHandler: func(_ context.Context, gotAgent *mcpagent.Agent, req mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			delivered++
+			if gotAgent != runningAgent || req.Message != "send this through delivery" {
+				t.Fatalf("delivery = agent %p message %q, want the running agent and the message", gotAgent, req.Message)
+			}
+			return mcpagent.UserMessageDeliveryResult{DeliveryStatus: mcpagent.UserMessageDeliveryStatusQueuedForInjection}, nil
+		},
 	}
 
 	body := bytes.NewBufferString(`{"message":"send this through delivery"}`)
@@ -375,6 +385,33 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 	}
 	if response.DeliveryStatus != "queued_for_injection" {
 		t.Fatalf("delivery_status = %q, want queued_for_injection", response.DeliveryStatus)
+	}
+	if delivered != 1 {
+		t.Fatalf("delivered %d times, want once through agent delivery", delivered)
+	}
+}
+
+// An agent with no turn running refuses a live message (nothing delivered).
+// That is definite: with no previous request to start a turn from, the
+// answer is a plain 409 — never "delivery uncertain", which would block
+// sending the message again.
+func TestHandleLiveInputMessageIdleAgentRefusalIsDefinite(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+	sessionID := "idle-agent-session"
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: testCodingAgent(llm.ProviderOpenAI, "gpt-5")},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", bytes.NewBufferString(`{"message":"hello again"}`))
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+	api.handleLiveInputMessage(rr, req)
+	if rr.Code != http.StatusConflict || strings.Contains(rr.Body.String(), "delivery_uncertain") {
+		t.Fatalf("idle agent refusal = %d %s, want a definite 409", rr.Code, rr.Body.String())
 	}
 }
 

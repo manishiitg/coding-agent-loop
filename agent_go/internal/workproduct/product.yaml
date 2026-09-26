@@ -201,6 +201,7 @@ instruction_sections:
   - workspace-map
   - project-memory
   - product-features
+  - trigger-auto-notify
   - llm-capability
   - workflow-context
   - work-folders

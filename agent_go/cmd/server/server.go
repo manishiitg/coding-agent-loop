@@ -10367,6 +10367,16 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		log.Printf("[LIVE INPUT] Live input unavailable for provider %s session %s: %v", mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider, sessionID, err)
+		// The agent refused because no turn is running to take the message:
+		// nothing was delivered, so this is definite, not uncertain. Start
+		// the next turn with it, as /api/query does (liveInputErrorProvesNoTarget).
+		if liveInputErrorProvesNoTarget(err) {
+			if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
+				return
+			}
+			http.Error(w, "No active foreground turn for this session", http.StatusConflict)
+			return
+		}
 		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 		return
 	}

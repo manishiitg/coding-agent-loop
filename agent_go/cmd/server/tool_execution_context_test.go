@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
+	"time"
 
 	events "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
@@ -81,8 +83,12 @@ func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T
 
 func TestToolExecutionContextAdmitsRegisteredWorkflowChildSession(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "false")
-	const parentSession = "schedule-cron--daily-tool-context-test"
-	const childSession = "session-group-default-tool-context-test"
+	// Unique per run: CloseHTTPSession marks the child stopped for good
+	// (zombie prevention), so the topology matrix re-running this test with
+	// fixed IDs found the child already stopped and rejected it.
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	parentSession := "schedule-cron--daily-tool-context-" + suffix
+	childSession := "session-group-default-tool-context-" + suffix
 	registry := mcpclient.GetSessionRegistry()
 	registry.RegisterHTTPSession(parentSession, childSession)
 	t.Cleanup(func() { registry.CloseHTTPSession(parentSession) })

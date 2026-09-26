@@ -24,11 +24,11 @@ func TestProfileQueryModelMustBelongToEngineProvider(t *testing.T) {
 	profile := engineModelTestProfile()
 	conversation := ProductConversationRecord{SessionID: "s", WorkspacePath: "Chats/P", ConversationKey: "main"}
 
-	req, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{Message: "hi", Engine: "claude-code", ModelID: "claude-opus-5"}, conversation)
+	req, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{Message: "hi", Engine: "claude-code", ModelID: "claude-opus-5-5"}, conversation)
 	if err != nil {
 		t.Fatalf("catalog model rejected: %v", err)
 	}
-	if req.Provider != "claude-code" || req.ModelID != "claude-opus-5" {
+	if req.Provider != "claude-code" || req.ModelID != "claude-opus-5-5" {
 		t.Fatalf("provider/model = %q/%q", req.Provider, req.ModelID)
 	}
 

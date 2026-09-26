@@ -30,7 +30,7 @@ The browse catalog now names **twelve first-class categories**: Finance, Marketi
 
 In the category tables below, an unlinked suggested Automation name is an idea, not an installable Playbook. A linked existing Workflow Playbook can be installed separately, but it does not make its proposed Crew identity or a new cross-category handoff available.
 
-## Thirty-six installable Automation Playbooks
+## Thirty-seven installable Automation Playbooks
 
 | Playbook and use case | Required Crew capabilities | Optional capabilities | First reviewable result | Manual first-run proof and outcome |
 | --- | --- | --- | --- | --- |
@@ -260,10 +260,10 @@ The four Crew templates are locally installable. The **Support Case to Reviewed 
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Support Triage Assistant** — available v1 | Classify one current case, its urgency, duplicate state, owner, and next review. | Authorized case and thread, priority policy, owner. | Support Case to Reviewed Resolution |
-| **Support Reply Drafter** — available v1 | Prepare a grounded unsent reply for the exact case, recipient, and channel. | Current case, approved help sources, contact and approval policy. | Support Case to Reviewed Resolution |
-| **Escalation Coordinator** — available v1, optional specialist | Keep an impact brief current and track receiving-owner acceptance. | Escalation policy, case history, receiving team and deadline. | Optional escalation slot in Support Case to Reviewed Resolution |
-| **Feedback & Review Analyst** — available v1 | Analyze a bounded feedback set into sourced themes and an owner action; public replies remain drafts. | Review or feedback export, time window, source coverage, response policy. | Feedback Theme to Product Decision |
+| **Support Triage Assistant** — available v2 | Classify one current case, its urgency, duplicate state, owner, and next review. | Authorized case and thread, priority policy, owner. | Support Case to Reviewed Resolution |
+| **Support Reply Drafter** — available v2 | Prepare a grounded unsent reply for the exact case, recipient, and channel. | Current case, approved help sources, contact and approval policy. | Support Case to Reviewed Resolution |
+| **Escalation Coordinator** — available v2, optional specialist | Keep an impact brief current and track receiving-owner acceptance. | Escalation policy, case history, receiving team and deadline. | Optional escalation slot in Support Case to Reviewed Resolution |
+| **Feedback & Review Analyst** — available v2 | Analyze a bounded feedback set into sourced themes and an owner action; public replies remain drafts. | Review or feedback export, time window, source coverage, response policy. | Feedback Theme to Product Decision |
 
 ## Product
 
@@ -321,12 +321,12 @@ This is Marketing outside the Website Growth subcategory. All six Crew rows belo
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Competitor Intelligence Analyst** — available v1, optional specialist | Track exact competitor product and plan changes with dated prior/current primary sources, relevance and unknowns. | Own offer and buyer, bounded competitor list, topics, baseline, market, owner. | Optional context slot in Campaign Signal to Reviewed Experiment; standalone competitor watch remains a separately reviewed route. |
-| **Campaign Performance Analyst** — available v1 | Compare platform spend and clicks with deduplicated qualified CRM events under the same period and attribution rule. | Campaign/account IDs, current and baseline records, qualified-event definition, time zone, owner. | Required measurement slot in Campaign Signal to Reviewed Experiment. |
-| **Funnel Analyst** — available v1 | Reconcile one eligible signup-to-paid cohort across product events and billing with stage counts, identity coverage, comparable windows and no causal claim. | Product/tenant/cohort, event and paid-state definitions, identity rule, baseline/current sources, timezone and owner. | Required observation slot in Funnel and Conversion Intelligence. |
-| **Growth Experiment Planner** — available v1 | Turn a sourced signal into one falsifiable test with eligible unit, primary and guardrail metrics, sample/stop rule, owner and approval boundary. | Source brief, baseline, target audience, metric and constraints, change authority. | Required plan slot in Campaign Signal to Reviewed Experiment, Funnel and Conversion Intelligence, and Activation and Retention Intelligence. |
-| **Experiment Run Coordinator** — available v1 | Verify exact plan approval, provider launch and exposure evidence while preserving rollback ownership. | Frozen plan/revision, owner decision, provider object, variants, population, assignment and readout window. | First slot in Growth Experimentation and Follow-Through. |
-| **Growth Outcome Analyst** — available v1 | Recompute primary and guardrail outcomes against the frozen rule and report measured or inconclusive evidence. | Validated execution record, exposure and outcome sources, sample/window gates, owner. | Second slot in Growth Experimentation and Follow-Through. |
+| **Competitor Intelligence Analyst** — available v2, optional specialist | Track exact competitor product and plan changes with dated prior/current primary sources, relevance and unknowns. | Own offer and buyer, bounded competitor list, topics, baseline, market, owner. | Optional context slot in Campaign Signal to Reviewed Experiment; standalone competitor watch remains a separately reviewed route. |
+| **Campaign Performance Analyst** — available v2 | Compare platform spend and clicks with deduplicated qualified CRM events under the same period and attribution rule. | Campaign/account IDs, current and baseline records, qualified-event definition, time zone, owner. | Required measurement slot in Campaign Signal to Reviewed Experiment. |
+| **Funnel Analyst** — available v2 | Reconcile one eligible signup-to-paid cohort across product events and billing with stage counts, identity coverage, comparable windows and no causal claim. | Product/tenant/cohort, event and paid-state definitions, identity rule, baseline/current sources, timezone and owner. | Required observation slot in Funnel and Conversion Intelligence. |
+| **Growth Experiment Planner** — available v2 | Turn a sourced signal into one falsifiable test with eligible unit, primary and guardrail metrics, sample/stop rule, owner and approval boundary. | Source brief, baseline, target audience, metric and constraints, change authority. | Required plan slot in Campaign Signal to Reviewed Experiment, Funnel and Conversion Intelligence, and Activation and Retention Intelligence. |
+| **Experiment Run Coordinator** — available v2 | Verify exact plan approval, provider launch and exposure evidence while preserving rollback ownership. | Frozen plan/revision, owner decision, provider object, variants, population, assignment and readout window. | First slot in Growth Experimentation and Follow-Through. |
+| **Growth Outcome Analyst** — available v2 | Recompute primary and guardrail outcomes against the frozen rule and report measured or inconclusive evidence. | Validated execution record, exposure and outcome sources, sample/window gates, owner. | Second slot in Growth Experimentation and Follow-Through. |
 
 ## Operations
 
@@ -334,12 +334,12 @@ All six Crew roles below are locally installable with pending nine-check chat se
 
 | Crew template | Job and first useful output | Minimum user input | Suggested Automation |
 | --- | --- | --- | --- |
-| **Chief of Staff** — available v1, optional specialist | Synthesize sourced priorities, blockers, and owner decisions into an operator brief. | Goal IDs, current updates, decision owner, reporting period. | Optional review slot in Meeting Decision to Owned Follow-through |
-| **Meeting Actions Coordinator** — available v1 | Extract explicit decisions and action items with source spans, owner acceptance, due dates, and duplicate links. | Authorized notes revision, participant map, task convention. | Meeting Decision to Owned Follow-through |
-| **Project Status Reporter** — available v1 | Reconcile milestones and tasks to source-observed open, blocked, done, or pending state. | Project and task IDs, tracker state, status rules, reporting owner. | Meeting Decision to Owned Follow-through |
-| **Order Operations Coordinator** — available v1 | Investigate generic commerce or ERP order exceptions and prepare reviewed next actions. | Order, fulfillment and carrier records, policy, owner. | Standalone Crew; Order Watchdog Automation remains proposed |
-| **Vendor Researcher** — available v1 | Compare exact vendor products and plans against weighted criteria with evidence and cost assumptions. | Requirements, vendor scope, budget, security constraints, decision owner. | Vendor Evaluation to Purchase Decision when procurement needs a distinct owner |
-| **Document Intake Assistant** — available v1 | Extract customer-defined fields with source spans, validation, duplicate check, and reviewer queue. | Authorized documents, schema, privacy and duplicate rules, owner. | Invoice Intake to Reviewed Payable for vendor invoices; broader Document Intake Queue Automation remains proposed |
+| **Chief of Staff** — available v2, optional specialist | Synthesize sourced priorities, blockers, and owner decisions into an operator brief. | Goal IDs, current updates, decision owner, reporting period. | Optional review slot in Meeting Decision to Owned Follow-through |
+| **Meeting Actions Coordinator** — available v2 | Extract explicit decisions and action items with source spans, owner acceptance, due dates, and duplicate links. | Authorized notes revision, participant map, task convention. | Meeting Decision to Owned Follow-through |
+| **Project Status Reporter** — available v2 | Reconcile milestones and tasks to source-observed open, blocked, done, or pending state. | Project and task IDs, tracker state, status rules, reporting owner. | Meeting Decision to Owned Follow-through |
+| **Order Operations Coordinator** — available v2 | Investigate generic commerce or ERP order exceptions and prepare reviewed next actions. | Order, fulfillment and carrier records, policy, owner. | Standalone Crew; Order Watchdog Automation remains proposed |
+| **Vendor Researcher** — available v2 | Compare exact vendor products and plans against weighted criteria with evidence and cost assumptions. | Requirements, vendor scope, budget, security constraints, decision owner. | Vendor Evaluation to Purchase Decision when procurement needs a distinct owner |
+| **Document Intake Assistant** — available v2 | Extract customer-defined fields with source spans, validation, duplicate check, and reviewer queue. | Authorized documents, schema, privacy and duplicate rules, owner. | Invoice Intake to Reviewed Payable for vendor invoices; broader Document Intake Queue Automation remains proposed |
 
 ## Engineering
 

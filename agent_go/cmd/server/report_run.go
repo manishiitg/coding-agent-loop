@@ -62,35 +62,16 @@ type reportRunSelection struct {
 	variables     bool
 }
 
-// isReportRunCrewRoot: a physical crew project root,
-// _users/<owner>/Chats/Work/projects/<id>, never a folder inside one.
-func isReportRunCrewRoot(workspacePath string) bool {
+// isReportRunWorkflowRoot: exactly Workflow/<name>, never a folder inside one.
+func isReportRunWorkflowRoot(workspacePath string) bool {
 	segments := strings.Split(strings.Trim(workspacePath, "/"), "/")
-	return len(segments) == 6 && segments[0] == "_users" && segments[1] != "" &&
-		segments[2] == "Chats" && segments[3] == "Work" && segments[4] == "projects" && segments[5] != "" &&
-		!strings.HasPrefix(segments[5], ".")
-}
-
-// reportRunPhysicalCrewRoot: the owner's own crew Dashboard addresses its
-// project by the user-relative path (Chats/Work/projects/<id>); the workspace
-// service resolves that under the caller's own _users/<id>/ tree, so do the
-// same. Physical paths (a reader viewing someone else's crew) pass through.
-func reportRunPhysicalCrewRoot(callerID, workspacePath string) string {
-	segments := strings.Split(strings.Trim(workspacePath, "/"), "/")
-	if len(segments) != 4 || segments[0] != "Chats" || segments[1] != "Work" || segments[2] != "projects" || segments[3] == "" {
-		return workspacePath
-	}
-	owner := sanitizeUserIDForPath(callerID)
-	if owner == "" {
-		return workspacePath
-	}
-	return "_users/" + owner + "/" + strings.Join(segments, "/")
+	return len(segments) == 2 && segments[0] == "Workflow" && segments[1] != "" && !strings.HasPrefix(segments[1], ".")
 }
 
 // reportRunSelectionFor reads the selection without migrating or writing
 // anything: a reader's refresh must never touch the owner's manifest.
 func reportRunSelectionFor(ctx context.Context, workspacePath string) (reportRunSelection, error) {
-	if isReportRunCrewRoot(workspacePath) {
+	if _, isCrew := parseCrewPath("", workspacePath); isCrew {
 		servers, _, err := productSelectedServers(ctx, "work", workspacePath)
 		if err != nil {
 			return reportRunSelection{}, err
@@ -154,10 +135,14 @@ func (api *StreamingAPI) handleReportRun(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	workspacePath, err := reportPreviewWorkspace(r, claims, body.Workspace)
+	crew, isCrew := crewPathRef{}, false
 	if err == nil {
-		workspacePath = reportRunPhysicalCrewRoot(claims.UserID, workspacePath)
+		crew, isCrew = resolveCrewPath(r.Context(), claims.UserID, workspacePath)
+		if isCrew && crew.Rest == "" {
+			workspacePath = crew.Root
+		}
 	}
-	if err != nil || (!strings.HasPrefix(workspacePath, "Workflow/") && !isReportRunCrewRoot(workspacePath)) {
+	if err != nil || (isCrew && crew.Rest != "") || (!isCrew && !isReportRunWorkflowRoot(workspacePath)) {
 		http.Error(w, "a workflow or crew workspace is required", http.StatusBadRequest)
 		return
 	}
@@ -169,8 +154,8 @@ func (api *StreamingAPI) handleReportRun(w http.ResponseWriter, r *http.Request)
 	// Owners and read-only users alike: the script runs as the workflow or
 	// crew. A crew is readable by its owner and by anyone with the Crew
 	// product (Crew Run mode).
-	if isReportRunCrewRoot(workspacePath) {
-		if !crewProjectOwnedByCaller(claims.UserID, workspacePath) && !userAllowedProduct(claims, "work") {
+	if isCrew {
+		if crewAccessFor(claims, crew) == crewAccessNone {
 			writeWorkflowPermissionDenied(w, "read")
 			return
 		}

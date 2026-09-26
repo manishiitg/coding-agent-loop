@@ -106,6 +106,12 @@ func cleanAgentProfileWorkspace(raw, userID string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("selected_folder must stay inside the workspace")
 	}
+	// A shared crew root is reachable only as a verified crew binding
+	// (resolveCrewProjectBinding), never as a free-form selected folder:
+	// unlike _users/<id>/, its location says nothing about who may use it.
+	if clean == crewSharedRootName || strings.HasPrefix(clean, crewSharedRootName+"/") {
+		return "", fmt.Errorf("selected_folder must be a crew you can open")
+	}
 	if clean == "_users" || strings.HasPrefix(clean, "_users/") {
 		owner := strings.TrimPrefix(clean, "_users")
 		owner = strings.TrimPrefix(owner, "/")

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 )
 
 // workspaceProxyHandler creates an http.Handler that reverse-proxies to the workspace API.
@@ -180,11 +182,21 @@ func workspaceProxyURLIsOtherUser(rel, own string) bool {
 
 // workspaceProxyPathIsOtherUser matches values that address another
 // user's tree: the bare _users root, or _users/<segment>/... with a
-// segment that is not the caller's own.
+// segment that is not the caller's own. A shared crew root, Crew/<id>, is
+// the owner's tree too: raw access is the manifest owner's only (readers
+// use the mediated /shared-projects endpoints), the bare Crew root is never
+// listable, and a crew nobody owns (or that does not exist yet: crews are
+// created server-side) is refused.
 func workspaceProxyPathIsOtherUser(raw, own string) bool {
 	clean := strings.Trim(path.Clean("/"+strings.TrimSpace(raw)), "/")
-	if clean == "_users" {
+	if clean == "_users" || clean == crewSharedRootName {
 		return true
+	}
+	if strings.HasPrefix(clean, crewSharedRootName+"/") {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ref, ok := resolveCrewPath(ctx, own, clean)
+		return !ok || ref.OwnerID == "" || ref.OwnerID != own
 	}
 	if !strings.HasPrefix(clean, "_users/") {
 		return false

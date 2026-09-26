@@ -42,29 +42,6 @@ func TestReportRunMCPSessionScope(t *testing.T) {
 	}
 }
 
-func TestReportRunCrewRoot(t *testing.T) {
-	if !isReportRunCrewRoot("_users/owner/Chats/Work/projects/sde") || !isReportRunCrewRoot("/_users/owner/Chats/Work/projects/sde/") {
-		t.Fatal("crew root rejected")
-	}
-	for _, bad := range []string{"Workflow/x", "_users//Chats/Work/projects/p", "_users/o/Chats/Work/projects/.hidden", "_users/o/Chats/Work/projects/p/code"} {
-		if isReportRunCrewRoot(bad) {
-			t.Fatalf("accepted %q", bad)
-		}
-	}
-}
-
-// The owner's own crew Dashboard sends the user-relative project path.
-func TestReportRunPhysicalCrewRoot(t *testing.T) {
-	if got := reportRunPhysicalCrewRoot("aa73da63", "Chats/Work/projects/gptlive1-cef0edb2"); got != "_users/aa73da63/Chats/Work/projects/gptlive1-cef0edb2" || !isReportRunCrewRoot(got) {
-		t.Fatalf("owner path: %q", got)
-	}
-	for _, unchanged := range []string{"_users/o/Chats/Work/projects/p", "Workflow/x", "Chats/Work/projects/p/code", "Chats/Other/projects/p"} {
-		if got := reportRunPhysicalCrewRoot("u", unchanged); got != unchanged {
-			t.Fatalf("%q rewritten to %q", unchanged, got)
-		}
-	}
-}
-
 // A crew Dashboard is runnable by its owner and by users with the Crew
 // product; anyone else is refused before anything runs.
 func TestReportRunCrewAccess(t *testing.T) {
@@ -112,7 +89,12 @@ func TestReportRunRejectsBeforeRunning(t *testing.T) {
 	if w := post(`{"workspace":"Workflow/a","path":"db/x.py"}`, reader); w.Code != http.StatusBadRequest {
 		t.Fatalf("script outside code/: %d", w.Code)
 	}
-	for _, ws := range []string{"Crew/a", "_users/o/Chats/Work/projects", "_users/o/Chats/Work/projects/p/sub", "_users/o/Chats/Other/projects/p"} {
+	// A shared crew nobody owns (or that does not exist) is refused.
+	stubCrewLookups(t, nil, nil)
+	if w := post(`{"workspace":"Crew/a","path":"code/x.py"}`, reader); w.Code != http.StatusForbidden {
+		t.Fatalf("ownerless shared crew: %d", w.Code)
+	}
+	for _, ws := range []string{"Crew/a/sub", "Workflow/a/sub", "_users/o/Chats/Work/projects", "_users/o/Chats/Work/projects/p/sub", "_users/o/Chats/Other/projects/p"} {
 		if w := post(`{"workspace":"`+ws+`","path":"code/x.py"}`, reader); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d", ws, w.Code)
 		}

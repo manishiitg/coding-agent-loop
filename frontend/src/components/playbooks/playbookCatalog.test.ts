@@ -20,7 +20,7 @@ describe('small-team catalog', () => {
     ])
     expect(intelligence[0].handoffs?.[0].artifact_type).toBe('engineering-metric-observation/v1')
     expect(intelligence[0].setupChecks).toHaveLength(10)
-    expect(PLAYBOOK_CATALOG).toHaveLength(51)
+    expect(PLAYBOOK_CATALOG).toHaveLength(52)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -298,6 +298,16 @@ describe('small-team catalog', () => {
     ])
     expect(security?.handoffs?.[0].artifact_type).toBe('security-finding/v1')
     expect(security?.setupChecks).toContain('remediation_rule')
+  })
+
+  it('exposes the Security access exception and same-cell fix route', () => {
+    const access = PLAYBOOK_CATALOG.find(item => item.id === 'access-exception-to-verified-fix')
+    expect(access?.category).toBe('Security')
+    expect(access?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'access-review-analyst', 'security-remediation-coordinator',
+    ])
+    expect(access?.handoffs?.[0].artifact_type).toBe('access-review-matrix/v1')
+    expect(access?.setupChecks).toContain('direct_observation')
   })
 
   it('exposes Operations meeting actions with required status and optional review', () => {

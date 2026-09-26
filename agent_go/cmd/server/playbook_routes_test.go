@@ -875,6 +875,42 @@ func TestSecurityPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T)
 	}
 }
 
+func TestAccessExceptionPlaybookInstallationKeepsValidationAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("access-exception-to-verified-fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/access-review"
+	const skill = "agentworks-playbook-access-exception-to-verified-fix"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{
+		"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md",
+		"scripts/validate_handoff.py", "examples/access-review-matrix.json",
+		"examples/access-remediation-pending.json", "examples/access-remediation-verified.json",
+		"examples/invalid-access-remediation.json",
+	} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("access exception installation lacks %s", relative)
+		}
+	}
+	var setup map[string]interface{}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	completed, ok := setup["completed_steps"].([]interface{})
+	checks, checksOK := setup["checks"].([]interface{})
+	if setup["playbook_id"] != item.ID || !ok || len(completed) != 0 || !checksOK || len(checks) != 10 {
+		t.Fatalf("access exception setup invalid: %+v", setup)
+	}
+}
+
 func TestOperationsPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
 	item, err := findPlaybook("meeting-decision-to-owned-follow-through")
 	if err != nil {

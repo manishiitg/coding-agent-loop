@@ -82,6 +82,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'finding-to-remediation', from: 'finding', to: 'remediation', artifact_type: 'security-finding/v1', required: true },
   ], setupChecks: ['scope_owner', 'finding_identity', 'severity_policy', 'remediation_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'access-exception-to-verified-fix', title: 'Access Exception to Verified Fix', description: 'Connect an authorized permission mismatch to an owned fix, deployed build, independent same-cell retest, and closure decision.', version: '0.1.0', category: 'Security', order: 2, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'access', agent_playbook_id: 'access-review-analyst', required: true, output: 'access-review-matrix/v1' },
+    { id: 'remediation', agent_playbook_id: 'security-remediation-coordinator', required: true, output: 'access-remediation-ledger/v1' },
+  ], handoffs: [
+    { id: 'access-to-remediation', from: 'access', to: 'remediation', artifact_type: 'access-review-matrix/v1', required: true },
+  ], setupChecks: ['scope_owner', 'policy_matrix', 'isolated_identity', 'direct_observation', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'release-candidate-to-reviewed-gate', title: 'Release Candidate to Reviewed Gate', description: 'Join required journey attempts and optional flake investigation to an exact-build release quality decision with separate status publication evidence.', version: '0.1.0', category: 'QA', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'journey', agent_playbook_id: 'browser-journey-qa-analyst', required: true, output: 'journey-result/v1' },
     { id: 'flake', agent_playbook_id: 'flaky-test-investigator', required: false, output: 'flake-investigation/v1' },

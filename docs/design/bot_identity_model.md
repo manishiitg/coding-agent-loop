@@ -107,8 +107,9 @@ Workflows the same way: a DM continues the sender's own chat of the workflow,
 the session their web Builder restores (`handleGetWorkflowBuilderSession`:
 their live Builder session, else their latest saved Builder conversation,
 which is private to them). With none yet, the DM starts one, and it becomes
-the chat the web restores. The turn is built as the sender (their LLM
-settings and secrets), not the route's bot principal.
+the chat the web restores. The turn runs as the sender, not the route's bot
+principal; the model and its credentials still come from the workflow's own
+LLM settings, as for every Builder turn.
 
 Switching surfaces inside one chat: a bot turn marks the live session as a
 bot session (platform, `bot:` trigger, Slack binding). When the session's own
@@ -146,6 +147,28 @@ found. They apply to channel turns (Run mode) and DM turns alike:
    `From: <name> <email> (Slack)` (`withBotSender`), and a thread's session
    is titled `<name>: <first message> · #channel` so its tab is not just
    "Slack".
+
+## Costs
+
+Checked 2026-09-26 against the cost ledger (`costobserver`, `cost_overview.go`):
+
+- **Who pays does not change.** Workflow turns use the workflow's own LLM
+  settings and crew turns the crew's engine, whoever asks; the platform
+  credentials behind them are the same.
+- **Attribution per LLM call:** `user_id` is who the turn runs as — the
+  sender for a DM, the paired user for WhatsApp, the crew owner for a crew
+  channel turn, the route's `bot-…` principal for a workflow channel turn.
+  `workflow_id` is the workflow or crew folder (a reader's crew DM counts on
+  that crew's row, in the same folder form as web turns), and
+  `source_platform` comes from each turn's own request, so a chat mixing web
+  and DM turns still splits by platform.
+- **Views:** Costs → overview groups by workflow/crew row, not by user, and
+  only admins see chat/other spend; nothing reads `user_id`, so no view moves.
+  Workflow DM turns also land in the workflow's own `costs/costs.sqlite`
+  (scope builder), like web Builder turns; crews have no per-crew ledger.
+- **Grouping by session changes:** one chat per user means a DM and its web
+  turns share a session, so "per session" totals now cover both surfaces
+  (before, each Slack thread was its own session).
 
 ## Tests
 

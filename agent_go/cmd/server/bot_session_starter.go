@@ -487,8 +487,10 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	if api.scheduler == nil {
 		return nil, fmt.Errorf("shared conversation builder unavailable")
 	}
-	// A channel turn runs as the route's principal; a 1:1 DM as its sender,
-	// whose LLM settings and secrets the turn then uses.
+	// A channel turn runs as the route's principal; a 1:1 DM as its sender.
+	// Either way the model and its credentials come from the workflow's own
+	// LLM settings (applyLLMAndSecretsToReqMap), so who asks never changes
+	// which account pays; the cost ledger records the sender as the user.
 	principalID := services.BotPrincipalIDForRoute(thread.Platform, route)
 	if strings.TrimSpace(dmUserID) != "" {
 		principalID = strings.TrimSpace(dmUserID)

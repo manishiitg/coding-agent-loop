@@ -4,6 +4,7 @@ export type CustomerSuccessSpecialistId = 'customer-onboarding-coordinator' | 'p
 
 type Specialist = {
   id: CustomerSuccessSpecialistId
+  version?: number
   name: string
   icon: string
   subcategory: string
@@ -58,30 +59,34 @@ Reviewable output: register register-example-001 for the exact account/tenant. M
   },
   {
     id: 'product-adoption-analyst', name: 'Product Adoption Analyst', icon: '📈', subcategory: 'Adoption',
+    version: 2,
     role: 'Evidence-led product adoption analyst',
-    purpose: 'Determine whether a new customer reached the agreed first-value event using defined product evidence and explicit coverage limits.',
-    firstResult: 'A first-value readout with an observed status, event definition, source records, and adoption gaps.',
-    minimumInput: 'Customer/account reference, agreed first-value definition, observation window, relevant usage or setup export, and account owner.',
+    purpose: 'Verify an agreed customer first-value event or measure adoption of one released feature from bounded exposure and use evidence.',
+    firstResult: 'A first-value readout or feature-adoption observation with exact identity, source records, denominator, coverage and next owner question.',
+    minimumInput: 'For first value, the customer/account and agreed event; for feature adoption, product, release, flag, eligible segment, predeclared use predicate, window and authorized exposure/use sources.',
     optionalConnections: 'Product analytics or database, onboarding tracker, billing plan, and approved customer notes; a bounded event export works first.',
-    exampleRequests: ['Did this customer reach the agreed first-value event? Show the exact evidence and gaps.', 'Compare onboarding milestones with observed product use for these accounts.'],
+    exampleRequests: ['Did this customer reach the agreed first-value event? Show the exact evidence and gaps.', 'For this released feature, how many eligible accounts were exposed and used it under the agreed rule?'],
     method: [
       'Confirm account identity, product entitlement, event names, success threshold, timezone, and observation window with the owner.',
       'Read only the authorized usage or setup source. Map actor and account IDs carefully; exclude test, internal, duplicate, and wrong-tenant events.',
       'Compare each required event with the onboarding register and report observed, not-observed-with-coverage, or unknown when access or instrumentation is incomplete.',
       'Keep seat invites, sign-ins, feature use, and the agreed outcome separate. Do not turn activity into value without the owner-defined rule.',
       'Produce a dated readout with source IDs, denominators where relevant, gaps, and the next verification or intervention question.',
+      'For a released feature, bind release/build and flag revision, eligible segment, distinct account join, exposure and use predicates. Count exposed accounts separately from eligible accounts and feature users; keep partial coverage or insufficient sample as not evaluable.',
     ],
-    evidence: 'Every observed event includes a source ID and time; a missing event is not a failure when the source has incomplete coverage.',
+    evidence: 'Every observed event includes a source ID and time; feature counts cite release, flag, eligibility, exposure and use sources. A missing event is not a failure when coverage is incomplete.',
     boundary: 'Do not invent adoption scores, infer churn from sparse use, expose another tenant’s data, or message the customer from an analysis request.',
-    handoff: 'For New Customer to First Value, emit plain JSON `first-value-readout/v1` linked to the validated onboarding register. Include observed event references and source coverage. The Workflow validates account binding and state before reporting or passing it to Health.',
-    deeperMethod: `## First-value measurement
+    handoff: 'For New Customer to First Value, emit `first-value-readout/v1` linked to the onboarding register. For Released Feature to Adoption Decision, emit `feature-adoption-observation/v1` with exact release/flag/rule, eligible, exposed and used counts and source coverage. The Workflow validates the selected artifact before Product consumes it.',
+    deeperMethod: `## First-value and feature measurement
 
-The event definition is customer-specific. Record the exact predicate and any exclusions. When instrumentation is missing, return **unknown** and a testable instrumentation task. On repeat runs compare the same account and rule version, and show when an event arrived late or was corrected.`,
-    specialistProbe: 'Join the validated register to product events by exact account and tenant IDs, rule version and window. Exclude internal/test actors, duplicates and wrong-tenant events. Check an event row and source coverage separately; reproduce reached, not-observed-with-coverage or unknown from the agreed predicate, then have the account owner review the result.',
+The first-value event definition is customer-specific. Record the predicate and exclusions. Missing instrumentation returns **unknown**. For feature adoption, freeze release/build, feature flag revision, eligible segment and distinct-account rule before counting exposure and use. Compare only equal windows under the same rule; a single measured window is a baseline, not a trend or causal effect. On repeat runs show late or corrected events.`,
+    specialistProbe: 'For first value, join the validated register to exact account/tenant events and reproduce reached, not-observed or unknown. For feature adoption, read one authorized release/flag record and eligible, exposure and use rows; deduplicate accounts, exclude internal/test and wrong-tenant records, recompute exposed and used denominators, check coverage and minimum exposed count, then have the owner review the result.',
     workedExample: `Fictional input: validated register register-example-001 defines first value as an authorized customer user exporting a project report from production before 2026-09-30 17:00 UTC. Product export product-event contains event event-example-001, “project_report_exported”, for account-example-001 / tenant-example-001 at 2026-09-25 11:00. Coverage record coverage confirms complete event collection for the 2026-09-24 through 2026-09-25 11:10 window; no test actor or duplicate is present.
 
-Reviewable output: readout readout-example-001 links register-example-001 and rule first-report-v1. Status: **reached** at 11:00, supported by event-example-001 and coverage. The workspace milestone was already observed; the report-export milestone can now be rechecked and marked complete by the onboarding owner. Seat invites, login count, broader adoption and renewal impact remain **unknown**. Next: account owner verifies the sponsor can use the exported report.`,
-    inadequateExample: '“All 20 invited seats adopted the product because one report was exported.” Reject: one valid first-value event proves only the agreed account-level predicate; it does not establish seat adoption or usage breadth.',
+Reviewable output: readout readout-example-001 links register-example-001 and rule first-report-v1. Status: **reached** at 11:00, supported by event-example-001 and coverage. The workspace milestone was already observed; the report-export milestone can now be rechecked and marked complete by the onboarding owner. Seat invites, login count, broader adoption and renewal impact remain **unknown**. Next: account owner verifies the sponsor can use the exported report.
+
+Separate fictional feature input: release R-7 / flag f7-r2 exposed 80 of 120 eligible accounts in the named segment during a complete week; 24 exposed accounts used the feature under rule U-1. Output: 80/120 exposed (66.67%) and 24/80 used (30%); target 40% is below on this one baseline window. Cause and future retention impact are unknown.`,
+    inadequateExample: '“All 20 invited seats adopted the product because one report was exported.” Reject: one valid first-value event proves only the agreed account-level predicate. Also reject “the release hurt retention” from one feature-use window: no comparable cohort or causal evidence supports it.',
   },
   {
     id: 'lifecycle-analyst', name: 'Lifecycle Analyst', icon: '🔁', subcategory: 'Retention',
@@ -190,7 +195,7 @@ function checklist(spec: Specialist): string {
     { id: 'delivery', title: 'Decide on delivery', optional: true, instructions: 'Choose chat-only or a separately authorized customer/CRM delivery route. Chat-only completes this decision. A draft, reminder, or health brief is not permission to message a customer or mutate an account.' },
     { id: 'recurrence', title: 'Decide on recurrence', optional: true, instructions: 'Choose manual-only or a separately reviewed schedule, authenticated trigger, callable function, or Automation. Manual-only completes this decision; test any configured route before activation.' },
   ]
-  return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2)}\n`
+  return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: spec.version ?? 1, checks, completed_steps: [] }, null, 2)}\n`
 }
 
 function skill(spec: Specialist): string {
@@ -238,7 +243,7 @@ ${spec.boundary} Never copy another Crew's credentials. Installing this skill en
 function guide(spec: Specialist): string {
   return `# ${spec.name} setup
 
-Template \`${spec.id}\` version 1. Progress lives in \`templates/${spec.id}/TEMPLATE_SETUP.json\` and is verified in Crew chat.
+Template \`${spec.id}\` version ${spec.version ?? 1}. Progress lives in \`templates/${spec.id}/TEMPLATE_SETUP.json\` and is verified in Crew chat.
 
 ## First result
 
@@ -270,7 +275,7 @@ export const customerSuccessSpecialists: readonly CrewTemplate[] = specialists.m
   const setupGuidePath = `${base}/SETUP.md`
   const setupPath = `${base}/TEMPLATE_SETUP.json`
   return {
-    id: spec.id, version: 1, category: 'Customer Success', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    id: spec.id, version: spec.version ?? 1, category: 'Customer Success', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
     role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
     minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
     exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],

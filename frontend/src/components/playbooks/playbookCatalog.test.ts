@@ -14,8 +14,18 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(49)
+    expect(PLAYBOOK_CATALOG).toHaveLength(50)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
+  })
+
+  it('reuses Product Crews for released feature adoption with a pending setup route', () => {
+    const feature = PLAYBOOK_CATALOG.find(item => item.id === 'released-feature-to-adoption-decision')
+    expect(feature?.category).toBe('Product')
+    expect(feature?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'product-adoption-analyst', 'product-feedback-coordinator',
+    ])
+    expect(feature?.handoffs?.[0].artifact_type).toBe('feature-adoption-observation/v1')
+    expect(feature?.setupChecks).toHaveLength(10)
   })
 
   it('keeps the buyer-question handoff with Search Opportunity Mapper', () => {

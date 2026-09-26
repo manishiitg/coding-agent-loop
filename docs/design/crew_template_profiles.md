@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-three multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-four multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -260,9 +260,9 @@ The five installed Customer Success skills include a fictional input and reviewa
 
 ### Product Adoption Analyst (`product-adoption-analyst`)
 
-- **Use case:** determine whether the customer achieved the agreed first product result.
+- **Use case:** determine whether a customer achieved first value or whether eligible accounts saw and used a released feature.
 - **First result:** [first-value readout](../../playbooks/agentic-engineering-platform/customer-success/new-customer-to-first-value/examples/first-value-readout.json) with event definition, observed state, source records, coverage gaps, and owner action.
-- **Setup proof:** verify account-to-event identity mapping, the observation window, a representative authorized product event or export, and the agreed rule for first value. Missing instrumentation is a blocker or unknown, not proof of no adoption.
+- **Setup proof:** verify account-to-event identity mapping, the observation window, a representative authorized product event or export, and the agreed rule for first value. For a released feature, verify build, flag revision, eligibility, exposure and use joins, target and minimum sample against [the observation](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-observation.json). Missing instrumentation is unknown, not proof of no adoption.
 - **Later run:** compare the same event rule and account identity, record newly observed evidence, and preserve earlier unknowns or changed instrumentation.
 
 ### Lifecycle Analyst (`lifecycle-analyst`)
@@ -320,9 +320,9 @@ The five installed Customer Success skills include a fictional input and reviewa
 
 ### Product Feedback Coordinator (`product-feedback-coordinator`)
 
-- **Use case:** turn one validated customer feedback theme into a product owner decision against current issues and roadmap records.
-- **First result:** a sourced `product-feedback-decision/v1` with exact tenant, product, segment, theme and period; the feedback numerator, denominator and coverage; a current issue match or explicit no-match; evidence gaps; owner, proposed next step and action state. See the [illustrative decision](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/product-feedback-decision.json).
-- **Setup proof:** validate a [bounded theme brief](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/feedback-theme-brief.json), read the authorized current issue source, verify match policy and product owner, and review one real theme with counterexamples. An issue write or customer promise needs a separate exact approval and receipt.
+- **Use case:** turn a validated feedback theme or released-feature adoption observation into a product owner decision against current issues and roadmap records.
+- **First result:** a sourced `product-feedback-decision/v1` for a bounded theme or `feature-adoption-decision/v1` for a released feature. Each keeps the exact upstream artifact and scope, denominator and coverage, current issue match, evidence gaps, owner options and action state. See the [feedback decision](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/product-feedback-decision.json) and [feature decision](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-decision.json).
+- **Setup proof:** validate a [bounded theme brief](../../playbooks/agentic-engineering-platform/product/feedback-theme-to-product-decision/examples/feedback-theme-brief.json), read the authorized current issue source, verify match policy and product owner, and review one real theme with counterexamples. For feature adoption, also validate [the bounded observation](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-observation.json) and prepare [a pending decision](../../playbooks/agentic-engineering-platform/product/released-feature-to-adoption-decision/examples/feature-adoption-decision.json). An issue write, flag change or customer promise needs a separate exact approval and receipt.
 - **Later run:** re-read the issue state and a comparable feedback window, retain the theme and issue IDs, distinguish a new signal from repeated records, and reopen the decision only for changed evidence or owner policy.
 
 ## Operations

@@ -19,6 +19,8 @@ describe('Customer Success Crew templates', () => {
     }
     expect(success[0].files['skills/customer-onboarding-coordinator/SKILL.md']).toContain('first-report”: **pending**')
     expect(success[1].files['skills/product-adoption-analyst/SKILL.md']).toContain('Status: **reached**')
+    expect(success[1].version).toBe(2)
+    expect(success[1].files['skills/product-adoption-analyst/SKILL.md']).toContain('24/80 used (30%)')
     expect(success[2].files['skills/lifecycle-analyst/SKILL.md']).toContain('pending_maturity')
     expect(success[3].files['skills/customer-health-coordinator/SKILL.md']).toContain('labeled **hypothesis**')
     expect(success[4].files['skills/renewal-coordinator/SKILL.md']).toContain('six days to notice')

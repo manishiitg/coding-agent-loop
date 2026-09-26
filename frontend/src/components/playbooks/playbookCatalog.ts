@@ -288,6 +288,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'feedback-to-product', from: 'feedback', to: 'product', artifact_type: 'feedback-theme-brief/v1', required: true },
   ], setupChecks: ['goal_owner', 'feedback_scope', 'product_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'released-feature-to-adoption-decision', title: 'Released Feature to Adoption Decision', description: 'Measure eligible, exposed and using accounts for a shipped feature, then prepare a bounded product owner decision.', version: '0.1.0', category: 'Product', order: 2, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'adoption', agent_playbook_id: 'product-adoption-analyst', required: true, output: 'feature-adoption-observation/v1' },
+    { id: 'product', agent_playbook_id: 'product-feedback-coordinator', required: true, output: 'feature-adoption-decision/v1' },
+  ], handoffs: [
+    { id: 'adoption-to-product', from: 'adoption', to: 'product', artifact_type: 'feature-adoption-observation/v1', required: true },
+  ], setupChecks: ['goal_owner', 'release_scope', 'measurement_rule', 'target_sample', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.5.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

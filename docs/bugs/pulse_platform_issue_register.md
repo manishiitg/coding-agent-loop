@@ -1,3 +1,14 @@
+## Scheduled runs and background agents stopped before their steps finished — PLAT-361
+
+[PLAT-361](pulse_platform/scheduler-runs/plat-361.md) fixes salesoutreach's
+email and LinkedIn schedules running 1 of 12 groups every day (Sep 19–26) and
+Pulse reviewers ending without recording a verification result. `execute_step`
+tells the agent to end its turn and wait for the result, but the scheduler and
+background agents treated "turn ended" as "work done". Both now own the steps
+they start, like a step owns its sub-agents: wait for every step, hand the
+results back as the next turn, finish only when a turn starts nothing new.
+Pushed to main; deployment and live acceptance pending.
+
 ## Completion turn colliding with a user turn closed the CLI — PLAT-360
 
 [PLAT-360](pulse_platform/chat-reliability/plat-360.md) fixes a lost user

@@ -24,6 +24,20 @@ The launch catalog's quality rule asks each Crew for an inspectable input/output
 
 These are prioritized content gaps, not proof that the remaining skills are complete. Review each category's actual installed skill and setup guide before promotion. Exercise at least one authorized customer-like case per role during pilot setup. Keep external sends, payments, infrastructure changes and schedules behind the customer's reviewed action route.
 
+## Legacy Playbooks still in the catalog
+
+The other **22 of 47** installable Playbook packages have no `agent_slots`, `SETUP.json`, or executable handoff suite. They remain Workflow guides in the same catalog; they are not yet equivalent to the 25 chat-led multi-Crew proposals. This count excludes the example package under `playbooks/templates/`.
+
+| Area | Packages needing a launch decision or deeper route |
+| --- | --- |
+| Browser QA (8) | Basic Browser Setup; Authentication and Session Validation; Role and Permission Validation; Critical Journey Validation; Flaky-Test Detection and Stabilization; Browser Test Self-Healing; Scheduled Regression and Synthetic Monitoring; Release and PR Quality Gate. |
+| Growth Analytics (5) | Growth Data Foundation; Funnel and Conversion Intelligence; Activation and Retention Intelligence; Growth Experimentation and Follow-Through; AI Visibility Intelligence. |
+| Reliability Operations (4) | CI and Deployment Failure Triage; Incident Investigation and Coordination; Governed Remediation and Recovery; Post-Incident Review and Actions. |
+| Performance Engineering (2) | Browser Performance Validation; API Performance Validation. |
+| Engineering Operations Intelligence (1), FinOps (1), Security Engineering (1) | Engineering Operations Intelligence; Cost Anomaly to Verified Savings; Application Security Assessment and Remediation. |
+
+Review each against the newer QA, Security, Engineering, Marketing and Website Growth routes. Promote it to a typed Crew journey where it has a distinct customer job and owner; otherwise present it clearly as a Workflow guide. Do not imply a pending Crew setup checklist or verified multi-Crew handoff for these packages.
+
 ## Next verification
 
-After those examples are authored, run generated catalog checks, Playbook validation, targeted Crew tests and a production frontend build. Then inspect a real Builder installation: Playbook proposal, Crew reuse/creation, actual file paths, blocking validator behavior, setup evidence, owner review and manual first run. Deployment and admin-only Dominion testing come after the library and installation checks.
+After the remaining content and legacy package decisions, run generated catalog checks, Playbook validation, targeted Crew tests and a production frontend build. Then inspect a real Builder installation: Playbook proposal, Crew reuse/creation, actual file paths, blocking validator behavior, setup evidence, owner review and manual first run. Deployment and admin-only Dominion testing come after the library and installation checks.

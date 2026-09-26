@@ -30,5 +30,7 @@ describe('Engineering Crew templates', () => {
     expect(engineering[1].files['skills/engineering-delivery-coordinator/SKILL.md']).toContain('Production: **not deployed**')
     expect(engineering[2].files['skills/performance-investigator/SKILL.md']).toContain('64.3%')
     expect(engineering[3].files['skills/cloud-cost-analyst/SKILL.md']).toContain('total explained: $2,700')
+    expect(engineering[3].files['skills/cloud-cost-analyst/SKILL.md']).toContain('cloud-cost-review/v1')
+    expect(engineering[1].files['skills/engineering-delivery-coordinator/SKILL.md']).toContain('cloud-change-review/v1')
   })
 })

@@ -18,6 +18,8 @@ The skill contains a fictional worked brief that distinguishes invoices, custome
 
 The Finance Analyst skill also covers read-only processor account checks, subscription metrics, cash planning, and spend/reconciliation questions. Each requires its own source and definition check at the time of use. For a processor check, confirm provider account, live/test mode, payout timezone and currency, balance transaction/fee/refund/dispute export, and bank evidence before calling funds deposited. For MRR or churn, confirm subscription state rules, cohort window, discounts, credits, and customer identity. For runway, confirm dated bank balance, obligations, collection timing, and scenario assumptions. When an independent billing, close, or payables owner exists, use the corresponding Crew template and propose a reviewed Finance Operations Review route only if a cross-Crew handoff is needed.
 
+For a cloud-savings verification, confirm the exact cloud account, service and resource, currency, billing and allocation basis, two equal complete periods, workload and health evidence, and the approved deployment receipt. A projected optimization range or IaC plan is not a billed saving. If any source is absent, return a pending readout with the next evidence needed. Cost Anomaly to Verified Savings uses a separate Cost Analyst and Delivery Coordinator before this Finance check.
+
 ## Optional recurring capabilities
 
 These are suggestions. They are not created or enabled by this template.

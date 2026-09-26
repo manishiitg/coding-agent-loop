@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 63 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-five multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-six multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -366,7 +366,7 @@ All four Engineering skill packs now include a fictional source-to-result exampl
 - **Use case:** explain a cloud bill change and prepare risk-checked savings decisions across billing, usage, ownership, and service data.
 - **First result:** reconciled cost-change brief with currency and period rules, service owners, arithmetic, candidate savings ranges, risks, and verification plan. The skill separates a fictional usage-driven increase and one-time charge from a still unverified savings estimate.
 - **Setup proof:** read an authorized bill or export, reconcile one change against usage or allocation evidence, confirm discounts and owner map, and review a candidate with the service owner.
-- **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The existing [FinOps Workflow](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) covers the longer route.
+- **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The [FinOps Automation Playbook](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) connects this role to Engineering Delivery Coordinator and Finance Analyst with exact change and billed-outcome checks.
 
 ## QA
 
@@ -487,4 +487,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing twenty-six Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-one Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

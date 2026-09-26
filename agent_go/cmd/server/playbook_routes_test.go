@@ -102,6 +102,44 @@ func TestSEOIntelligenceInstallationCopiesTeamContractAndPendingSetup(t *testing
 	}
 }
 
+func TestFinOpsInstallationCopiesThreeCrewContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("cost-anomaly-to-verified-savings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(item.AgentSlots) != 3 || len(item.Handoffs) != 2 || len(item.SetupChecks) != 10 {
+		t.Fatalf("FinOps team contract = %+v", item)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/finops"
+	const skill = "agentworks-playbook-cost-anomaly-to-verified-savings"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py", "examples/cloud-cost-review.json", "examples/cloud-change-review.json", "examples/cloud-change-deployed.json", "examples/cloud-savings-pending.json", "examples/cloud-savings-verified.json", "examples/invalid-cloud-savings-verified.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("FinOps installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+		Checks     []struct {
+			ID string `json:"id"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 || len(setup.Checks) != 10 {
+		t.Fatalf("FinOps setup is not pending with ten checks: %+v", setup)
+	}
+}
+
 func TestWorkflowGuideInstallationDoesNotClaimCrewSetup(t *testing.T) {
 	item, err := findPlaybook("basic-browser-setup")
 	if err != nil {

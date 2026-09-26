@@ -38,6 +38,16 @@ describe('small-team catalog', () => {
     expect(seo?.setupChecks).toContain('activation_choice')
   })
 
+  it('offers FinOps with cost, delivery and independent finance verification', () => {
+    const finops = PLAYBOOK_CATALOG.find(item => item.id === 'cost-anomaly-to-verified-savings')
+    expect(finops?.version).toBe('0.6.0')
+    expect(finops?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'cloud-cost-analyst', 'engineering-delivery-coordinator', 'finance-analyst',
+    ])
+    expect(finops?.handoffs?.map(handoff => handoff.artifact_type)).toEqual(['cloud-cost-review/v1', 'cloud-change-review/v1'])
+    expect(finops?.setupChecks).toContain('manual_test')
+  })
+
   it('exposes the Finance Operations Review team and validated billing handoff', () => {
     const finance = PLAYBOOK_CATALOG.find(item => item.id === 'finance-operations-review')
     expect(finance?.category).toBe('Finance')

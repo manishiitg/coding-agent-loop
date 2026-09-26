@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { getCrewTemplate, parseCrewTemplateSetupState } from './crewTemplates'
 
 describe('core Finance Crew templates', () => {
+  it('keeps cloud savings verification in the Finance Analyst skill', () => {
+    const analyst = getCrewTemplate('finance-analyst')
+    expect(analyst.files['skills/finance-analyst/SKILL.md']).toContain('cloud-savings-readout/v1')
+    expect(analyst.files['skills/finance-analyst/SKILL.md']).toContain('pending_verification')
+  })
+
   it.each([
     ['billing-operations-coordinator', 'case_mapping', '6,500 minor units remaining'],
     ['revenue-close-analyst', 'reconciliation', 'USD 50.00'],

@@ -214,7 +214,7 @@ All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engin
 | [Activation and Retention Intelligence](agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) | Find success-predicting behaviors, explain cohort retention divergence, and measure feature adoption impact on retention and revenue. |
 | [Growth Experimentation and Follow-Through](agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/SKILL.md) | Prioritize evidence-backed experiments, create tracked actions, and verify shipped changes against pre-registered KPI targets. |
 | [SEO Intelligence](agentic-engineering-platform/growth-analytics/seo-intelligence/SKILL.md) | Find winnable keywords, diagnose technical SEO issues, close content gaps, and track rankings with page-level briefs. |
-| [AI Visibility Intelligence](agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) | Track AI-assistant brand citations against competitors and close gaps with content and authority changes. |
+| [AI Visibility Intelligence](agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) | Propose a two-Crew sampled answer-citation route that separates direct citations from mentions and failed runs, then reviews an exact-question page opportunity before any change. |
 
 Growth Analytics shares the [growth data model](agentic-engineering-platform/growth-analytics/references/growth-data-model.md) for identity, lineage, metric definitions, and data-quality rules.
 
@@ -294,7 +294,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 21 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 32 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

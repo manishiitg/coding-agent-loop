@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 63 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-six multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-seven multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -134,7 +134,7 @@ The three core Billing Operations, Revenue & Close, and Spend & Payables install
 - **Use case:** observe whether chosen answer engines cite the brand or competitors for buyer questions.
 - **First result:** question-level observations with engine/surface, run time, cited URLs, absence or error state, and source-backed content gaps.
 - **Setup proof:** freeze the question set and sampling method, run and retain an inspectable observation, and distinguish unavailable engine output from a genuine absence. This is an experimental measure.
-- **Later run:** repeat under the same method or explicitly mark method changes; do not present one stochastic answer as a stable ranking.
+- **Later run:** repeat under the same method or explicitly mark method changes; do not present one stochastic answer as a stable ranking. The [AI Visibility Intelligence Automation](../../playbooks/agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) links this sampled evidence to a separately reviewed page opportunity.
 
 ### Landing Page Optimizer (`landing-page-optimizer`)
 
@@ -487,4 +487,4 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-one Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. The installed skills and guides include fictional good/rejected outputs and source probes. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized customer data, review its first result, and exercise a repeat case. The existing thirty-two Playbook contract suites cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

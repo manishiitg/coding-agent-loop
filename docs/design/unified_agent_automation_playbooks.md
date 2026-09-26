@@ -88,7 +88,7 @@ The **Website Growth Starter** Agent Playbook is represented by an installable C
 | Content builder | Content Brief Writer or Content Page Builder | Receives an approved opportunity; emits a reviewable brief or page draft. |
 | Measurement analyst | Traffic & Engagement Analyst | Receives the shipped change and measurement window; emits a comparable readout and open questions. |
 
-At minimum, a Website Growth Loop installation needs multiple ready Crew agents, one tested handoff between them, a named owner, and a measurable success signal. A new site may use **baseline first** until enough data exists. The loop can propose page changes, but publication and outreach follow separately configured approvals. SEO Intelligence and AI Visibility Intelligence from the current Workflow Playbook catalog can inform the corresponding agent/Automation designs; they are not automatically installed by this Crew.
+At minimum, a Website Growth Loop installation needs multiple ready Crew agents, one tested handoff between them, a named owner, and a measurable success signal. A new site may use **baseline first** until enough data exists. The loop can propose page changes, but publication and outreach follow separately configured approvals. SEO Intelligence and AI Visibility Intelligence are separate chat-led Automation proposals with their own Crew handoffs and setup; Website Growth Loop does not install either automatically.
 
 ## Compatibility and implementation sequence
 

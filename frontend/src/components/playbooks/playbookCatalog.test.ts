@@ -38,6 +38,15 @@ describe('small-team catalog', () => {
     expect(seo?.setupChecks).toContain('activation_choice')
   })
 
+  it('offers sampled AI visibility with a separate page opportunity review', () => {
+    const ai = PLAYBOOK_CATALOG.find(item => item.id === 'ai-visibility-intelligence')
+    expect(ai?.version).toBe('0.2.0')
+    expect(ai?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual(['ai-visibility-analyst', 'search-opportunity-mapper'])
+    expect(ai?.handoffs?.[0].artifact_type).toBe('ai-visibility-snapshot/v1')
+    expect(ai?.setupChecks).toContain('sample_method')
+    expect(ai?.setupChecks).toContain('manual_test')
+  })
+
   it('offers FinOps with cost, delivery and independent finance verification', () => {
     const finops = PLAYBOOK_CATALOG.find(item => item.id === 'cost-anomaly-to-verified-savings')
     expect(finops?.version).toBe('0.6.0')

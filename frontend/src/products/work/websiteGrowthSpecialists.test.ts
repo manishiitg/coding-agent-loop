@@ -43,6 +43,11 @@ describe('Website Growth Crew templates', () => {
     }
   })
 
+  it('gives AI visibility and mapping distinct typed handoff instructions', () => {
+    expect(getCrewTemplate('ai-visibility-analyst')?.files['skills/ai-visibility-analyst/SKILL.md']).toContain('ai-visibility-snapshot/v1')
+    expect(getCrewTemplate('search-opportunity-mapper')?.files['skills/search-opportunity-mapper/SKILL.md']).toContain('ai-citation-opportunity/v1')
+  })
+
   it('gives SEO Intelligence distinct issue and opportunity artifact instructions', () => {
     const technical = getCrewTemplate('seo-analyst')
     const search = getCrewTemplate('search-opportunity-mapper')

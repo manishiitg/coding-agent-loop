@@ -187,7 +187,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'technical-to-search', from: 'technical_seo', to: 'search', artifact_type: 'seo-issue-list/v1', required: true },
   ], setupChecks: ['goal_owner', 'site_scope', 'buyer_metric_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'manual_test', 'action_ledger', 'activation_choice'] },
-  { id: 'ai-visibility-intelligence', title: 'AI Visibility Intelligence', description: 'Track AI-assistant brand citations against competitors and close gaps with content and authority changes.', version: '0.1.0', category: 'Growth Analytics', order: 6, inputCount: 6, toolCount: 3, teamScope: 'small_team' },
+  { id: 'ai-visibility-intelligence', title: 'AI Visibility Intelligence', description: 'Turn a bounded, repeatable AI-answer citation sample into a sourced buyer-question opportunity, with owner review before any page change.', version: '0.2.0', changelog: [{ version: '0.2.0', summary: 'Adds a chat-led AI Visibility Analyst to Search Opportunity Mapper handoff, sample-level citations, pending setup and executable checks.' }, { version: '0.1.0', summary: 'Initial playbook release.' }], category: 'Growth Analytics', order: 6, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
+    { id: 'visibility', agent_playbook_id: 'ai-visibility-analyst', required: true, output: 'ai-visibility-snapshot/v1' },
+    { id: 'opportunity', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'ai-citation-opportunity/v1' },
+  ], handoffs: [
+    { id: 'visibility-to-opportunity', from: 'visibility', to: 'opportunity', artifact_type: 'ai-visibility-snapshot/v1', required: true },
+  ], setupChecks: ['goal_owner', 'question_scope', 'sample_method', 'citation_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'manual_test', 'activation_choice'] },
   { id: 'inbound-lead-to-meeting-review', title: 'Inbound Lead-to-Meeting Review', description: 'Qualify inbound enquiries, offer a reviewed booking path, and track provider-confirmed delivery and meetings.', version: '0.2.0', category: 'Sales', order: 1, inputCount: 7, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'qualification', agent_playbook_id: 'lead-intake-qualifier', required: true, output: 'lead-qualification-brief/v1' },
     { id: 'research', agent_playbook_id: 'account-researcher', required: false, output: 'account-research-brief/v1' },

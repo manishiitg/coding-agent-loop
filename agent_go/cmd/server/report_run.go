@@ -71,6 +71,22 @@ func isReportRunCrewRoot(workspacePath string) bool {
 		!strings.HasPrefix(segments[5], ".")
 }
 
+// reportRunPhysicalCrewRoot: the owner's own crew Dashboard addresses its
+// project by the user-relative path (Chats/Work/projects/<id>); the workspace
+// service resolves that under the caller's own _users/<id>/ tree, so do the
+// same. Physical paths (a reader viewing someone else's crew) pass through.
+func reportRunPhysicalCrewRoot(callerID, workspacePath string) string {
+	segments := strings.Split(strings.Trim(workspacePath, "/"), "/")
+	if len(segments) != 4 || segments[0] != "Chats" || segments[1] != "Work" || segments[2] != "projects" || segments[3] == "" {
+		return workspacePath
+	}
+	owner := sanitizeUserIDForPath(callerID)
+	if owner == "" {
+		return workspacePath
+	}
+	return "_users/" + owner + "/" + strings.Join(segments, "/")
+}
+
 // reportRunSelectionFor reads the selection without migrating or writing
 // anything: a reader's refresh must never touch the owner's manifest.
 func reportRunSelectionFor(ctx context.Context, workspacePath string) (reportRunSelection, error) {
@@ -138,6 +154,9 @@ func (api *StreamingAPI) handleReportRun(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	workspacePath, err := reportPreviewWorkspace(r, claims, body.Workspace)
+	if err == nil {
+		workspacePath = reportRunPhysicalCrewRoot(claims.UserID, workspacePath)
+	}
 	if err != nil || (!strings.HasPrefix(workspacePath, "Workflow/") && !isReportRunCrewRoot(workspacePath)) {
 		http.Error(w, "a workflow or crew workspace is required", http.StatusBadRequest)
 		return

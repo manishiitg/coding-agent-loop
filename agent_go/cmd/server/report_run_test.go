@@ -53,6 +53,18 @@ func TestReportRunCrewRoot(t *testing.T) {
 	}
 }
 
+// The owner's own crew Dashboard sends the user-relative project path.
+func TestReportRunPhysicalCrewRoot(t *testing.T) {
+	if got := reportRunPhysicalCrewRoot("aa73da63", "Chats/Work/projects/gptlive1-cef0edb2"); got != "_users/aa73da63/Chats/Work/projects/gptlive1-cef0edb2" || !isReportRunCrewRoot(got) {
+		t.Fatalf("owner path: %q", got)
+	}
+	for _, unchanged := range []string{"_users/o/Chats/Work/projects/p", "Workflow/x", "Chats/Work/projects/p/code", "Chats/Other/projects/p"} {
+		if got := reportRunPhysicalCrewRoot("u", unchanged); got != unchanged {
+			t.Fatalf("%q rewritten to %q", unchanged, got)
+		}
+	}
+}
+
 // A crew Dashboard is runnable by its owner and by users with the Crew
 // product; anyone else is refused before anything runs.
 func TestReportRunCrewAccess(t *testing.T) {
@@ -71,6 +83,14 @@ func TestReportRunCrewAccess(t *testing.T) {
 	// The owner passes the access check (the script itself does not exist).
 	if code := post(&UserClaims{UserID: "owner", Username: "owner"}); code != http.StatusNotFound {
 		t.Fatalf("owner: %d", code)
+	}
+	// Same through the user-relative path the owner's own Dashboard sends.
+	r := httptest.NewRequest("POST", reportPreviewAPIPrefix+"run", strings.NewReader(`{"workspace":"Chats/Work/projects/sde","path":"code/x.py"}`))
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "owner", Username: "owner"}))
+	w := httptest.NewRecorder()
+	api.handleReportRun(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("owner via relative path: %d %s", w.Code, w.Body.String())
 	}
 }
 

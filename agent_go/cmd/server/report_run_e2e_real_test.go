@@ -199,6 +199,21 @@ print(json.dumps({
 		data["wrote_db_folder"] == true || data["wrote_code_folder"] == true {
 		t.Fatalf("crew scope: %v", data)
 	}
+
+	// The owner's own Dashboard sends the user-relative project path.
+	own := "_users/report-viewer/Chats/Work/projects/sde"
+	_ = os.RemoveAll(filepath.Join(docs, "_users/report-viewer"))
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(docs, own)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(crewRoot, filepath.Join(docs, own)); err != nil {
+		t.Fatal(err)
+	}
+	code, body = runIn("Chats/Work/projects/sde", "code/reports/live.py")
+	t.Logf("owner crew live.py (relative path) -> %d %v", code, body["error"])
+	if code != http.StatusOK || body["success"] != true {
+		t.Fatalf("owner crew run via relative path failed")
+	}
 }
 
 func toStrings(value any) []string {

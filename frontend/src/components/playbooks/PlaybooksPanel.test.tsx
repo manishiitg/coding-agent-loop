@@ -172,6 +172,7 @@ it('shows Website Growth as a team proposal whose setup continues in Builder cha
     await click(container.querySelector('[aria-label="Open Website Growth Loop details"]'))
     expect(container.textContent).toContain('Crew automation proposal')
     expect(container.textContent).toContain('Proposed Crew team')
+    expect(container.textContent).toContain('Builder must test a blocking validator for each chosen handoff')
     expect(container.textContent).toContain('website growth starter')
     expect(container.textContent).toContain('search opportunity mapper')
     expect(container.textContent).toContain('Choosing this Playbook creates no Crew members')
@@ -185,6 +186,9 @@ it('shows Website Growth as a team proposal whose setup continues in Builder cha
     expect(container.textContent).toContain('Continue setup in Builder')
     const setup = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Continue setup in Builder'))
     expect(setup?.getAttribute('data-message')).toContain('Inspect existing Crews and propose a team')
+    expect(setup?.getAttribute('data-message')).toContain('strategy-to-search: strategist → search, growth-priority-brief/v1, required')
+    expect(setup?.getAttribute('data-message')).toContain('blocking validation step before the consumer')
+    expect(setup?.getAttribute('data-message')).toContain('one authorized customer-like case manually')
   } finally {
     await act(async () => root.unmount())
   }

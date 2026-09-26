@@ -13,6 +13,7 @@ import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { agentApi } from '../../services/api'
 import { responseContent } from '../../utils/plannerFiles'
 import { parsePlaybookSetupProgress, type PlaybookSetupProgress } from './playbookSetupProgress'
+import { playbookSetupMessage } from './playbookSetupMessage'
 
 type PlaybooksPanelProps = {
   workspacePath: string | null
@@ -193,7 +194,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {agentSlots.map(slot => <div key={slot.id} className="rounded-lg border border-border bg-background p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold capitalize text-foreground">{slot.id.replaceAll('-', ' ')}</span><span className="text-[10px] text-muted-foreground">{slot.required ? 'Required' : 'Optional'}</span></div><p className="mt-1 text-xs text-muted-foreground">{slot.agent_playbook_id.replaceAll('-', ' ')}{slot.accepts?.length ? ` or ${slot.accepts.map(id => id.replaceAll('-', ' ')).join(', ')}` : ''}</p><p className="mt-1 text-[11px] text-muted-foreground">Output: {slot.output}</p></div>)}
               </div>
-              {handoffs.length > 0 && <div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">Handoffs:</span> {handoffs.map(handoff => `${handoff.from} → ${handoff.to} (${handoff.artifact_type})`).join(' · ')}</div>}
+              {handoffs.length > 0 && <div className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">Handoffs:</span> {handoffs.map(handoff => `${handoff.from} → ${handoff.to} (${handoff.artifact_type})`).join(' · ')}<p className="mt-2">Builder must test a blocking validator for each chosen handoff before the next Crew uses its output.</p></div>}
             </section>
           )}
           {setupChecks.length > 0 && (
@@ -250,7 +251,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
               <>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> {isCrewProposal ? 'Proposal saved' : 'Workflow guide saved'} v{installedSelection.version} · {installedSelection.status}</span>
-                  <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. First inspect the existing workflow and summarize what can be reused and what is missing. Ask focused questions for unresolved customer choices before changing the workflow, record the answers as customer direction, and treat installation as guidance rather than approval. ${selected.setupPrompt || ''}`.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
+                  <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={playbookSetupMessage(selected, installedSelection.skill_name)} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
                 </div>
                 {updateAvailable && (
                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">

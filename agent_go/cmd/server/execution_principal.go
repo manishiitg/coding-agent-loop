@@ -53,10 +53,15 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 		return ctx, fmt.Errorf("Slack email is blocked or unverifiable")
 	}
 	expected := services.ChannelRoute{WorkflowID: claims.BotRouteWorkflowID, ProfileID: claims.BotRouteProfileID, ConversationKey: claims.BotRouteConversationKey, WorkspacePath: claims.BotRouteWorkspacePath}
+	// A Slack thread runs in its own chat of the route's crew
+	// ("<crew>:slack-<hash>"); the route names the crew itself.
+	if sameProjectConversation(route.ConversationKey, expected.ConversationKey) {
+		expected.ConversationKey = route.ConversationKey
+	}
 	if !sameSlackRouteDestination(route, expected) {
 		return ctx, fmt.Errorf("bot route target changed; start a new conversation")
 	}
-	if !slackRouteFolderMatches(route, req.SelectedFolder) || req.AgentProfileID != route.ProfileID || req.PresetQueryID != route.WorkflowID || req.AgentProfileConversationKey != route.ConversationKey {
+	if !slackRouteFolderMatches(route, req.SelectedFolder) || req.AgentProfileID != route.ProfileID || req.PresetQueryID != route.WorkflowID || !sameProjectConversation(route.ConversationKey, req.AgentProfileConversationKey) {
 		return ctx, fmt.Errorf("query does not match the bot route target")
 	}
 	principal := &ExecutionPrincipal{Kind: "bot_route", ID: services.BotPrincipalIDForRoute("slack", route), Target: route, Access: WorkflowAccessRead, AuditActor: req.BotUserID}

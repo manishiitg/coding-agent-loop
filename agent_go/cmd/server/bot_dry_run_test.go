@@ -202,3 +202,21 @@ func TestBotDryRunCrewWithAttachedCrewsAndWorkflow(t *testing.T) {
 		t.Fatalf("the crew's attachments never reached the turn: %s", paths)
 	}
 }
+
+// Each Slack thread is its own chat in the crew, never the crew's main
+// conversation (RTS 2026-09-26: every thread landed in the owner's web chat).
+func TestBotDryRunCrewSlackThreadsGetTheirOwnChats(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	app := w.createApp(t, "SDE", crewRunModeOwnerRoot, "work")
+	first, second := w.mention(t, app.ID, "C0CREWCHAN1"), w.mention(t, app.ID, "C0CREWCHAN1")
+	requireAdmitted(t, first, "crew-aaa")
+	requireAdmitted(t, second, "crew-aaa")
+	firstKey, _ := first.Request["agent_profile_conversation_key"].(string)
+	secondKey, _ := second.Request["agent_profile_conversation_key"].(string)
+	if !strings.HasPrefix(firstKey, "crew-aaa:slack-") || !strings.HasPrefix(secondKey, "crew-aaa:slack-") {
+		t.Fatalf("Slack threads ran in the crew's main conversation: %q %q", firstKey, secondKey)
+	}
+	if firstKey == secondKey {
+		t.Fatalf("two Slack threads share one chat: %q", firstKey)
+	}
+}

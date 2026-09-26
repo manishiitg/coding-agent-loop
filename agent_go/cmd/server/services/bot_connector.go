@@ -3535,8 +3535,13 @@ func applyProfileBotRouteMetadata(req map[string]interface{}, route *ChannelRout
 	if profileID := strings.TrimSpace(route.ProfileID); profileID != "" {
 		req["agent_profile_id"] = profileID
 	}
+	// The turn builder may already have chosen one of the project's own chats
+	// (a Slack thread's "<project>:slack-<hash>"); keep it. The route names
+	// only the project.
 	if conversationKey := strings.TrimSpace(route.ConversationKey); conversationKey != "" {
-		req["agent_profile_conversation_key"] = conversationKey
+		if existing, _ := req["agent_profile_conversation_key"].(string); strings.TrimSpace(existing) == "" {
+			req["agent_profile_conversation_key"] = conversationKey
+		}
 	}
 	if workspacePath := strings.TrimSpace(route.WorkspacePath); workspacePath != "" {
 		req["selected_folder"] = workspacePath

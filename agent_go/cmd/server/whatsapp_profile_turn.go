@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"path"
@@ -199,6 +201,14 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
+	// In a multi-chat project (a crew) a Slack thread is its own chat (a
+	// separate native session and history), not the project's main
+	// conversation: that main chat is the owner's, and every thread sharing
+	// it mixed colleagues' questions into one context (RTS 2026-09-26).
+	// WhatsApp, and single-conversation products, keep the main conversation.
+	if msg.Platform == "slack" && msg.PresetProfile != nil && conversationKey != "" && strings.TrimSpace(threadID.ThreadTS) != "" && profileHasProjectChats(profile) {
+		conversationKey = slackThreadConversationKey(conversationKey, threadID)
+	}
 	binding, err := whatsappConversationBinding(ctx, workspaceUserID, profile, conversationKey, msg.DeviceSlot)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
@@ -243,4 +253,32 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	services.ApplyBotThreadFields(reqMap, msg.Platform, threadID)
 	reqMap["triggered_by"] = "bot:" + msg.Platform
 	return reqMap, conversation.SessionID, true, nil
+}
+
+// slackThreadConversationKey names a Slack thread's own chat in a keyed
+// project: "<project>:slack-<hash>", the multi-chat key form the project
+// binding already resolves to the same project folder and permissions.
+func slackThreadConversationKey(projectKey string, thread services.ThreadID) string {
+	project, _, _ := strings.Cut(strings.TrimSpace(projectKey), ":")
+	sum := sha256.Sum256([]byte(thread.ConnectionID + "|" + thread.ChannelID + "|" + thread.ThreadTS))
+	return project + ":slack-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// sameProjectConversation reports whether key is the route's project
+// conversation or one of that project's own chats ("<project>:<suffix>").
+func sameProjectConversation(routeKey, key string) bool {
+	routeKey, key = strings.TrimSpace(routeKey), strings.TrimSpace(key)
+	if routeKey == key {
+		return true
+	}
+	project, _, _ := strings.Cut(routeKey, ":")
+	return project != "" && strings.HasPrefix(key, project+":")
+}
+
+// profileHasProjectChats reports a keyed project profile (a crew), whose
+// projects hold several chats ("<project>:<suffix>").
+func profileHasProjectChats(profile agentprofiles.Profile) bool {
+	conversation := profile.Runtime.Conversation
+	return strings.EqualFold(strings.TrimSpace(conversation.Mode), agentprofiles.ConversationModeKeyed) &&
+		strings.EqualFold(strings.TrimSpace(conversation.KeyType), agentprofiles.ConversationKeyTypeProject)
 }

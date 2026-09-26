@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { getCrewTemplate, parseCrewTemplateSetupState } from './crewTemplates'
 
 describe('core Finance Crew templates', () => {
+  it('extends Payables to a reviewed vendor purchase without claiming execution', () => {
+    const payables = getCrewTemplate('spend-payables-coordinator')
+    expect(payables.version).toBe(2)
+    expect(payables.files['skills/spend-payables-coordinator/SKILL.md']).toContain('vendor-purchase-review/v1')
+    expect(payables.files['skills/spend-payables-coordinator/SKILL.md']).toContain('purchase_action_state=none')
+  })
+
   it('keeps cloud savings verification in the Finance Analyst skill', () => {
     const analyst = getCrewTemplate('finance-analyst')
     expect(analyst.files['skills/finance-analyst/SKILL.md']).toContain('cloud-savings-readout/v1')

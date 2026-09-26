@@ -148,17 +148,17 @@ describe('createWorkSession', () => {
   })
 
   it.each([
-    ['billing-operations-coordinator', 'Billing Operations Coordinator'],
-    ['revenue-close-analyst', 'Revenue & Close Analyst'],
-    ['spend-payables-coordinator', 'Spend & Payables Coordinator'],
-  ] as const)('creates the %s finance specialist ready for chat setup, without financial actions', async (id, name) => {
+    ['billing-operations-coordinator', 'Billing Operations Coordinator', 1],
+    ['revenue-close-analyst', 'Revenue & Close Analyst', 1],
+    ['spend-payables-coordinator', 'Spend & Payables Coordinator', 2],
+  ] as const)('creates the %s finance specialist ready for chat setup, without financial actions', async (id, name, version) => {
     updatePlannerFile.mockClear()
     const session = await createWorkSession(name, `Review ${name.toLowerCase()} records.`, undefined, id)
     const writes = new Map(updatePlannerFile.mock.calls.map(call => [call[0] as string, call[1] as string]))
     const runtime = JSON.parse(writes.get(`${session.workspacePath}/workflow.json`)!)
     const setup = JSON.parse(writes.get(`${session.workspacePath}/templates/${id}/TEMPLATE_SETUP.json`)!)
 
-    expect(session.templates).toEqual([{ id, version: 1 }])
+    expect(session.templates).toEqual([{ id, version }])
     expect(runtime.capabilities.selected_skills).toEqual([id])
     expect(runtime.capabilities.selected_servers).toEqual([])
     expect(runtime.schedules).toEqual([])

@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 69 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-four multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The thirty-five multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -59,9 +59,9 @@ The three core Billing Operations, Revenue & Close, and Spend & Payables install
 
 ### Spend & Payables Coordinator (`spend-payables-coordinator`)
 
-- **Use case:** review bills and company spend before payment or approval.
-- **First result:** a source-linked queue with due dates, duplicate candidates, missing evidence, policy exceptions, approvers, and next decisions. The [invoice intake example](../../playbooks/agentic-engineering-platform/finance/invoice-intake-to-reviewed-payable/examples/payable-review.json) shows the distinct document and AP review states.
-- **Setup proof:** read a representative bill or expense export, establish entity, currency, period, approval thresholds, and paid-status source, then have an owner review a flagged item.
+- **Use case:** review proposed purchases, bills and company spend before any contract, PO, payment or approval action.
+- **First result:** a source-linked queue with due dates, duplicate candidates, missing evidence, policy exceptions, approvers, and next decisions. The [invoice intake example](../../playbooks/agentic-engineering-platform/finance/invoice-intake-to-reviewed-payable/examples/payable-review.json) shows distinct document and AP states; the [vendor purchase example](../../playbooks/agentic-engineering-platform/operations/vendor-evaluation-to-purchase-decision/examples/vendor-purchase-pending.json) keeps owner review separate from purchase.
+- **Setup proof:** read a representative bill or expense export, establish entity, currency, period, approval thresholds, and paid-status source, then have an owner review a flagged item. For a purchase, also validate the exact plan/quote comparison and re-read current vendor, commitments, budget, security/privacy and policy sources.
 - **Later run:** deduplicate by vendor, invoice ID and amount under the customer's policy; recheck due and paid states; preserve deferred exceptions. The Crew does not pay a bill by being installed.
 
 ### Tax Export Preparer (`tax-export`)
@@ -362,7 +362,7 @@ The [Meeting Decision to Owned Follow-through](../../playbooks/agentic-engineeri
 - **Use case:** compare a bounded vendor set against owner-approved buying criteria.
 - **First result:** exact product and plan comparison with dated evidence, unknowns, weighted criteria, cost assumptions, risk questions, and owner shortlist.
 - **Setup proof:** verify must-haves, budget, vendor scope, current evidence and one comparable calculation with the decision owner.
-- **Later run:** recheck changed plans and quotes, preserve scoring rules and earlier owner decisions, and flag expired evidence.
+- **Later run:** recheck changed plans and quotes, preserve scoring rules and earlier owner decisions, and flag expired evidence. [Vendor Evaluation to Purchase Decision](../../playbooks/agentic-engineering-platform/operations/vendor-evaluation-to-purchase-decision/SKILL.md) hands the exact comparison to a distinct procurement review.
 
 ### Document Intake Assistant
 

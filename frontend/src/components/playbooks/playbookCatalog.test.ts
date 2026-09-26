@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(50)
+    expect(PLAYBOOK_CATALOG).toHaveLength(51)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -26,6 +26,16 @@ describe('small-team catalog', () => {
     ])
     expect(feature?.handoffs?.[0].artifact_type).toBe('feature-adoption-observation/v1')
     expect(feature?.setupChecks).toHaveLength(10)
+  })
+
+  it('offers exact vendor evaluation to a separate purchase owner', () => {
+    const vendor = PLAYBOOK_CATALOG.find(item => item.id === 'vendor-evaluation-to-purchase-decision')
+    expect(vendor?.category).toBe('Operations')
+    expect(vendor?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'vendor-researcher', 'spend-payables-coordinator',
+    ])
+    expect(vendor?.handoffs?.[0].artifact_type).toBe('vendor-comparison/v1')
+    expect(vendor?.setupChecks).toHaveLength(10)
   })
 
   it('keeps the buyer-question handoff with Search Opportunity Mapper', () => {

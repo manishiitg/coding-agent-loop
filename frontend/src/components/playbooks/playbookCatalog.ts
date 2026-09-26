@@ -70,6 +70,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
     { id: 'meeting-to-status', from: 'meeting', to: 'status', artifact_type: 'meeting-action-register/v1', required: true },
     { id: 'status-to-review', from: 'status', to: 'review', artifact_type: 'project-action-status/v1', required: false },
   ], setupChecks: ['goal_owner', 'meeting_scope', 'owner_policy', 'status_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
+  { id: 'vendor-evaluation-to-purchase-decision', title: 'Vendor Evaluation to Purchase Decision', description: 'Compare exact SaaS vendor plans against requirements and cost, then prepare a current, owner-reviewed purchase decision.', version: '0.1.0', category: 'Operations', order: 2, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'research', agent_playbook_id: 'vendor-researcher', required: true, output: 'vendor-comparison/v1' },
+    { id: 'payables', agent_playbook_id: 'spend-payables-coordinator', required: true, output: 'vendor-purchase-review/v1' },
+  ], handoffs: [
+    { id: 'research-to-payables', from: 'research', to: 'payables', artifact_type: 'vendor-comparison/v1', required: true },
+  ], setupChecks: ['goal_owner', 'request_scope', 'requirements_rule', 'commercial_rule', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'finding-to-verified-remediation', title: 'Finding to Verified Remediation', description: 'Connect an authorized, validated security finding to owned remediation and independent retest of the affected deployed asset.', version: '0.1.0', category: 'Security', order: 1, inputCount: 6, toolCount: 6, teamScope: 'small_team', agentSlots: [
     { id: 'finding', agent_playbook_id: 'security-findings-analyst', required: true, output: 'security-finding/v1' },
     { id: 'remediation', agent_playbook_id: 'security-remediation-coordinator', required: true, output: 'security-remediation-ledger/v1' },

@@ -730,7 +730,7 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		// a crew answering in Slack reads its own thread (a bot turn's tool
 		// is held to the channel and destination it arrived on). Changing
 		// the bot's setup needs write access in the app.
-		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", !readOnly && policy.Origin == "interactive" && registerWorkUIAllowed(input)); err != nil {
+		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", !readOnly && policy.Origin == "interactive" && registerWorkUIAllowed(input), !readOnly); err != nil {
 			return err
 		}
 		if !readOnly {

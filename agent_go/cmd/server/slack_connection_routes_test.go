@@ -461,7 +461,7 @@ func TestSlackRouteSaveRegistersConnectorWhenSwitchOff(t *testing.T) {
 func TestSlackConfigureToolOwnerBranch(t *testing.T) {
 	api, _ := setupSlackConnectionTest(t)
 	reg := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(reg, "session", "Workflow/alpha", "", true); err != nil {
+	if err := api.registerSlackBotTools(reg, "session", "Workflow/alpha", "", true, true); err != nil {
 		t.Fatal(err)
 	}
 	configure, found := reg.tools["configure_slack_bot"]
@@ -589,7 +589,7 @@ func TestSlackConfigureToolScopeFollowsContext(t *testing.T) {
 	// An admin in a workflow builder chat configures the workflow's own
 	// connection, not the platform default.
 	reg := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(reg, "session", "Workflow/alpha", "", true); err != nil {
+	if err := api.registerSlackBotTools(reg, "session", "Workflow/alpha", "", true, false); err != nil {
 		t.Fatal(err)
 	}
 	configure, found := reg.tools["configure_slack_bot"]
@@ -626,7 +626,7 @@ func TestSlackConfigureToolScopeFollowsContext(t *testing.T) {
 
 	// Without a workflow or project context the admin still manages the default.
 	regProfile := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(regProfile, "session", "", "work", true); err != nil {
+	if err := api.registerSlackBotTools(regProfile, "session", "", "work", true, false); err != nil {
 		t.Fatal(err)
 	}
 	configureDefault, found := regProfile.tools["configure_slack_bot"]
@@ -669,7 +669,7 @@ func TestSlackConfigureToolProductScope(t *testing.T) {
 	workspace.files[projectPath+"/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","label":"Alpha Project","capabilities":{}}`
 
 	reg := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(reg, "session", projectPath, "work", true); err != nil {
+	if err := api.registerSlackBotTools(reg, "session", projectPath, "work", true, false); err != nil {
 		t.Fatal(err)
 	}
 	configure, found := reg.tools["configure_slack_bot"]
@@ -721,7 +721,7 @@ func TestSlackConfigureToolProductScope(t *testing.T) {
 	bobProject := "_users/bob/Chats/Work/projects/beta"
 	workspace.files[bobProject+"/workflow.json"] = `{"schema_version":1,"id":"proj_beta","label":"Beta Project","capabilities":{}}`
 	regBob := &recordingRegistrar{}
-	if err := api.registerSlackBotTools(regBob, "session", bobProject, "work", true); err != nil {
+	if err := api.registerSlackBotTools(regBob, "session", bobProject, "work", true, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := regBob.tools["configure_slack_bot"].exec(alice, map[string]interface{}{"enabled": false}); err == nil {

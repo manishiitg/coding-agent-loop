@@ -35,7 +35,7 @@ func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolReg
 			}
 		}
 		if policy.allows("bot_management") {
-			if err := api.registerSlackBotTools(registrar, session, workspace, "", policy.Origin == "interactive" && !readOnly && policy.Mode == "builder"); err != nil {
+			if err := api.registerSlackBotTools(registrar, session, workspace, "", policy.Origin == "interactive" && !readOnly && policy.Mode == "builder", !readOnly); err != nil {
 				return err
 			}
 		}

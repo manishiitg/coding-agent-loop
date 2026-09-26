@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
+
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	mcpexecutor "github.com/manishiitg/mcpagent/executor"
@@ -115,4 +118,59 @@ func (api *StreamingAPI) slackCLIFromTool(ctx context.Context, args map[string]i
 		return "", err
 	}
 	return services.RunSlackCLIOnConnection(ctx, slackToolConnectionID(ctx, api, session, route), method, parameters)
+}
+
+// slackAPIMethodPattern accepts Slack Web API method names (views.publish,
+// conversations.members, ...), never CLI flags or paths.
+var slackAPIMethodPattern = regexp.MustCompile(`^[a-z]+(\.[a-zA-Z]+)+$`)
+
+// slackCLIFullAccess is the Slack tool for a trusted full-mode turn: the
+// destination's owner (or editor) in their web chat, WhatsApp or 1:1 DM. It
+// acts for them like they would at the keyboard, so any Slack API method is
+// open (views.publish for the bot's Home tab, users.list, ...), with any
+// JSON parameters. Run-mode turns — Slack channels, where anyone who can
+// post steers the agent, and read-only users — keep slackCLIFromTool's
+// read-and-reply limits (user decision 2026-09-26). The bot token stays
+// backend-owned: a caller-supplied token is refused and responses are
+// redacted and size-capped by the runner.
+func (api *StreamingAPI) slackCLIFullAccess(ctx context.Context, session, workspace, profile string, args map[string]interface{}) (string, error) {
+	method := stringFromRequestMap(args, "method")
+	if !slackAPIMethodPattern.MatchString(method) {
+		return "", fmt.Errorf("method must be a Slack Web API method name, e.g. views.publish")
+	}
+	parameters := map[string]interface{}{}
+	if raw, ok := args["parameters"]; ok && raw != nil {
+		var valid bool
+		if parameters, valid = raw.(map[string]interface{}); !valid {
+			return "", fmt.Errorf("parameters must be a JSON object")
+		}
+	}
+	for key := range parameters {
+		if strings.EqualFold(strings.TrimSpace(key), "token") {
+			return "", fmt.Errorf("the bot token is backend-owned; do not pass credentials")
+		}
+	}
+	connID := ""
+	if channel := stringFromRequestMap(args, "route_id"); channel != "" && slackChannelIDPattern.MatchString(channel) {
+		if _, routes, err := api.slackRoutes(ctx); err == nil {
+			if route, found, _ := api.slackToolRoute(ctx, session, channel, routes); found {
+				connID = slackToolConnectionID(ctx, api, session, route)
+			}
+		}
+		if _, set := parameters["channel"]; !set {
+			parameters["channel"] = channel
+		}
+	}
+	if connID == "" {
+		if execution, ok := api.botExecutionForSession(session); ok {
+			connID = strings.TrimSpace(execution.Request.BotConnectionID)
+		}
+	}
+	if connID == "" {
+		// The workflow's or crew's own bot, else the platform default.
+		if target, err := api.slackToolTarget(ctx, workspace, profile); err == nil {
+			connID = slackConnectionIDForRoute(ctx, target)
+		}
+	}
+	return services.RunSlackCLIOnConnection(ctx, connID, method, parameters)
 }

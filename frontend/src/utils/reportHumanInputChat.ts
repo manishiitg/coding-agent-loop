@@ -159,6 +159,26 @@ export function buildReportHumanInputAnswerMessage(
 }
 
 /** Opens the automation chat with the answer pre-filled for the user to send. */
+/**
+ * Sends the chosen option as the answer: clicking an option is already an
+ * explicit choice, so it goes straight to the automation chat (queued behind
+ * a running turn), like "Take best action". Use "Ask in chat" to add a note.
+ */
+export async function sendReportHumanInputAnswerToChat({
+  input,
+  workspacePath,
+  option,
+}: {
+  input: ReportHumanInput
+  workspacePath: string
+  option: { id: string; title: string }
+}): Promise<WorkspacePaneChatResult> {
+  return sendWorkspacePaneMessageToChat({
+    workspacePath,
+    message: buildReportHumanInputAnswerMessage(input, workspacePath, option),
+  })
+}
+
 export async function openReportHumanInputAnswerInChat({
   input,
   workspacePath,

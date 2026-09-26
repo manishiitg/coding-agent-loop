@@ -10,7 +10,7 @@ import {
   reportHumanInputImpact,
   reportHumanInputStatusLabel,
 } from '../../utils/reportHumanInputFormatting'
-import { delegateReportHumanInputActionToChat, openReportHumanInputAnswerInChat, openReportHumanInputQuestionInChat } from '../../utils/reportHumanInputChat'
+import { delegateReportHumanInputActionToChat, openReportHumanInputAnswerInChat, openReportHumanInputQuestionInChat, sendReportHumanInputAnswerToChat } from '../../utils/reportHumanInputChat'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { PlainMarkdown } from '../ui/PlainMarkdown'
 import { WORKFLOW_DECISIONS_REFRESH_EVENT } from './workflowEvents'
@@ -212,13 +212,30 @@ export function ReportHumanInputPanel({
     }
   }
 
-  // Decisions are answered in chat: clicking an option pre-fills the choice in
-  // the automation chat, and the agent records and applies it in that turn.
+  // Decisions are answered in chat. Clicking an option is an explicit choice,
+  // so it is sent straight away and the agent records and applies it in that
+  // turn. A free-text answer opens the chat with the decision filled in, for
+  // the user to type and send.
   const answerInChat = async (input: ReportHumanInput, option?: { id: string; title: string }) => {
+    if (!option) {
+      try {
+        await openReportHumanInputAnswerInChat({ input, workspacePath })
+      } catch (err) {
+        useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open the chat.', 'error')
+      }
+      return
+    }
+    updateDraft(input.id, { delegating: true })
     try {
-      await openReportHumanInputAnswerInChat({ input, workspacePath, option })
+      const result = await sendReportHumanInputAnswerToChat({ input, workspacePath, option })
+      useChatStore.getState().addToast(
+        result.queuedBehindRunningTurn ? `"${option.title}" sent; it runs after the current chat turn.` : `"${option.title}" sent to chat.`,
+        'success',
+      )
     } catch (err) {
-      useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open the chat.', 'error')
+      useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to send the answer to chat.', 'error')
+    } finally {
+      updateDraft(input.id, { delegating: false })
     }
   }
 
@@ -452,7 +469,8 @@ export function ReportHumanInputPanel({
                       <button
                         key={option.id}
                         type="button"
-                        title="Answer with this option in chat"
+                        title="Send this answer to the chat"
+                        disabled={busy}
                         onPointerDown={event => event.stopPropagation()}
                         onClick={event => {
                           event.stopPropagation()

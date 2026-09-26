@@ -226,8 +226,8 @@ func putSlackConnectionChannelRouteHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
-		workspacePath := cleanSlackDestinationPath(req.WorkspacePath)
 		profileID := strings.TrimSpace(req.ProfileID)
+		workspacePath := physicalProductSlackScope(r.Context(), profileID, cleanSlackDestinationPath(req.WorkspacePath))
 		if workspacePath == "" {
 			http.Error(w, "workspace_path is required", http.StatusBadRequest)
 			return

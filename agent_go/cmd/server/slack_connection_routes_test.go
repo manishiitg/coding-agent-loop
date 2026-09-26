@@ -799,3 +799,45 @@ func TestSlackConfigureToolProductScope(t *testing.T) {
 		t.Fatalf("unreferenced delete status %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// The crew Slack tab sends the crew's logical path ("Chats/Work/projects/<id>").
+// Stored or read as-is it names no folder: selecting the new bot failed with
+// "product manifest not found" and its route had no owner (RTS 2026-09-25).
+func TestCrewSlackBotAcceptsTheLogicalProjectPath(t *testing.T) {
+	api, workspace := setupSlackConnectionTest(t)
+	profiles := agentprofiles.NewRegistry()
+	if err := profiles.RegisterProfile(agentprofiles.Profile{
+		ID: "work", Name: "Work", Version: 1, SystemPromptTemplate: "test", BuiltIn: true,
+		Runtime: agentprofiles.RuntimePolicy{
+			Workspace: agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.agentProfiles = profiles
+	physical := "_users/alice/Chats/Work/projects/alpha"
+	workspace.files[physical+"/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","label":"Alpha","capabilities":{}}`
+
+	create := slackConnectionRequest(t, "POST", "alice", `{"display_name":"SDE","bot_token":"xoxb-crew-alpha","app_token":"xapp-crew-alpha","enabled":false,"workspace_path":"Chats/Work/projects/alpha","profile_id":"work"}`)
+	w := httptest.NewRecorder()
+	createSlackConnectionHandler(api)(w, create)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	conn := decodeSlackConnectionResponse(t, w.Body.Bytes())
+	stored, ok := services.GetSlackService().GetConnection(conn.ID)
+	if !ok || stored.WorkspacePath != physical {
+		t.Fatalf("stored scope = %q, want the physical project path %q", stored.WorkspacePath, physical)
+	}
+
+	selectReq := httptest.NewRequest("PUT", "/api/human-feedback/slack/connections/project/selection?profile_id=work&workspace_path=Chats/Work/projects/alpha", strings.NewReader(`{"slack_connection_id":"`+conn.ID+`"}`))
+	selectReq = selectReq.WithContext(context.WithValue(selectReq.Context(), UserContextKey, slackConnectionClaims("alice")))
+	w = httptest.NewRecorder()
+	projectSlackConnectionHandler(api)(w, selectReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("select = %d %s", w.Code, w.Body.String())
+	}
+	if selected, err := productSlackConnectionID(context.Background(), "work", physical); err != nil || selected != conn.ID {
+		t.Fatalf("crew did not select its bot: %q, %v", selected, err)
+	}
+}

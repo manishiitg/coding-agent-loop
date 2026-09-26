@@ -137,6 +137,21 @@ func slackConnectionService(w http.ResponseWriter, r *http.Request) (*services.S
 // requireSlackConnectionCreateAccess enforces who may create a connection.
 // Admins may create at any scope; anyone else must scope the connection to
 // a workflow they own. Bot-route principals can never manage connections.
+// physicalProductSlackScope turns a crew/product project path into the
+// caller's physical project folder. The browser sends a crew's logical path
+// ("Chats/Work/projects/<id>"); stored or read as-is it names no folder in the
+// document root, so the project's manifest was "not found" when the new bot
+// was selected, and the bot's Slack route had no owner (RTS 2026-09-25, #201
+// sub-issue 5). A "_users/<owner>/..." path is already physical and is kept.
+// Workflow scopes (no profile) are returned unchanged.
+func physicalProductSlackScope(ctx context.Context, profileID, workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if strings.TrimSpace(profileID) == "" || workspacePath == "" {
+		return workspacePath
+	}
+	return productConversationRuntimeWorkspace(productWorkspaceUserID(ctx), workspacePath)
+}
+
 func requireSlackConnectionCreateAccess(r *http.Request, api *StreamingAPI, workspacePath, profileID string) error {
 	claims := GetUserFromContext(r.Context())
 	if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" {
@@ -338,6 +353,7 @@ func createSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		if req.ProfileID != nil {
 			profileID = strings.TrimSpace(*req.ProfileID)
 		}
+		workspacePath = physicalProductSlackScope(r.Context(), profileID, workspacePath)
 		if err := requireSlackConnectionCreateAccess(r, api, workspacePath, profileID); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
@@ -398,6 +414,13 @@ func updateSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		workspacePath := current.WorkspacePath
 		profileID := current.ProfileID
+		if req.WorkspacePath == nil && req.ProfileID == nil {
+			// A crew bot saved before paths were made physical keeps a logical
+			// path. A logical path always names the caller's own crew (another
+			// owner's crew is addressed by its "_users/<owner>/" path), so
+			// re-saving it from the crew repairs the stored scope.
+			workspacePath = physicalProductSlackScope(r.Context(), profileID, workspacePath)
+		}
 		if req.WorkspacePath != nil || req.ProfileID != nil {
 			if !currentUserIsAdmin(r) {
 				http.Error(w, "only a platform admin may change a Slack connection's scope", http.StatusForbidden)
@@ -636,7 +659,7 @@ func projectSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		profileID := strings.TrimSpace(r.URL.Query().Get("profile_id"))
-		workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+		workspacePath := physicalProductSlackScope(r.Context(), profileID, r.URL.Query().Get("workspace_path"))
 		if profileID == "" || workspacePath == "" {
 			http.Error(w, "profile_id and workspace_path are required", http.StatusBadRequest)
 			return

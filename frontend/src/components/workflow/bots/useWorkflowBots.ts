@@ -9,7 +9,7 @@ import type {
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 import { slackConnectionStatus } from './slackConnectionStatus'
-import { resolveWorkflowSlackConnection, selectedWorkflowSlackReady } from './slackWorkflowConnection'
+import { resolveWorkflowSlackConnection, sameBotWorkspacePath, selectedWorkflowSlackReady } from './slackWorkflowConnection'
 
 type WaRoute = WhatsAppRoute
 
@@ -1214,10 +1214,10 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     return { workspace_path: path, ...(hasTarget && targetProfileId ? { profile_id: targetProfileId } : {}) }
   }, [hasTarget, targetProfileId, workflow?.workspace_path, workspacePath])
   const routesHere = useCallback((bot: SlackUsableBot) => (bot.channel_routes || []).filter(route =>
-    route.workspace_path === myBotDestination.workspace_path && (route.profile_id || '') === (myBotDestination.profile_id || '')), [myBotDestination])
+    sameBotWorkspacePath(route.workspace_path, myBotDestination.workspace_path) && (route.profile_id || '') === (myBotDestination.profile_id || '')), [myBotDestination])
   // Bots other than this target's own, with the channels routed here.
   const myOtherBots = useMemo(
-    () => myBots.filter(bot => !(bot.workspace_path === myBotDestination.workspace_path && (bot.profile_id || '') === (myBotDestination.profile_id || ''))),
+    () => myBots.filter(bot => !(sameBotWorkspacePath(bot.workspace_path, myBotDestination.workspace_path) && (bot.profile_id || '') === (myBotDestination.profile_id || ''))),
     [myBots, myBotDestination],
   )
 
@@ -1239,7 +1239,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     }
     const taken = channels.map(channel => (bot.channel_routes || []).find(route => route.channel_id === channel)).find(Boolean)
     if (taken) {
-      const here = taken.workspace_path === myBotDestination.workspace_path && (taken.profile_id || '') === (myBotDestination.profile_id || '')
+      const here = sameBotWorkspacePath(taken.workspace_path, myBotDestination.workspace_path) && (taken.profile_id || '') === (myBotDestination.profile_id || '')
       setMyBotError(here
         ? `${taken.channel_id} already answers here on ${bot.display_name}.`
         : `${taken.channel_id} on ${bot.display_name} already answers for ${taken.label || taken.workspace_path}. Remove it there first.`)

@@ -86,6 +86,10 @@ func ValidateCrewAttachmentBinding(attachment CrewAttachment) error {
 	if len(segments) < 2 {
 		return errCrewAttachmentAlias("attachment workspace path is not a crew workspace")
 	}
+	// A shared crew root, Crew/<id>.
+	if len(segments) == 2 && segments[0] == "Crew" && segments[1] != "" && !strings.HasPrefix(segments[1], ".") {
+		return nil
+	}
 	for _, segment := range segments[:len(segments)-1] {
 		if segment == "projects" {
 			return nil

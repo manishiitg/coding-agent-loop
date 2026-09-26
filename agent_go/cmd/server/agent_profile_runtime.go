@@ -106,11 +106,15 @@ func cleanAgentProfileWorkspace(raw, userID string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("selected_folder must stay inside the workspace")
 	}
-	// A shared crew root is reachable only as a verified crew binding
-	// (resolveCrewProjectBinding), never as a free-form selected folder:
-	// unlike _users/<id>/, its location says nothing about who may use it.
-	if clean == crewSharedRootName || strings.HasPrefix(clean, crewSharedRootName+"/") {
-		return "", fmt.Errorf("selected_folder must be a crew you can open")
+	// A shared crew is the caller's own workspace only when its manifest
+	// says so -- the same rule _users/<id>/ expresses by location. Someone
+	// else's crew is reachable only as a verified reader binding
+	// (resolveCrewProjectBinding). The bare root is the Work profile's
+	// projects_root (listed server-side, filtered by manifest owner).
+	if strings.HasPrefix(clean, crewSharedRootName+"/") {
+		if _, owned := ownedCrewRoot(userID, clean); !owned {
+			return "", fmt.Errorf("selected_folder must stay inside your own workspace")
+		}
 	}
 	if clean == "_users" || strings.HasPrefix(clean, "_users/") {
 		owner := strings.TrimPrefix(clean, "_users")
@@ -177,6 +181,10 @@ func productConversationRuntimeWorkspace(userID, selectedFolder string) string {
 	if clean == "" {
 		return ""
 	}
+	// A crew at (or migrated to) the shared root has one physical path.
+	if ref, ok := resolveCrewPath(context.Background(), userID, clean); ok && ref.Shared {
+		return ref.Path()
+	}
 	if strings.HasPrefix(clean, "_users/") {
 		return clean
 	}
@@ -188,6 +196,9 @@ func productConversationRuntimeWorkspace(userID, selectedFolder string) string {
 // landing chat: registering them there either fails immediately (share links,
 // schedules) or gives the model tools that cannot operate without a project manifest.
 func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
+	if ref, ok := parseCrewPath(userID, workspacePath); ok && ref.Shared {
+		return true
+	}
 	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
 	// Crew Run mode: a work project is a work project whoever owns it.
 	// Strip any owner's physical prefix before the shape check, so a
@@ -353,29 +364,28 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		if crewOwned && crew.Binding.ProjectNativeAgentTools && profile.ToolPolicy.IsAllowlist() {
 			profile.Runtime.AgentTools.Mode = "hybrid"
 		}
-		if !crewOwned {
-			if canonicalCrewWorkspaceRoot(selectedFolder) != canonicalCrewWorkspaceRoot(crewRoot) {
-				return nil, fmt.Errorf("Work conversation does not match the selected session")
-			}
-			folderForClean = crewRoot
-		}
-	}
-	workspacePath, err := cleanAgentProfileWorkspace(folderForClean, userID)
-	if err != nil {
-		// The verified non-owned binding root is the one cross-owner path
-		// a turn may address; its shape was verified by the projects-root
-		// scan that produced it.
-		if crewOwned || !isCrewProjectPath(folderForClean) {
-			return nil, err
-		}
-		workspacePath = strings.Trim(filepath.ToSlash(strings.TrimSpace(folderForClean)), "/")
-	}
-	req.SelectedFolder = workspacePath
-	if strings.EqualFold(strings.TrimSpace(profile.ID), "work") && crewOwned {
-		if !workspacePathsMatchForUser(userID, crewRoot, workspacePath) {
+		// The selected folder must name the bound crew, in any of its
+		// spellings (Crew/<id>, the owner's Chats/..., the physical
+		// _users/<owner>/...). The verified binding root is then the turn's
+		// folder: it is the one crew path a turn may address, and it is the
+		// only path cleanAgentProfileWorkspace would refuse (a shared or
+		// cross-owner root says nothing about access by itself).
+		selected, selectedIsCrew := resolveCrewPath(ctx, userID, selectedFolder)
+		bound, boundIsCrew := resolveCrewPath(ctx, userID, crewRoot)
+		if !selectedIsCrew || !boundIsCrew || selected.Rest != "" || selected.Root != bound.Root {
 			return nil, fmt.Errorf("Work conversation does not match the selected session")
 		}
+		folderForClean = ""
 	}
+	workspacePath := strings.Trim(filepath.ToSlash(strings.TrimSpace(crewRoot)), "/")
+	if folderForClean != "" || crewRoot == "" {
+		cleaned, err := cleanAgentProfileWorkspace(folderForClean, userID)
+		if err != nil {
+			return nil, err
+		}
+		workspacePath = cleaned
+	}
+	req.SelectedFolder = workspacePath
 
 	promptContext := req.AgentProfileContext
 	promptContext.ProjectTitle = strings.TrimSpace(promptContext.ProjectTitle)

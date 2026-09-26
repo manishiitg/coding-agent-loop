@@ -111,12 +111,23 @@ func TestWorkspaceProxyGatesSharedCrewRoot(t *testing.T) {
 	}
 }
 
-// A shared crew root is never a free-form selected folder.
+// A shared crew is the caller's own workspace only when they own it.
 func TestCleanAgentProfileWorkspaceRejectsSharedCrewRoot(t *testing.T) {
-	for _, raw := range []string{"Crew", "Crew/sde", "Crew/sde/code"} {
-		if _, err := cleanAgentProfileWorkspace(raw, "alice"); err == nil {
-			t.Fatalf("%q accepted as a selected folder", raw)
+	stubCrewLookups(t, map[string]string{"Crew/sde": "alice"}, nil)
+	for _, raw := range []string{"Crew/sde", "Crew/sde/code"} {
+		if got, err := cleanAgentProfileWorkspace(raw, "alice"); err != nil || got != raw {
+			t.Fatalf("owner refused %q: %v", raw, err)
 		}
+		if _, err := cleanAgentProfileWorkspace(raw, "bob"); err == nil {
+			t.Fatalf("%q accepted for someone who does not own it", raw)
+		}
+	}
+	if _, err := cleanAgentProfileWorkspace("Crew/orphan", "alice"); err == nil {
+		t.Fatal("an ownerless crew accepted")
+	}
+	// The bare root is the Work profile's projects_root.
+	if got, err := cleanAgentProfileWorkspace("Crew", "alice"); err != nil || got != "Crew" {
+		t.Fatalf("projects root refused: %q %v", got, err)
 	}
 	if got, err := cleanAgentProfileWorkspace("Chats/Work/projects/sde", "alice"); err != nil || got != "Chats/Work/projects/sde" {
 		t.Fatalf("legacy crew folder changed: %q %v", got, err)

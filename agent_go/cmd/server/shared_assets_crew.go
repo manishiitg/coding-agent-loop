@@ -26,12 +26,44 @@ var crewLinkReadAllowed = func(api *StreamingAPI, claims *UserClaims, crewRoot s
 // the link addresses the crew root itself, whose listing must be filtered.
 func (api *StreamingAPI) crewReaderSharedAsset(w http.ResponseWriter, r *http.Request, full string) (root, relative string, crewRootView, handled, ok bool) {
 	claims := GetUserFromContext(r.Context())
-	if claims == nil || !IsMultiUserMode() {
+	if claims == nil {
 		return "", "", false, false, false
 	}
 	caller := publicWorkspaceUserID(r)
 	clean, err := wf.CleanRelative(full)
 	if err != nil || clean != full {
+		return "", "", false, false, false
+	}
+	// A shared crew root (Crew/<id>): one path for owner and readers. The
+	// owner sees the whole crew; a reader gets the same confined view as a
+	// legacy cross-user crew link.
+	if ref, isCrew := resolveCrewPath(r.Context(), caller, clean); isCrew && ref.Shared {
+		access := crewAccessFor(claims, ref)
+		if access == crewAccessNone {
+			externalError(w, 403, "forbidden", "You do not have access to this crew.")
+			return "", "", false, true, false
+		}
+		if claims.AccessToken != nil && !claims.AccessToken.Allows("files:read") {
+			externalError(w, 403, "insufficient_scope", "This token does not allow this asset.")
+			return "", "", false, true, false
+		}
+		relative := ref.Rest
+		if access == crewAccessReader && relative != "" {
+			if _, confined := confineSharedProjectPath(ref.Root, relative); !confined {
+				externalError(w, 403, "protected_path", "This part of the crew is private to its owner.")
+				return "", "", false, true, false
+			}
+		}
+		if relative == "" {
+			relative = "."
+		}
+		if wf.Private(relative) {
+			externalError(w, 403, "protected_path", "Private workspace files are not shareable.")
+			return "", "", false, true, false
+		}
+		return ref.Root, relative, access == crewAccessReader && ref.Rest == "", true, true
+	}
+	if !IsMultiUserMode() {
 		return "", "", false, false, false
 	}
 	owner := strings.TrimSpace(r.URL.Query().Get("uid"))

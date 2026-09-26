@@ -21,10 +21,26 @@ func ValidateBotScope(workspacePath, profileID string) error {
 	if strings.TrimSpace(profileID) == "" || strings.TrimSpace(workspacePath) == "" {
 		return nil
 	}
+	// A shared crew root is one path for everyone; its manifest names the owner.
+	if isSharedCrewScope(workspacePath) {
+		return nil
+	}
 	if physicalBotScopeOwner(workspacePath) == "" {
 		return fmt.Errorf("%w: %q", ErrLogicalCrewScope, strings.TrimSpace(workspacePath))
 	}
 	return nil
+}
+
+// SharedCrewOwner returns the owner of a shared crew root ("Crew/<id>") from
+// its manifest, or "". The server sets it at startup; services cannot read
+// manifests themselves.
+var SharedCrewOwner func(workspacePath string) string
+
+// isSharedCrewScope reports a shared crew root, Crew/<id>, or a path in one.
+func isSharedCrewScope(workspacePath string) bool {
+	clean := strings.Trim(filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspacePath))), "/")
+	parts := strings.SplitN(clean, "/", 3)
+	return len(parts) >= 2 && parts[0] == "Crew" && parts[1] != "" && !strings.HasPrefix(parts[1], ".")
 }
 
 // physicalBotScopeOwner returns the owner named by a physical path, or "".

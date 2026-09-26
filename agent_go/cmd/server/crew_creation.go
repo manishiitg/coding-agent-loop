@@ -441,6 +441,7 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 		"title":          title,
 		"description":    purpose,
 		"session_id":     sessionID,
+		"owner_id":       userID,
 		"created_at":     now,
 		"updated_at":     now,
 		"identity":       map[string]interface{}{"name": title, "icon": icon, "role": role},

@@ -695,9 +695,10 @@ func workflowDBWorkspacePathFromCandidate(candidate string) string {
 			return filepath.ToSlash(filepath.Join("Chats", "Work", "projects", parts[i+3]))
 		}
 	}
+	// The outermost Workflow/<name> or shared Crew/<id> owns the path.
 	for i := 0; i+1 < len(parts); i++ {
-		if parts[i] == "Workflow" && strings.TrimSpace(parts[i+1]) != "" {
-			return filepath.ToSlash(filepath.Join("Workflow", parts[i+1]))
+		if (parts[i] == "Workflow" || parts[i] == "Crew") && strings.TrimSpace(parts[i+1]) != "" {
+			return filepath.ToSlash(filepath.Join(parts[i], parts[i+1]))
 		}
 	}
 	return ""

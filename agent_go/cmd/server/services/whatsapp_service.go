@@ -1302,6 +1302,7 @@ type whatsappWorkflowManifest struct {
 type whatsappCrewManifest struct {
 	Product  string `json:"product"`
 	ID       string `json:"id"`
+	OwnerID  string `json:"owner_id"`
 	Title    string `json:"title"`
 	Identity struct {
 		Name string `json:"name"`
@@ -1624,67 +1625,75 @@ func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, own
 	// Crew projects are user-owned product conversations, not workflows. Scan
 	// the same user-scoped workspace API and build profile routes so selecting
 	// a Crew enters its canonical persistent project chat.
-	crewList, crewErr := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{Folder: "Chats/Work/projects", MaxDepth: &maxDepth})
-	if crewErr != nil {
-		log.Printf("[WHATSAPP] Failed to list Crew projects for user %s: %v", owner.UserID, crewErr)
-	} else {
-		var crewResp whatsappDocumentListResponse
-		if err := json.Unmarshal(crewList.Raw, &crewResp); err != nil {
-			log.Printf("[WHATSAPP] Failed to parse Crew project list for user %s: %v", owner.UserID, err)
+	// Crews live at the shared Crew/ root (this user's own, by manifest
+	// owner) or, until migrated, in the user's own tree.
+	seenCrewIDs := map[string]bool{}
+	for _, crewFolder := range []string{"Crew", "Chats/Work/projects"} {
+		sharedRoot := crewFolder == "Crew"
+		crewList, crewErr := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{Folder: crewFolder, MaxDepth: &maxDepth})
+		if crewErr != nil {
+			log.Printf("[WHATSAPP] Failed to list Crew projects in %s for user %s: %v", crewFolder, owner.UserID, crewErr)
 		} else {
-			var crewManifestPaths []string
-			walkDocs = func(docs []whatsappDocument) {
-				for _, doc := range docs {
-					if strings.HasSuffix(doc.FilePath, "/product.json") {
-						crewManifestPaths = append(crewManifestPaths, doc.FilePath)
+			var crewResp whatsappDocumentListResponse
+			if err := json.Unmarshal(crewList.Raw, &crewResp); err != nil {
+				log.Printf("[WHATSAPP] Failed to parse Crew project list for user %s: %v", owner.UserID, err)
+			} else {
+				var crewManifestPaths []string
+				walkDocs = func(docs []whatsappDocument) {
+					for _, doc := range docs {
+						if strings.HasSuffix(doc.FilePath, "/product.json") {
+							crewManifestPaths = append(crewManifestPaths, doc.FilePath)
+						}
+						if len(doc.Children) > 0 {
+							walkDocs(doc.Children)
+						}
 					}
-					if len(doc.Children) > 0 {
-						walkDocs(doc.Children)
+				}
+				walkDocs(crewResp.Data)
+				sort.Strings(crewManifestPaths)
+				seenCrewPaths := make(map[string]bool, len(crewManifestPaths))
+				for _, manifestPath := range crewManifestPaths {
+					manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
+					if manifestPath == "" || seenCrewPaths[manifestPath] {
+						continue
 					}
+					seenCrewPaths[manifestPath] = true
+					content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
+					if err != nil {
+						log.Printf("[WHATSAPP] Failed to read Crew manifest %s: %v", manifestPath, err)
+						continue
+					}
+					var manifest whatsappCrewManifest
+					if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
+						continue
+					}
+					if sharedRoot && strings.TrimSpace(manifest.OwnerID) != strings.TrimSpace(owner.UserID) {
+						continue // someone else's crew: listed below as read-only
+					}
+					id := strings.TrimSpace(manifest.ID)
+					if id == "" || seenCrewIDs[strings.ToLower(id)] {
+						continue
+					}
+					label := strings.TrimSpace(manifest.Title)
+					if label == "" {
+						label = strings.TrimSpace(manifest.Identity.Name)
+					}
+					if label == "" {
+						continue
+					}
+					seenCrewIDs[strings.ToLower(id)] = true
+					candidates = append(candidates, whatsappDestinationCandidate{
+						Kind:            "crew",
+						ID:              id,
+						Label:           label,
+						WorkspacePath:   strings.TrimSuffix(manifestPath, "/product.json"),
+						Slug:            slugifyWhatsAppWorkflow(label),
+						WorkshopMode:    "run",
+						ProfileID:       "work",
+						ConversationKey: id,
+						ProfileLabel:    label,
+					})
 				}
-			}
-			walkDocs(crewResp.Data)
-			sort.Strings(crewManifestPaths)
-			seenCrewPaths := make(map[string]bool, len(crewManifestPaths))
-			seenCrewIDs := make(map[string]bool, len(crewManifestPaths))
-			for _, manifestPath := range crewManifestPaths {
-				manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
-				if manifestPath == "" || seenCrewPaths[manifestPath] {
-					continue
-				}
-				seenCrewPaths[manifestPath] = true
-				content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
-				if err != nil {
-					log.Printf("[WHATSAPP] Failed to read Crew manifest %s: %v", manifestPath, err)
-					continue
-				}
-				var manifest whatsappCrewManifest
-				if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
-					continue
-				}
-				id := strings.TrimSpace(manifest.ID)
-				if id == "" || seenCrewIDs[strings.ToLower(id)] {
-					continue
-				}
-				label := strings.TrimSpace(manifest.Title)
-				if label == "" {
-					label = strings.TrimSpace(manifest.Identity.Name)
-				}
-				if label == "" {
-					continue
-				}
-				seenCrewIDs[strings.ToLower(id)] = true
-				candidates = append(candidates, whatsappDestinationCandidate{
-					Kind:            "crew",
-					ID:              id,
-					Label:           label,
-					WorkspacePath:   strings.TrimSuffix(manifestPath, "/product.json"),
-					Slug:            slugifyWhatsAppWorkflow(label),
-					WorkshopMode:    "run",
-					ProfileID:       "work",
-					ConversationKey: id,
-					ProfileLabel:    label,
-				})
 			}
 		}
 	}

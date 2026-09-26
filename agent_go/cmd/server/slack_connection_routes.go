@@ -254,6 +254,11 @@ func requireProductSlackScopeOwner(ctx context.Context, api *StreamingAPI, profi
 // profile. Paths are cleaned before the prefix comparison so ".." cannot
 // escape the root.
 func productWorkspaceUnderCallerRoot(profile agentprofiles.Profile, userID, workspacePath string) bool {
+	// The shared crew root holds every owner's crews: "under the projects
+	// root" proves nothing there, only the manifest owner does.
+	if ref, ok := resolveCrewPath(context.Background(), userID, workspacePath); ok && ref.Shared {
+		return ref.OwnerID != "" && ref.OwnerID == sanitizeUserIDForPath(userID)
+	}
 	clean := filepath.ToSlash(filepath.Clean("/" + strings.TrimSpace(workspacePath)))
 	roots := []string{}
 	if root := strings.TrimSpace(profile.Runtime.Workspace.Root); root != "" {

@@ -1678,8 +1678,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
     let cancelled = false
     // A shared Crew (another owner's project) is refused by the raw workspace
-    // listing; the mediated shared-project endpoint serves it instead.
-    const fallback = agentProfileId === 'work' && agentProfileProjectId && profileAtRoot.startsWith('_users/')
+    // listing; the mediated shared-project endpoint serves it instead. A Crew/
+    // root is the same path for owner and readers: the owner's proxy listing
+    // succeeds, and a reader's refusal falls back.
+    const fallback = agentProfileId === 'work' && agentProfileProjectId && (profileAtRoot.startsWith('_users/') || profileAtRoot.startsWith('Crew/'))
       ? sharedCrewFileClient(agentProfileProjectId, profileAtRoot)
       : null
     loadProfileAtFiles(profileAtRoot, proxyCrewFileClient, fallback)

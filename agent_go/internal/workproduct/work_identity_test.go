@@ -234,7 +234,7 @@ func TestCreateCrewProjectToolCreatesIdentifiedPersistentProject(t *testing.T) {
 	writes := map[string]string{}
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/documents/Chats/Work/projects/") {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/documents/Crew/") {
 			http.Error(w, "unexpected request", http.StatusNotFound)
 			return
 		}
@@ -286,7 +286,7 @@ func TestCreateCrewProjectToolCreatesIdentifiedPersistentProject(t *testing.T) {
 		t.Fatalf("decode tool response: %v", err)
 	}
 	workspacePath, _ := response["workspace_path"].(string)
-	if !strings.HasPrefix(workspacePath, "Chats/Work/projects/launch-crew-") || response["status"] != "created" {
+	if !strings.HasPrefix(workspacePath, "Crew/launch-crew-") || response["status"] != "created" {
 		t.Fatalf("unexpected tool response: %+v", response)
 	}
 
@@ -298,6 +298,10 @@ func TestCreateCrewProjectToolCreatesIdentifiedPersistentProject(t *testing.T) {
 	var product map[string]interface{}
 	if err := json.Unmarshal([]byte(productRaw), &product); err != nil {
 		t.Fatalf("decode product manifest: %v", err)
+	}
+	// A shared-root crew names its owner in the manifest.
+	if product["owner_id"] != "user-1" {
+		t.Fatalf("created crew has no owner_id: %v", product["owner_id"])
 	}
 	identity, _ := product["identity"].(map[string]interface{})
 	if product["product"] != "work" || product["title"] != "Launch Crew" || identity["name"] != "Launch Crew" || identity["icon"] != "🚀" {

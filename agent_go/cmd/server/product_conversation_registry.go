@@ -710,13 +710,16 @@ type productProjectManifest struct {
 	SchemaVersion int    `json:"schema_version"`
 	Product       string `json:"product,omitempty"`
 	ID            string `json:"id"`
-	Title         string `json:"title,omitempty"`
-	Label         string `json:"label,omitempty"`
-	Description   string `json:"description,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	Identity      struct {
+	// OwnerID names a shared crew's owner (Crew/<id>); per-user product
+	// projects are owned by their location instead.
+	OwnerID     string `json:"owner_id,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+	Identity    struct {
 		Name string `json:"name,omitempty"`
 		Icon string `json:"icon,omitempty"`
 	} `json:"identity,omitempty"`
@@ -830,6 +833,12 @@ func resolveProductProjectBindingWithStore(
 		if json.Unmarshal([]byte(raw), &manifest) != nil ||
 			strings.TrimSpace(manifest.Product) != profile.ID ||
 			strings.TrimSpace(manifest.ID) != resourceProjectID {
+			continue
+		}
+		// A shared root holds every owner's crews: this binding is the
+		// resolving user's, so only their own manifests match. Readers bind
+		// through resolveCrewProjectBinding with the owner's ID.
+		if runtimeRoot == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
 			continue
 		}
 		if strings.TrimSpace(manifest.Title) == "" || strings.TrimSpace(manifest.SessionID) == "" {

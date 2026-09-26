@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log"
 	"path"
 	"path/filepath"
@@ -34,6 +35,15 @@ func browserProjectKey(userID, workspace string) string {
 	clean := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspace)), "/")
 	if clean == "" {
 		return ""
+	}
+	// A crew has one browser for its owner and readers. A crew migrated to
+	// Crew/<id> keeps the key of the root it came from, so its saved browser
+	// profile (logins, cookies) carries over; a new crew uses its Crew root.
+	if ref, ok := resolveCrewPath(context.Background(), userID, clean); ok && ref.Shared {
+		if legacy := crewPathAliases.legacyRoot(context.Background(), ref.Root); legacy != "" {
+			return legacy
+		}
+		return ref.Root
 	}
 	if index := strings.Index(clean, "_users/"); index >= 0 && (index == 0 || clean[index-1] == '/') {
 		return path.Clean(clean[index:])

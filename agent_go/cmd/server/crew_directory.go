@@ -126,11 +126,10 @@ func (api *StreamingAPI) handleListSharedProjects(w http.ResponseWriter, r *http
 		writeAgentProfileError(w, http.StatusNotFound, "shared projects not found")
 		return
 	}
-	rows := []sharedProjectSummary{}
-	for _, ownerID := range crewProjectOwnerCandidates(claims.UserID) {
-		for _, row := range listSharedProjectsForOwner(r.Context(), claims, profile, ownerID) {
-			rows = append(rows, row)
-		}
+	rows, err := otherOwnersCrewSummaries(r.Context(), claims, profile)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusBadGateway, "could not list crews")
+		return
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].UpdatedAt != rows[j].UpdatedAt {
@@ -139,36 +138,6 @@ func (api *StreamingAPI) handleListSharedProjects(w http.ResponseWriter, r *http
 		return rows[i].Title < rows[j].Title
 	})
 	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"projects": rows})
-}
-
-func listSharedProjectsForOwner(ctx context.Context, claims *UserClaims, profile agentprofiles.Profile, ownerID string) []sharedProjectSummary {
-	projectsRoot, err := cleanAgentProfileWorkspace(profile.Runtime.Workspace.ProjectsRoot, ownerID)
-	if err != nil {
-		return nil
-	}
-	listing, exists, err := listWorkspaceFolder(ctx, agentProfileRuntimeWorkspace(ownerID, projectsRoot), 3)
-	if err != nil || !exists {
-		return nil
-	}
-	var paths []string
-	collectWorkspaceFilePaths(listing, &paths)
-	rows := []sharedProjectSummary{}
-	seenManifests := make(map[string]bool)
-	for _, candidate := range paths {
-		if !strings.HasSuffix(candidate, "/product.json") || seenManifests[candidate] {
-			continue
-		}
-		// The workspace API can include a folder both beneath the requested
-		// root and as a top-level item, yielding the same manifest twice.
-		seenManifests[candidate] = true
-		projectRoot := strings.TrimSuffix(candidate, "/product.json")
-		manifest, err := readCrewProjectManifests(ctx, profile.ID, projectRoot)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, summarizeSharedProject(ctx, claims, ownerID, projectRoot, manifest))
-	}
-	return rows
 }
 
 // readCrewProjectManifests loads a crew's product and runtime manifests
@@ -419,6 +388,9 @@ func flattenSharedProjectFiles(root string, listing virtualtools.WorkspaceFolder
 	prefix := workflowtypes.CanonicalCrewAttachmentRoot(root) + "/"
 	entries := []sharedProjectFileEntry{}
 	truncated := false
+	// The workspace listing can return a folder both nested under its parent
+	// and as a top-level item; list each path once.
+	seen := map[string]bool{}
 	var walk func(items []virtualtools.WorkspaceFolderItem) bool
 	walk = func(items []virtualtools.WorkspaceFolderItem) bool {
 		for _, item := range items {
@@ -430,7 +402,8 @@ func flattenSharedProjectFiles(root string, listing virtualtools.WorkspaceFolder
 				if idx := strings.IndexByte(rel, '/'); idx >= 0 {
 					top = rel[:idx]
 				}
-				if !sharedProjectExcludedTopSegments[top] && !sharedProjectExcludedRootFiles[rel] {
+				if !seen[rel] && !sharedProjectExcludedTopSegments[top] && !sharedProjectExcludedRootFiles[rel] {
+					seen[rel] = true
 					kind := "file"
 					if strings.EqualFold(strings.TrimSpace(item.Type), "folder") {
 						kind = "folder"
@@ -474,11 +447,35 @@ func (api *StreamingAPI) whatsappOtherCrews(ctx context.Context, userID string) 
 	if err != nil || !userAllowedProduct(claims, profile.Product) {
 		return nil
 	}
+	rows, err := otherOwnersCrewSummaries(ctx, claims, profile)
+	if err != nil {
+		return nil
+	}
 	var crews []services.WhatsAppOtherCrew
-	for _, ownerID := range crewProjectOwnerCandidates(userID) {
-		for _, row := range listSharedProjectsForOwner(ctx, claims, profile, ownerID) {
-			crews = append(crews, services.WhatsAppOtherCrew{ID: row.ID, Title: firstNonEmptyTrimmed(row.Title, row.Name), OwnerName: row.OwnerUsername, WorkspacePath: row.WorkspacePath})
-		}
+	for _, row := range rows {
+		crews = append(crews, services.WhatsAppOtherCrew{ID: row.ID, Title: firstNonEmptyTrimmed(row.Title, row.Name), OwnerName: row.OwnerUsername, WorkspacePath: row.WorkspacePath})
 	}
 	return crews
+}
+
+// otherOwnersCrewSummaries lists every crew the caller does not own, as the
+// Crew UI's shared directory shows them (read-only for the caller).
+func otherOwnersCrewSummaries(ctx context.Context, claims *UserClaims, profile agentprofiles.Profile) ([]sharedProjectSummary, error) {
+	catalog, err := listCrewCatalog(ctx, defaultProductProjectStore())
+	if err != nil {
+		return nil, err
+	}
+	self := sanitizeUserIDForPath(claims.UserID)
+	rows := []sharedProjectSummary{}
+	for _, entry := range catalog {
+		if entry.OwnerID == self {
+			continue
+		}
+		manifest, err := readCrewProjectManifests(ctx, profile.ID, entry.Root)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, summarizeSharedProject(ctx, claims, entry.OwnerID, entry.Root, manifest))
+	}
+	return rows, nil
 }

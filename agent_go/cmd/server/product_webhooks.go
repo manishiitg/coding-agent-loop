@@ -507,6 +507,10 @@ func (s *ProductScheduleService) findProductWebhook(ctx context.Context, id stri
 				if json.Unmarshal([]byte(raw), &manifest) != nil || manifest.Product != profile.ID {
 					continue
 				}
+				// Shared crew root: a webhook runs as its crew's owner.
+				if root == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
+					continue
+				}
 				runtimePath := candidate
 				if strings.EqualFold(profile.ID, "work") {
 					runtimePath = projectRuntimeManifestPath(profile.ID, filepath.ToSlash(filepath.Dir(candidate)))

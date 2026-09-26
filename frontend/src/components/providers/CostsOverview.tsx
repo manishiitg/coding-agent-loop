@@ -44,6 +44,7 @@ const tokenCount = (aggregate?: CostAggregate) =>
 
 // Crew rows arrive keyed by project folder; the Crew list supplies names.
 const crewProjectId = (workspacePath: string) => {
+  if (workspacePath.startsWith('Crew/')) return workspacePath.split('/')[1] || ''
   const marker = 'Chats/Work/projects/'
   const index = workspacePath.indexOf(marker)
   return index >= 0 ? workspacePath.slice(index + marker.length).split('/')[0] : ''

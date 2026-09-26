@@ -21,7 +21,7 @@ export function isProductProjectSession(session: Pick<ActiveSessionInfo, 'sessio
   // the user-relative and canonical `_users/<id>/...` forms so product activity
   // never leaks into AgentWorks' global monitor.
   const workspacePath = (session.workspace_path || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-  return /(?:^|\/)chats\/[^/]+\/projects\/[^/]+(?:\/|$)/i.test(workspacePath)
+  return /(?:^|\/)chats\/[^/]+\/projects\/[^/]+(?:\/|$)/i.test(workspacePath) || /^Crew\/[^/]+(?:\/|$)/.test(workspacePath)
 }
 
 export function isTerminalActivityStatus(status?: string): boolean {

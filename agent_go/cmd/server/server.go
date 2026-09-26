@@ -1664,6 +1664,7 @@ func init() {
 	ServerCmd.AddCommand(migrateSparkQuillCmd)
 	ServerCmd.AddCommand(migrateProductSecretsCmd)
 	ServerCmd.AddCommand(migrateDurableChatsCmd)
+	ServerCmd.AddCommand(migrateCrewRootCmd)
 	ServerCmd.AddCommand(dedupeChatHistoryCmd)
 }
 
@@ -1876,6 +1877,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
 	}
+	// Before any store opens: crews move to the shared Crew/ root and stored
+	// references follow (deploy scripts normally ran it already).
+	migrateCrewRootAtStartup(eventStateRoot)
 	migrateDurableChatsAtStartup(eventStateRoot)
 	dedupeChatHistoriesAtStartup(eventStateRoot)
 	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events-v2.sqlite"))
@@ -2306,6 +2310,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations", api.handleListAgentProfileConversations).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations/{session_id}", api.handleDeleteAgentProfileConversation).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/projects/{project_id}", api.handleDeleteAgentProfileProject).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/agent-profiles/{id}/my-projects", api.handleListOwnCrewProjects).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/agent-profiles/{id}/my-projects", api.handleCreateOwnCrewProject).Methods("POST")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects", api.handleListSharedProjects).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/files", api.handleListSharedProjectFiles).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/file", api.handleGetSharedProjectFile).Methods("GET", "OPTIONS")

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -90,6 +91,13 @@ func costOverviewRoot(workflowID string) (id, kind, name, ownerID string) {
 		if folder != "" {
 			return "Workflow/" + folder, costOverviewKindWorkflow, folder, ""
 		}
+	}
+	// A shared crew, or a physical legacy path the migration aliased to one:
+	// both fold into the crew's Crew/<id> row. (The migration also rewrites
+	// the ledger; the alias covers rows it could not attribute.)
+	if ref, ok := resolveCrewPath(context.Background(), "", path); ok && ref.Shared {
+		owner := ref.OwnerID
+		return ref.Root, costOverviewKindCrew, strings.TrimPrefix(ref.Root, crewSharedRootName+"/"), owner
 	}
 	if i := strings.Index(path, crewProjectsSegment); i >= 0 && (i == 0 || path[i-1] == '/') {
 		project, _, _ := strings.Cut(path[i+len(crewProjectsSegment):], "/")

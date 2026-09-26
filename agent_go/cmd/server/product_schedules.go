@@ -374,6 +374,11 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 		if err := json.Unmarshal([]byte(raw), &manifest); err != nil || manifest.Product != profile.ID || strings.TrimSpace(manifest.ID) == "" {
 			continue
 		}
+		// The shared crew root holds every owner's crews; a schedule runs as
+		// its crew's owner, so each user's scan keeps only their own.
+		if runtimeRoot == crewSharedRootName && sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID)) != sanitizeUserIDForPath(userID) {
+			continue
+		}
 		manifestActivatedAt := parseRFC3339OrZero(manifest.UpdatedAt)
 		if manifestActivatedAt.IsZero() {
 			manifestActivatedAt = parseRFC3339OrZero(manifest.CreatedAt)

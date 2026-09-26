@@ -108,6 +108,7 @@ this is the complete map.
 ### Design
 
 - [Agent tool surface: one source of truth](design/agent_tool_surface_single_source.md)
+- [Crews at a shared root (`Crew/<id>`)](design/crew_shared_root.md)
 - [Direct API Transport vs. Routing Through Pi/MCP](design/api_transport_vs_pi_tradeoff.md)
 - [Chief of Staff as a standalone product](design/chief_of_staff_as_product.md)
 - [Personal Finance Dashboard: a consolidated view across finance workflows](design/finance_dashboard_product.md)

@@ -168,7 +168,7 @@ function manifestNativeAgentTools(raw: ProductManifest): boolean {
   return nativeAgentToolsEnabled(setting)
 }
 
-function applyRuntimeManifest<P extends string>(project: ProductProject<P>, content: string): ProductProject<P> {
+export function applyRuntimeManifest<P extends string>(project: ProductProject<P>, content: string): ProductProject<P> {
   let raw: ProductManifest
   try {
     raw = JSON.parse(content) as ProductManifest

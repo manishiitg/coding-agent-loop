@@ -4,10 +4,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { workflowManifestApi } from '../services/api'
-import { loadProductProjects } from '../platform/chat/productProjects'
+import { loadOwnWorkProjects } from '../products/work/workSessions'
 
 vi.mock('../services/api', () => ({ workflowManifestApi: { listWorkflowManifests: vi.fn() } }))
-vi.mock('../platform/chat/productProjects', () => ({ loadProductProjects: vi.fn() }))
+vi.mock('../products/work/workSessions', () => ({ loadOwnWorkProjects: vi.fn() }))
 vi.mock('../stores/useAuthStore', () => ({ useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: 'reader' } }) }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const cleanups: (() => void)[] = []
@@ -22,7 +22,7 @@ async function mount(onSelectWorkflow = vi.fn(), onClose = vi.fn()) {
   return { host, render }
 }
 it('shows only the fresh server list and drops revoked workflows when reopened', async () => {
-  vi.mocked(loadProductProjects).mockResolvedValue([])
+  vi.mocked(loadOwnWorkProjects).mockResolvedValue([])
   vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValueOnce(allowed as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>).mockResolvedValueOnce({ success: true, total: 0, workflows: [] })
   const { host, render } = await mount()
   expect(host.textContent).toContain('Shared automation')
@@ -32,7 +32,7 @@ it('shows only the fresh server list and drops revoked workflows when reopened',
   expect(workflowManifestApi.listWorkflowManifests).toHaveBeenCalledTimes(2)
 })
 it('does not reuse stale results when checking permissions fails', async () => {
-  vi.mocked(loadProductProjects).mockResolvedValue([])
+  vi.mocked(loadOwnWorkProjects).mockResolvedValue([])
   vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValueOnce(allowed as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>).mockRejectedValueOnce(new Error('offline'))
   const { host, render } = await mount()
   await render(false); await render(true)
@@ -41,7 +41,7 @@ it('does not reuse stale results when checking permissions fails', async () => {
 })
 
 it('moves one row per arrow key in the search input and closes once', async () => {
-  vi.mocked(loadProductProjects).mockResolvedValue([])
+  vi.mocked(loadOwnWorkProjects).mockResolvedValue([])
   const workflows = ['rts-latency', 'rts-aws', 'automation-testing'].map(label => ({ workspace_path: `Workflow/${label}`, manifest: { id: label, label } }))
   vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValueOnce({ success: true, total: 3, workflows } as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>)
   const onSelect = vi.fn(); const onClose = vi.fn()
@@ -60,7 +60,7 @@ it('moves one row per arrow key in the search input and closes once', async () =
 
 it('lists Crew projects with identity and selects their guarded workspace path', async () => {
   vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValueOnce(allowed as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>)
-  vi.mocked(loadProductProjects).mockResolvedValueOnce([{
+  vi.mocked(loadOwnWorkProjects).mockResolvedValueOnce([{
     schemaVersion: 1,
     product: 'work',
     id: 'crew-1',
@@ -99,7 +99,7 @@ it('lists Crew projects with identity and selects their guarded workspace path',
 })
 
 it('closes itself when the typed reference matches nothing (e.g. a ticket number)', async () => {
-  vi.mocked(loadProductProjects).mockResolvedValue([])
+  vi.mocked(loadOwnWorkProjects).mockResolvedValue([])
   vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValue(allowed as Awaited<ReturnType<typeof workflowManifestApi.listWorkflowManifests>>)
   const onClose = vi.fn()
   const host = document.createElement('div'); document.body.append(host)

@@ -3,10 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 )
 
 // Crew paths: one parser, one resolver, one access rule.
@@ -28,6 +33,16 @@ const (
 	crewPathAliasFile  = "_system/crew-path-aliases.json"
 	crewOwnerCacheTTL  = 30 * time.Second
 )
+
+func init() {
+	services.SharedCrewOwner = func(workspacePath string) string {
+		ref, ok := resolveCrewPath(context.Background(), "", workspacePath)
+		if !ok || !ref.Shared {
+			return ""
+		}
+		return ref.OwnerID
+	}
+}
 
 // crewPathRef is one crew path split into the crew's root and the part below it.
 type crewPathRef struct {
@@ -100,6 +115,17 @@ func resolveCrewPath(ctx context.Context, callerID, raw string) (crewPathRef, bo
 		ref.OwnerID = crewOwners.owner(ctx, ref.Root)
 	}
 	return ref, true
+}
+
+// ownedCrewRoot returns the root of the crew at workspacePath when userID
+// owns it (the crew's own folder, where the owner's transcripts live). Any
+// spelling is accepted; someone else's crew or a non-crew path is false.
+func ownedCrewRoot(userID, workspacePath string) (string, bool) {
+	ref, ok := resolveCrewPath(context.Background(), userID, workspacePath)
+	if !ok || ref.OwnerID == "" || ref.OwnerID != sanitizeUserIDForPath(userID) {
+		return "", false
+	}
+	return ref.Root, true
 }
 
 type crewAccessLevel int
@@ -191,6 +217,26 @@ type crewAliasCache struct {
 func (c *crewAliasCache) lookup(ctx context.Context, legacyRoot string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.refreshLocked(ctx)
+	return c.aliases[legacyRoot]
+}
+
+// legacyRoot is the reverse: the owner-tree root a migrated crew came from
+// ("" for a crew created at Crew/). Keys derived from a crew's path before the
+// move (its browser profile) stay stable through it.
+func (c *crewAliasCache) legacyRoot(ctx context.Context, sharedRoot string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refreshLocked(ctx)
+	for from, to := range c.aliases {
+		if to == sharedRoot {
+			return from
+		}
+	}
+	return ""
+}
+
+func (c *crewAliasCache) refreshLocked(ctx context.Context) {
 	if c.aliases == nil || time.Since(c.loaded) > crewOwnerCacheTTL {
 		read := c.read
 		if read == nil {
@@ -198,7 +244,6 @@ func (c *crewAliasCache) lookup(ctx context.Context, legacyRoot string) string {
 		}
 		c.aliases, c.loaded = read(ctx), time.Now()
 	}
-	return c.aliases[legacyRoot]
 }
 
 func readCrewPathAliases(ctx context.Context) map[string]string {
@@ -218,4 +263,96 @@ func readCrewPathAliases(ctx context.Context) map[string]string {
 		}
 	}
 	return aliases
+}
+
+// crewCatalogEntry is one crew found on disk.
+type crewCatalogEntry struct {
+	// Root is the crew's folder: Crew/<id>, or a not-yet-migrated
+	// _users/<owner>/Chats/Work/projects/<id>.
+	Root         string
+	OwnerID      string
+	ManifestPath string
+	Manifest     productProjectManifest
+}
+
+// listCrewCatalog lists every crew: the shared Crew/ root (owner from the
+// manifest) and any crew still in an owner's tree (owner from the path).
+// Callers filter by owner/access. A manifest without an owner is skipped: it
+// is nobody's crew.
+func listCrewCatalog(ctx context.Context, store productProjectStore) ([]crewCatalogEntry, error) {
+	var entries []crewCatalogEntry
+	seen := map[string]bool{}
+	scan := func(root, pathOwner string) error {
+		paths, exists, err := store.listPaths(ctx, root)
+		if err != nil || !exists {
+			return err
+		}
+		sort.Strings(paths)
+		prefix := strings.TrimSuffix(root, "/") + "/"
+		for _, candidate := range paths {
+			candidate = filepath.ToSlash(strings.TrimSpace(candidate))
+			rel := strings.TrimPrefix(candidate, prefix)
+			// Exactly <root>/<crew>/product.json.
+			if rel == candidate || strings.Count(rel, "/") != 1 || !strings.HasSuffix(rel, "/product.json") || seen[candidate] {
+				continue
+			}
+			seen[candidate] = true
+			raw, found, readErr := store.read(ctx, candidate)
+			if readErr != nil {
+				return fmt.Errorf("read Crew manifest %s: %w", candidate, readErr)
+			}
+			if !found {
+				continue
+			}
+			var manifest productProjectManifest
+			if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") || strings.TrimSpace(manifest.ID) == "" {
+				continue
+			}
+			owner := pathOwner
+			if owner == "" {
+				if strings.TrimSpace(manifest.OwnerID) == "" {
+					continue
+				}
+				owner = sanitizeUserIDForPath(strings.TrimSpace(manifest.OwnerID))
+			}
+			entries = append(entries, crewCatalogEntry{Root: filepath.ToSlash(filepath.Dir(candidate)), OwnerID: owner, ManifestPath: candidate, Manifest: manifest})
+		}
+		return nil
+	}
+	if err := scan(crewSharedRootName, ""); err != nil {
+		return nil, err
+	}
+	for _, owner := range allCrewOwnerCandidates() {
+		if err := scan(legacyCrewProjectsRoot(owner), owner); err != nil {
+			continue // one unreadable tree must not hide every other crew
+		}
+	}
+	return entries, nil
+}
+
+func legacyCrewProjectsRoot(owner string) string {
+	return "_users/" + sanitizeUserIDForPath(owner) + "/Chats/Work/projects"
+}
+
+// allCrewOwnerCandidates is every account that may still hold crews in its own
+// tree: the directory's enabled users plus the single-user default.
+func allCrewOwnerCandidates() []string {
+	seen := map[string]bool{}
+	var owners []string
+	add := func(raw string) {
+		if segment := sanitizeUserIDForPath(strings.TrimSpace(raw)); !seen[segment] {
+			seen[segment] = true
+			owners = append(owners, segment)
+		}
+	}
+	if dir, err := loadUserDirectory(); err == nil && dir != nil {
+		for _, rec := range dir.Users {
+			if !rec.Disabled {
+				add(rec.ID)
+			}
+		}
+	}
+	add(GetDefaultUserID())
+	sort.Strings(owners)
+	return owners
 }

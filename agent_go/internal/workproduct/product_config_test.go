@@ -63,8 +63,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if manifest.Profile.Runtime.Transport != "auto" {
 		t.Fatalf("work must use the shared runtime transport policy, got transport=%q", manifest.Profile.Runtime.Transport)
 	}
-	if manifest.Profile.Runtime.Workspace.ProjectsRoot != "Chats/Work/projects" {
-		t.Fatalf("work projects root = %q, want Chats/Work/projects", manifest.Profile.Runtime.Workspace.ProjectsRoot)
+	// Crews live at a shared root, like Workflow/ (docs/design/crew_shared_root.md).
+	if manifest.Profile.Runtime.Workspace.ProjectsRoot != "Crew" {
+		t.Fatalf("work projects root = %q, want Crew", manifest.Profile.Runtime.Workspace.ProjectsRoot)
 	}
 	if manifest.Profile.Runtime.Workspace.Mode != agentprofiles.WorkspaceModeProject || manifest.Profile.Runtime.Conversation.Mode != agentprofiles.ConversationModeKeyed {
 		t.Fatalf("work must use keyed session conversations: workspace=%+v conversation=%+v", manifest.Profile.Runtime.Workspace, manifest.Profile.Runtime.Conversation)

@@ -3707,6 +3707,11 @@ func routeWorkspaceUserID(route ChannelRoute, fallback string) string {
 		return userID
 	}
 	clean := strings.Trim(filepath.ToSlash(filepath.Clean(strings.TrimSpace(route.WorkspacePath))), "/")
+	if isSharedCrewScope(clean) && SharedCrewOwner != nil {
+		if owner := strings.TrimSpace(SharedCrewOwner(clean)); owner != "" {
+			return owner
+		}
+	}
 	if strings.HasPrefix(clean, "_users/") {
 		parts := strings.Split(clean, "/")
 		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {

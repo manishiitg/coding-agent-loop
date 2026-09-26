@@ -1,6 +1,20 @@
 # Crews at a shared root (`Crew/<id>`)
 
-Status: design, 2026-09-26. Not started.
+Status: built 2026-09-26 (step 1 on main 67ceec736; step 2 on branch
+crew-shared-root). Verified on an isolated server: startup migration of a legacy
+crew, owner list/create/chat, reader Run mode (read-only guard, own transcript),
+window.report.run on old and new paths, and real Claude `--resume` after the move.
+
+What changed from the design below:
+- The migration runs from the deploy scripts (`server migrate-crew-root
+  --apply`, before `migrate-chat-events`) and again, idempotently, at server
+  startup for installs without those scripts.
+- Browser logins: instead of renaming the profile folder, a migrated crew keeps
+  its old path as its browser key (read from the alias file).
+- Cursor keeps a second per-folder store, `~/.cursor/projects/<slug>`
+  (transcripts, tool output), which is copied along with `chats/<md5>`.
+- The Crew UI lists and creates crews through `GET/POST
+  /api/agent-profiles/work/my-projects`; the raw proxy never lists `Crew/`.
 
 ## Problem
 

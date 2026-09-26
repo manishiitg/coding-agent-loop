@@ -333,6 +333,22 @@ if [[ "${RUN_PRODUCT_SECRETS_MIGRATION:-false}" == "true" ]]; then
   fi
 fi
 
+# Move every crew from its owner's tree to the shared Crew/ root
+# (docs/design/crew_shared_root.md). Runs with the agent stopped, before the
+# chat-log import so that import reads the rewritten paths. Marker-backed
+# (state/migrations/crew-shared-root-v1.done), so later deploys are a no-op.
+# Not fatal: the new agent runs the same idempotent migration at startup and
+# retries until it completes; old crew paths keep resolving through the alias
+# file meanwhile.
+echo "==> [$RELEASE_ID] Moving crews to the shared Crew/ root"
+# shellcheck disable=SC1091
+if ! ( set -a; . "$REMOTE_APP/.env"; set +a; exec "$BUILD_DIR/bin/$PRODUCT-agent" server migrate-crew-root \
+  --docs-root "$REMOTE_APP/data/docs" \
+  --state-root "$REMOTE_APP/state" \
+  --apply ); then
+  echo "WARNING: [$RELEASE_ID] crew root migration failed; the agent retries it at startup" >&2
+fi
+
 # Build the canonical chat log last, so it reads the layout the migrations
 # above produced. Marker-backed; a no-op on later deployments. A failure is not
 # fatal: the new agent runs the same idempotent import at startup and retries

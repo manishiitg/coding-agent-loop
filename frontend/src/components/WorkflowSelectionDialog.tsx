@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Layers, Search } from 'lucide-react'
 import { workflowManifestApi } from '../services/api'
 import { useAuthStore } from '../stores/useAuthStore'
-import { loadProductProjects } from '../platform/chat/productProjects'
-import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from '../products/work/workData'
+import { loadOwnWorkProjects } from '../products/work/workSessions'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
 interface WorkflowItem {
@@ -72,7 +71,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
     if (!isOpen) return
     void Promise.all([
       workflowManifestApi.listWorkflowManifests(),
-      loadProductProjects(WORK_PROJECTS_ROOT, WORK_PROFILE_ID),
+      loadOwnWorkProjects(),
     ]).then(([response, crews]) => {
       if (cancelled) return
       const workflows: WorkflowItem[] = (response.workflows || []).map(workflow => ({

@@ -184,7 +184,8 @@ func validUIViewForContract(contract uiContract, view string) bool {
 }
 
 func uiContractForScope(scope string) uiContract {
-	if strings.HasPrefix(path.Clean(strings.Trim(strings.TrimSpace(scope), "/")), "Chats/Work/projects/") {
+	clean := path.Clean(strings.Trim(strings.TrimSpace(scope), "/"))
+	if strings.HasPrefix(clean, "Chats/Work/projects/") || strings.HasPrefix(clean, crewSharedRootName+"/") {
 		return workUIControlContract
 	}
 	return uiControlContract

@@ -6,9 +6,11 @@ const createPlannerFolder = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 const deleteAgentProfileProject = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true }))
 const listSharedProjects = vi.hoisted(() => vi.fn())
 const loadProductProjects = vi.hoisted(() => vi.fn())
+const listOwnCrewProjects = vi.hoisted(() => vi.fn())
+const createOwnCrewProject = vi.hoisted(() => vi.fn())
 
 vi.mock('../../services/api', () => ({
-  agentApi: { createPlannerFolder, deleteAgentProfileProject, getPlannerFileContent, listSharedProjects, updatePlannerFile },
+  agentApi: { createOwnCrewProject, createPlannerFolder, deleteAgentProfileProject, getPlannerFileContent, listOwnCrewProjects, listSharedProjects, updatePlannerFile },
   getApiBaseUrl: () => '',
   getAuthToken: () => null,
 }))
@@ -90,29 +92,24 @@ describe('parseSessionManifest', () => {
 })
 
 describe('createWorkSession', () => {
-  it('creates its own project folder without requiring a workspace selection', async () => {
+  it('creates the Crew server-side (the server records its owner) at the shared Crew root', async () => {
+    createOwnCrewProject.mockImplementation(async (_profile: string, body: { title: string; identity: unknown; llm_config: unknown }) => ({
+      id: 'new-id',
+      session_id: 'work:project:new-id',
+      workspace_path: 'Crew/new-project-newid00',
+      product_json: JSON.stringify({ schema_version: 1, product: 'work', id: 'new-id', owner_id: 'me', title: body.title, description: '', session_id: 'work:project:new-id', identity: body.identity, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-09-26T00:00:00Z' }),
+      runtime_json: JSON.stringify({ capabilities: { llm_config: body.llm_config, selected_servers: [], selected_skills: [], selected_secrets: [], selected_global_secret_names: [] }, workflow_context_paths: [] }),
+    }))
     const session = await createWorkSession('New project', '', '🧭')
 
-    expect(session.workspacePath).toMatch(/^Chats\/Work\/projects\/new-project-/)
-    const runtimeCall = updatePlannerFile.mock.calls.find(call => call[0] === `${session.workspacePath}/workflow.json`)
-    const productCall = updatePlannerFile.mock.calls.find(call => call[0] === `${session.workspacePath}/product.json`)
-    expect(runtimeCall).toBeTruthy()
-    expect(productCall).toBeTruthy()
-    const runtime = JSON.parse(runtimeCall![1] as string)
-    const product = JSON.parse(productCall![1] as string)
-    expect(product).not.toHaveProperty('workspace_id')
-    expect(product).not.toHaveProperty('capabilities')
-    expect(product.identity).toEqual({ name: 'New project', icon: '🧭' })
-    expect(session.identity).toEqual({ name: 'New project', icon: '🧭' })
-    expect(runtime.capabilities.llm_config.builder_llm).toMatchObject({
-      provider: 'muse-cli',
-      model_id: 'muse-spark-1.3-contributor',
-    })
-    expect(runtime.capabilities.selected_servers).toEqual([])
-    expect(runtime.capabilities.selected_skills).toEqual([])
-    expect(runtime.capabilities.selected_secrets).toEqual([])
-    expect(runtime.capabilities.selected_global_secret_names).toEqual([])
-    expect(runtime.workflow_context_paths).toEqual([])
+    expect(createOwnCrewProject).toHaveBeenCalledWith('work', expect.objectContaining({ title: 'New project', identity: { name: 'New project', icon: '🧭' } }))
+    const body = createOwnCrewProject.mock.calls[0][1]
+    expect(body.llm_config.builder_llm).toMatchObject({ provider: 'muse-cli', model_id: 'muse-spark-1.3-contributor' })
+    // No client-side folder or manifest writes: the proxy refuses an unowned Crew/ path.
+    expect(updatePlannerFile).not.toHaveBeenCalled()
+    expect(session.workspacePath).toBe('Crew/new-project-newid00')
+    expect(session.identity).toMatchObject({ name: 'New project', icon: '🧭' })
+    expect(session.selectedServers).toEqual([])
     expect(createPlannerFolder).toHaveBeenCalledWith(
       `${session.workspacePath}/code`,
       expect.stringContaining('Initialize Work project code folder'),
@@ -167,6 +164,16 @@ function sharedRow(overrides: Partial<SharedProjectSummary> = {}): SharedProject
   }
 }
 
+// The server's my-projects entry for an owned session.
+function ownCrew(overrides: Partial<WorkSession> = {}) {
+  const session = ownedSession(overrides)
+  return {
+    workspace_path: session.workspacePath,
+    product_json: JSON.stringify({ schema_version: 1, product: 'work', id: session.id, owner_id: 'me', title: session.title, description: session.description, session_id: session.sessionId, created_at: '2026-09-26T00:00:00Z', updated_at: '2026-09-26T00:00:00Z' }),
+    runtime_json: JSON.stringify({ capabilities: { selected_servers: [], selected_skills: [], selected_secrets: [], selected_global_secret_names: [] }, workflow_context_paths: [] }),
+  }
+}
+
 function ownedSession(overrides: Partial<WorkSession> = {}): WorkSession {
   return {
     schemaVersion: 1,
@@ -175,7 +182,7 @@ function ownedSession(overrides: Partial<WorkSession> = {}): WorkSession {
     title: 'Owned',
     description: '',
     sessionId: 'work:project:crew-owned',
-    workspacePath: 'Chats/Work/projects/owned-crew-owned',
+    workspacePath: 'Crew/owned-crew-owned',
     createdAt: '',
     updatedAt: '',
     selectedServers: [],
@@ -219,7 +226,7 @@ describe('sharedProjectToWorkSession', () => {
 
 describe('loadWorkSessionsIncludingShared', () => {
   it('lists owned Crews first, then shared Crews', async () => {
-    loadProductProjects.mockResolvedValue([ownedSession()])
+    listOwnCrewProjects.mockResolvedValue({ projects: [ownCrew()] })
     listSharedProjects.mockResolvedValue({ projects: [sharedRow()] })
 
     const sessions = await loadWorkSessionsIncludingShared()
@@ -230,7 +237,7 @@ describe('loadWorkSessionsIncludingShared', () => {
   })
 
   it('prefers the owned Crew when an id collides', async () => {
-    loadProductProjects.mockResolvedValue([ownedSession({ id: 'crew-dup', title: 'Mine' })])
+    listOwnCrewProjects.mockResolvedValue({ projects: [ownCrew({ id: 'crew-dup', title: 'Mine' })] })
     listSharedProjects.mockResolvedValue({ projects: [sharedRow({ id: 'crew-dup', title: 'Theirs' })] })
 
     const sessions = await loadWorkSessionsIncludingShared()
@@ -241,7 +248,7 @@ describe('loadWorkSessionsIncludingShared', () => {
   })
 
   it('degrades to owned-only when the shared listing fails', async () => {
-    loadProductProjects.mockResolvedValue([ownedSession()])
+    listOwnCrewProjects.mockResolvedValue({ projects: [ownCrew()] })
     listSharedProjects.mockRejectedValue(new Error('boom'))
 
     const sessions = await loadWorkSessionsIncludingShared()

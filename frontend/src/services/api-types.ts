@@ -276,6 +276,13 @@ export interface SharedProjectSchedule {
   [key: string]: unknown
 }
 
+/** One of the caller's own crews: its folder and raw manifests (my-projects). */
+export interface OwnCrewProjectManifests {
+  workspace_path: string
+  product_json: string
+  runtime_json?: string | null
+}
+
 export interface SharedProjectSummary {
   id: string
   title: string

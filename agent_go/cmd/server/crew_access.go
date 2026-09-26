@@ -35,10 +35,14 @@ type crewProjectBinding struct {
 	Binding       productConversationBinding
 }
 
-// crewProjectOwnerID extracts the owning user ID from a crew workspace
-// path. Crew roots are always physical per-user paths
-// ("_users/<owner>/Chats/..."); anything else has no crew owner.
+// crewProjectOwnerID returns the owning user of a workspace path: a shared
+// crew (Crew/<id>) takes it from its manifest; a per-user path
+// ("_users/<owner>/...") names it. Anything else has no owner.
 func crewProjectOwnerID(workspacePath string) (string, bool) {
+	if ref, ok := parseCrewPath("", workspacePath); ok && ref.Shared {
+		owner := crewOwners.owner(context.Background(), ref.Root)
+		return owner, owner != ""
+	}
 	segments := strings.Split(strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/"), "/")
 	if len(segments) < 3 || segments[0] != "_users" || segments[1] == "" {
 		return "", false
@@ -54,9 +58,12 @@ func canonicalCrewWorkspaceRoot(workspacePath string) string {
 }
 
 // isCrewProjectPath reports whether a workspace path addresses a crew
-// project of any owner: a physical per-user path, or the caller's own
-// logical path, under Chats/Work/projects/<project>.
+// project of any owner: a shared Crew/<id>, a physical per-user path, or the
+// caller's own logical path, under Chats/Work/projects/<project>.
 func isCrewProjectPath(workspacePath string) bool {
+	if ref, ok := parseCrewPath("", workspacePath); ok && ref.Shared {
+		return true
+	}
 	canonical := normalizeConversationWorkspace(workspacePath)
 	const prefix = "Chats/Work/projects/"
 	if !strings.HasPrefix(canonical, prefix) {
@@ -69,6 +76,9 @@ func isCrewProjectPath(workspacePath string) bool {
 // at workspacePath. Logical (prefix-less) project paths address the
 // caller's own tree; physical paths name their owner explicitly.
 func crewProjectOwnedByCaller(callerID, workspacePath string) bool {
+	if ref, ok := resolveCrewPath(context.Background(), callerID, workspacePath); ok && ref.Shared {
+		return ref.OwnerID != "" && ref.OwnerID == sanitizeUserIDForPath(callerID)
+	}
 	trimmed := strings.Trim(filepath.ToSlash(strings.TrimSpace(workspacePath)), "/")
 	if !strings.HasPrefix(trimmed, "_users/") {
 		return isCrewProjectPath(trimmed)

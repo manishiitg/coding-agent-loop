@@ -46,6 +46,8 @@ import type {
   AgentProfileConversationResponse,
   SharedProjectFileEntry,
   SharedProjectSummary,
+  OwnCrewProjectManifests,
+  PresetLLMConfig,
   GetEventsResponse,
   PollingEvent,
   TerminalEventsResponse,
@@ -1197,6 +1199,18 @@ export const agentApi = {
       `/api/agent-profiles/${encodeURIComponent(profileId)}/conversation/new`,
       request,
     )
+    return response.data
+  },
+
+  /** The caller's own crews (shared Crew/ root), with their raw manifests. */
+  listOwnCrewProjects: async (profileId: string): Promise<{ projects: OwnCrewProjectManifests[] }> => {
+    const response = await api.get(`/api/agent-profiles/${encodeURIComponent(profileId)}/my-projects`)
+    return response.data
+  },
+
+  /** Creates a crew owned by the caller at Crew/<slug>-<id8>. */
+  createOwnCrewProject: async (profileId: string, body: { title: string; description: string; identity?: { name?: string; icon?: string }; llm_config?: PresetLLMConfig }): Promise<OwnCrewProjectManifests & { id: string; session_id: string }> => {
+    const response = await api.post(`/api/agent-profiles/${encodeURIComponent(profileId)}/my-projects`, body)
     return response.data
   },
 

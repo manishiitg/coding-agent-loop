@@ -24,7 +24,7 @@ function isSafeReportWorkspacePath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
   if (!normalized || normalized.split("/").includes("..")) return false;
   if (normalized !== path) return false;
-  if (normalized.startsWith("Workflow/")) return normalized.split("/").length === 2;
+  if (normalized.startsWith("Workflow/") || normalized.startsWith("Crew/")) return normalized.split("/").length === 2;
   return normalized.startsWith("Chats/Work/projects/") && normalized.split("/").length >= 4;
 }
 

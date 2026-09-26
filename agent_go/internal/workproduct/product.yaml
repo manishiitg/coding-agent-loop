@@ -156,10 +156,11 @@ profile:
       # the server persists chat logs itself, not through the shell.
       chat_history: none
     workspace:
-      # New projects are created below this per-user root, exactly like the
-      # AgentWorks folder lifecycle with workflow.json as the shared runtime manifest.
+      # Crews live at a shared root, like Workflow/<name>: one path per crew
+      # for its owner and its readers; the owner is product.json owner_id
+      # (docs/design/crew_shared_root.md). workflow.json is the runtime manifest.
       mode: project
-      projects_root: Chats/Work/projects
+      projects_root: Crew
       placement:
         execute_shell_command:
           - Put newly created application and source-code files under code/ by default.

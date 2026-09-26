@@ -192,7 +192,11 @@ func (api *StreamingAPI) servePublicAsset(w http.ResponseWriter, r *http.Request
 		visible := listing.Data[:0]
 		for _, entry := range listing.Data {
 			// Entries are relative to root; name them relative to the crew root.
-			if name, _ := entry["filepath"].(string); crewRootListingVisible(strings.TrimPrefix(strings.TrimPrefix(name, p), "/")) {
+			name, _ := entry["filepath"].(string)
+			if p != "." {
+				name = strings.TrimPrefix(name, p)
+			}
+			if crewRootListingVisible(strings.TrimPrefix(name, "/")) {
 				visible = append(visible, entry)
 			}
 		}

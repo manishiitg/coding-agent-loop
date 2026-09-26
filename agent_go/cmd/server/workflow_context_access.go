@@ -47,12 +47,12 @@ func contextReferenceReadRoot(userID, folder string) (string, bool) {
 	switch {
 	case len(parts) == 2 && parts[0] == "Workflow" && parts[1] != "" && parts[1] != "." && parts[1] != "..":
 		return folder, true
-	case len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != ".." && strings.TrimSpace(userID) != "":
-		return agentProfileRuntimeWorkspace(userID, folder), true
-	case isOtherOwnerCrewPath(parts) && strings.TrimSpace(userID) != "":
-		// Crews are shared server-wide: another owner's Crew is addressed by
-		// its physical _users/<owner>/Chats/Work/projects/<project> path.
-		return folder, true
+	case strings.TrimSpace(userID) != "" && isCrewReference(userID, folder):
+		// Crews are shared server-wide. Any spelling (Crew/<id>, the owner's
+		// Chats/..., another owner's physical _users/...) reads the crew's
+		// current root, following a migration alias.
+		ref, _ := resolveCrewPath(context.Background(), userID, folder)
+		return ref.Root, true
 	default:
 		return "", false
 	}
@@ -96,7 +96,7 @@ func authorizeWorkflowContextPathsWithReadRoots(ctx context.Context, paths []str
 				logContextDenial(claims, folder, "workflow not readable by this user")
 				return nil, nil, denied
 			}
-		case (len(parts) == 4 && parts[0] == "Chats" && parts[1] == "Work" && parts[2] == "projects" && parts[3] != "" && parts[3] != "." && parts[3] != "..") || isOtherOwnerCrewPath(parts):
+		case isCrewReference(userID, folder):
 			if claims == nil || strings.TrimSpace(claims.UserID) == "" {
 				logContextDenial(claims, folder, "no user for a crew attachment")
 				return nil, nil, denied
@@ -137,18 +137,10 @@ func mergeDurableWorkflowContextPaths(ctx context.Context, selectedFolder string
 	return appendUniqueStrings(manifest.WorkflowContextPaths, transient...)
 }
 
-// isOtherOwnerCrewPath reports whether parts spell a physical Crew project
-// path _users/<owner>/Chats/Work/projects/<project>.
-func isOtherOwnerCrewPath(parts []string) bool {
-	if len(parts) != 6 || parts[0] != "_users" || parts[2] != "Chats" || parts[3] != "Work" || parts[4] != "projects" {
-		return false
-	}
-	for _, part := range []string{parts[1], parts[5]} {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
+// isCrewReference reports whether folder names a crew's root in any spelling.
+func isCrewReference(userID, folder string) bool {
+	ref, ok := parseCrewPath(userID, folder)
+	return ok && ref.Rest == ""
 }
 
 // admitTurnContextPaths merges a turn's saved workflow links with its

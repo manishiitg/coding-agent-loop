@@ -77,6 +77,13 @@ func ClassifySessionWorkspace(userID, workspacePath string) (SessionWorkspaceKin
 		}
 		return SessionWorkspaceUnknown, ""
 	}
+	if canonical == "Crew" || strings.HasPrefix(canonical, "Crew/") {
+		segments := strings.Split(canonical, "/")
+		if len(segments) >= 2 && segments[1] != "" {
+			return SessionWorkspaceCrewProject, "Crew/" + segments[1]
+		}
+		return SessionWorkspaceUnknown, ""
+	}
 	const crewPrefix = "Chats/Work/projects/"
 	crewCanonical := stripAnySessionUserPrefix(canonical)
 	if strings.HasPrefix(crewCanonical, crewPrefix) {

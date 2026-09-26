@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -28,80 +27,38 @@ func accessibleProjectIcon(icon, name string) string {
 }
 
 func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]map[string]interface{}, error) {
-	// Crews are shared server-wide: list the caller's own Crews (logical
-	// Chats/Work/projects/<x> paths) and every other owner's Crews (physical
-	// _users/<owner>/... paths), all read-write for Crew-to-Crew work.
-	items, err := listCrewProjectsForOwner(ctx, userID, userID, query)
-	if err != nil {
-		return nil, err
-	}
-	for _, ownerID := range crewProjectOwnerCandidates(userID) {
-		others, err := listCrewProjectsForOwner(ctx, userID, ownerID, query)
-		if err != nil {
-			continue
-		}
-		items = append(items, others...)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		left := strings.ToLower(fmt.Sprint(items[i]["name"], "\n", items[i]["workspace_path"]))
-		right := strings.ToLower(fmt.Sprint(items[j]["name"], "\n", items[j]["workspace_path"]))
-		return left < right
-	})
-	return items, nil
-}
-
-// listCrewProjectsForOwner lists one owner's Crew projects as seen by userID.
-func listCrewProjectsForOwner(ctx context.Context, userID, ownerID, query string) ([]map[string]interface{}, error) {
-	root := agentProfileRuntimeWorkspace(ownerID, "Chats/Work/projects")
-	if sanitizeUserIDForPath(ownerID) != sanitizeUserIDForPath(userID) && root == agentProfileRuntimeWorkspace(userID, "Chats/Work/projects") {
-		// Single-account layouts share one Chats root; don't list it twice.
-		return nil, nil
-	}
-	store := defaultProductProjectStore()
-	paths, exists, err := store.listPaths(ctx, root)
+	// Crews are shared server-wide: the caller's own and every other owner's,
+	// all read-write for Crew-to-Crew work.
+	catalog, err := listCrewCatalog(ctx, defaultProductProjectStore())
 	if err != nil {
 		return nil, fmt.Errorf("list Crew projects: %w", err)
 	}
-	if !exists {
-		return []map[string]interface{}{}, nil
-	}
-	rootPrefix := strings.TrimSuffix(filepath.ToSlash(root), "/") + "/"
-	access, ownerLabel := "owner", "you"
-	if sanitizeUserIDForPath(ownerID) != sanitizeUserIDForPath(userID) {
-		access, ownerLabel = "write", ownerID
-		if record := directoryUserFor(ownerID, "", ""); record != nil && strings.TrimSpace(record.Username) != "" {
-			ownerLabel = record.Username
-		}
-	}
-	seen := map[string]bool{}
-	items := make([]map[string]interface{}, 0)
-	for _, candidate := range paths {
-		candidate = filepath.ToSlash(strings.TrimSpace(candidate))
-		if !strings.HasPrefix(candidate, rootPrefix) || !strings.HasSuffix(candidate, "/product.json") || seen[candidate] {
-			continue
-		}
-		seen[candidate] = true
-		raw, found, readErr := store.read(ctx, candidate)
-		if readErr != nil {
-			return nil, fmt.Errorf("read Crew manifest %s: %w", candidate, readErr)
-		}
-		if !found {
-			continue
-		}
-		var manifest productProjectManifest
-		if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
-			continue
-		}
+	items := make([]map[string]interface{}, 0, len(catalog))
+	self := sanitizeUserIDForPath(userID)
+	for _, entry := range catalog {
+		manifest := entry.Manifest
 		id := strings.TrimSpace(manifest.ID)
 		name := strings.TrimSpace(manifest.Title)
-		if id == "" || name == "" {
+		if name == "" {
 			continue
 		}
 		identityName := strings.TrimSpace(manifest.Identity.Name)
 		if identityName == "" {
 			identityName = name
 		}
-		workspacePath := canonicalChatHistoryWorkspacePath(userID, filepath.ToSlash(filepath.Dir(candidate)))
+		access, ownerLabel := "owner", "you"
+		if entry.OwnerID != self {
+			access, ownerLabel = "write", entry.OwnerID
+			if record := directoryUserFor(entry.OwnerID, "", ""); record != nil && strings.TrimSpace(record.Username) != "" {
+				ownerLabel = record.Username
+			}
+		}
+		// A shared crew has one path for everyone; a not-yet-migrated crew
+		// keeps its owner's logical / others' physical spelling.
+		workspacePath := entry.Root
+		if !strings.HasPrefix(entry.Root, crewSharedRootName+"/") {
+			workspacePath = canonicalChatHistoryWorkspacePath(userID, entry.Root)
+		}
 		identityIcon := accessibleProjectIcon(manifest.Identity.Icon, identityName)
 		haystack := strings.ToLower(strings.Join([]string{id, name, identityName, identityIcon, workspacePath}, "\n"))
 		if query != "" && !strings.Contains(haystack, query) {
@@ -119,6 +76,11 @@ func listCrewProjectsForOwner(ctx context.Context, userID, ownerID, query string
 			"owner":          ownerLabel,
 		})
 	}
+	sort.Slice(items, func(i, j int) bool {
+		left := strings.ToLower(fmt.Sprint(items[i]["name"], "\n", items[i]["workspace_path"]))
+		right := strings.ToLower(fmt.Sprint(items[j]["name"], "\n", items[j]["workspace_path"]))
+		return left < right
+	})
 	return items, nil
 }
 

@@ -1,10 +1,10 @@
-import { createProductProject, loadProductProjects, parseProductProjectManifest, updateProductProjectIdentity, updateProductProjectSelections, type ProductIdentityPatch, type ProductProject } from '../../platform/chat/productProjects'
+import { applyRuntimeManifest, parseProductProjectManifest, updateProductProjectIdentity, updateProductProjectSelections, type ProductIdentityPatch, type ProductProject } from '../../platform/chat/productProjects'
 import { agentApi } from '../../services/api'
 import { secretsApi } from '../../api/secrets'
-import type { LLMProvider, PresetLLMConfig, SharedProjectSummary } from '../../services/api-types'
+import type { LLMProvider, OwnCrewProjectManifests, PresetLLMConfig, SharedProjectSummary } from '../../services/api-types'
 import { slugifyTitle } from '../../utils/plannerFiles'
 import { loadAgentProfileProviderOptions } from '../../utils/agentProfileCapabilities'
-import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from './workData'
+import { WORK_PROFILE_ID } from './workData'
 
 export type WorkSession = ProductProject<typeof WORK_PROFILE_ID>
 
@@ -45,8 +45,24 @@ export function parseSessionManifest(content: string, workspacePath: string, las
   return parseProductProjectManifest(content, workspacePath, WORK_PROFILE_ID, lastModified)
 }
 
+// The caller's own crews come from the server: they live at the shared Crew/
+// root, which the file proxy does not list (it holds every owner's crews).
+export async function loadOwnWorkProjects(): Promise<WorkSession[]> {
+  const { projects } = await agentApi.listOwnCrewProjects(WORK_PROFILE_ID)
+  return (projects ?? [])
+    .map(entry => workSessionFromManifests(entry))
+    .filter((session): session is WorkSession => session !== null)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+}
+
+function workSessionFromManifests(entry: OwnCrewProjectManifests): WorkSession | null {
+  const project = parseProductProjectManifest(entry.product_json, entry.workspace_path, WORK_PROFILE_ID)
+  if (!project) return null
+  return entry.runtime_json ? applyRuntimeManifest(project, entry.runtime_json) : { ...project, runtimeConfigInitialized: false }
+}
+
 export async function loadWorkSessions(): Promise<WorkSession[]> {
-  const sessions = await loadProductProjects(WORK_PROJECTS_ROOT, WORK_PROFILE_ID, { runtimeManifestName: 'workflow.json' })
+  const sessions = await loadOwnWorkProjects()
   return Promise.all(sessions.map(async original => {
     let session = original
     if (!session.runtimeConfigInitialized || !session.selectionConfigInitialized) {
@@ -76,21 +92,18 @@ export async function createWorkSession(title: string, description: string, icon
   const llmConfig = selected?.provider && selected.model_id
     ? workLLMConfigFromSelection({ provider: selected.provider, modelId: selected.model_id, reasoningEffort })
     : undefined
-  const project = await createProductProject({
-    root: WORK_PROJECTS_ROOT,
-    product: WORK_PROFILE_ID,
-    title,
-    description,
-    sessionPrefix: 'work:project',
-    slugFallback: 'workspace',
-    commitLabel: 'Create Work project',
+  // Created server-side: the server records this user as the crew's owner.
+  const created = await agentApi.createOwnCrewProject(WORK_PROFILE_ID, {
+    title: title.trim(),
+    description: description.trim(),
     identity: {
       name: title.trim(),
       icon: icon?.trim() || Array.from(title.trim())[0]?.toLocaleUpperCase() || 'C',
     },
-    llmConfig,
-    runtimeManifestName: 'workflow.json',
+    llm_config: llmConfig,
   })
+  const project = workSessionFromManifests(created)
+  if (!project) throw new Error('The new Crew could not be read back.')
   await agentApi.createPlannerFolder(
     `${project.workspacePath}/code`,
     `Initialize Work project code folder ${project.title}`,

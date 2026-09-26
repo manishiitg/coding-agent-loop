@@ -420,7 +420,9 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 				}
 
 				id := uuid.NewString()
-				workspacePath := path.Join("Chats", "Work", "projects", crewProjectSlug(name)+"-"+id[:8])
+				// The shared crew root (product.yaml projects_root); the
+				// manifest's owner_id, not the location, names the owner.
+				workspacePath := path.Join("Crew", crewProjectSlug(name)+"-"+id[:8])
 				now := time.Now().UTC().Format(time.RFC3339)
 				workflowManifest := map[string]interface{}{
 					"schema_version": 1,
@@ -449,6 +451,7 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 					"description":    description,
 					"identity":       identity,
 					"session_id":     "work:project:" + id,
+					"owner_id":       runtime.UserID,
 					"created_at":     now,
 					"updated_at":     now,
 				}

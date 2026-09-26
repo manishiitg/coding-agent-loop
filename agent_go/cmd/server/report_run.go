@@ -25,7 +25,8 @@ import (
 
 // Live report data (window.report.run).
 //
-// A report page can run one of its workflow's own scripts under code/ and use
+// A report page (a workflow's, or a crew project's Dashboard) can run one of
+// its own scripts under code/ and use
 // the JSON it prints. The script runs in the same sandbox as a scripted step:
 // read access to the workflow, a read-only DB snapshot, the workflow's
 // selected secrets and MCP servers, and one writable cache folder. Anyone who
@@ -49,6 +50,51 @@ var reportRunSlots = make(chan struct{}, reportRunConcurrency)
 type reportRunScope struct {
 	workspacePath string
 	userID        string
+}
+
+// reportRunSelection is what a report script may use: the workspace's own
+// selected MCP servers/tools, secrets and variables.
+type reportRunSelection struct {
+	servers       []string
+	tools         []string
+	secrets       []string
+	globalSecrets *[]string
+	variables     bool
+}
+
+// isReportRunCrewRoot: a physical crew project root,
+// _users/<owner>/Chats/Work/projects/<id>, never a folder inside one.
+func isReportRunCrewRoot(workspacePath string) bool {
+	segments := strings.Split(strings.Trim(workspacePath, "/"), "/")
+	return len(segments) == 6 && segments[0] == "_users" && segments[1] != "" &&
+		segments[2] == "Chats" && segments[3] == "Work" && segments[4] == "projects" && segments[5] != "" &&
+		!strings.HasPrefix(segments[5], ".")
+}
+
+// reportRunSelectionFor reads the selection without migrating or writing
+// anything: a reader's refresh must never touch the owner's manifest.
+func reportRunSelectionFor(ctx context.Context, workspacePath string) (reportRunSelection, error) {
+	if isReportRunCrewRoot(workspacePath) {
+		servers, _, err := productSelectedServers(ctx, "work", workspacePath)
+		if err != nil {
+			return reportRunSelection{}, err
+		}
+		secrets, _, err := productSelectedSecrets(ctx, "work", workspacePath)
+		if err != nil {
+			return reportRunSelection{}, err
+		}
+		globals, err := productSelectedGlobalSecrets(ctx, "work", workspacePath)
+		if err != nil {
+			return reportRunSelection{}, err
+		}
+		return reportRunSelection{servers: servers, secrets: secrets, globalSecrets: globals}, nil
+	}
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found {
+		return reportRunSelection{}, fmt.Errorf("workflow.json is missing or unreadable")
+	}
+	caps := manifest.Capabilities
+	return reportRunSelection{servers: caps.SelectedServers, tools: caps.SelectedTools, secrets: caps.SelectedSecrets, globalSecrets: caps.SelectedGlobalSecretNames, variables: true}, nil
 }
 
 // reportRunScriptPath accepts only a script in the workflow's code/ folder.
@@ -92,8 +138,8 @@ func (api *StreamingAPI) handleReportRun(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	workspacePath, err := reportPreviewWorkspace(r, claims, body.Workspace)
-	if err != nil || !strings.HasPrefix(workspacePath, "Workflow/") {
-		http.Error(w, "a workflow workspace is required", http.StatusBadRequest)
+	if err != nil || (!strings.HasPrefix(workspacePath, "Workflow/") && !isReportRunCrewRoot(workspacePath)) {
+		http.Error(w, "a workflow or crew workspace is required", http.StatusBadRequest)
 		return
 	}
 	script, ok := reportRunScriptPath(body.Path)
@@ -101,8 +147,15 @@ func (api *StreamingAPI) handleReportRun(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "path must be a .py or .js script under code/", http.StatusBadRequest)
 		return
 	}
-	// Owners and read-only users alike: the script runs as the workflow.
-	if !requireWorkflowVisible(w, r, workspacePath) {
+	// Owners and read-only users alike: the script runs as the workflow or
+	// crew. A crew is readable by its owner and by anyone with the Crew
+	// product (Crew Run mode).
+	if isReportRunCrewRoot(workspacePath) {
+		if !crewProjectOwnedByCaller(claims.UserID, workspacePath) && !userAllowedProduct(claims, "work") {
+			writeWorkflowPermissionDenied(w, "read")
+			return
+		}
+	} else if !requireWorkflowVisible(w, r, workspacePath) {
 		return
 	}
 	args := "{}"
@@ -150,9 +203,9 @@ func writeReportRunResult(w http.ResponseWriter, status int, result map[string]a
 
 func (api *StreamingAPI) runReportScript(ctx context.Context, userID, workspacePath, script, absScript, args string) map[string]any {
 	started := time.Now()
-	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
-	if err != nil || !found {
-		return map[string]any{"success": false, "error": "workflow.json is missing or unreadable"}
+	selection, err := reportRunSelectionFor(ctx, workspacePath)
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}
 	}
 	docsRoot := workshop.GetPromptDocsRoot()
 	cacheRel := filepath.ToSlash(filepath.Join(workspacePath, reportRunCacheFolder))
@@ -166,7 +219,7 @@ func (api *StreamingAPI) runReportScript(ctx context.Context, userID, workspaceP
 	api.reportRunSessions.Store(sessionID, reportRunScope{workspacePath: workspacePath, userID: userID})
 	defer api.reportRunSessions.Delete(sessionID)
 
-	env := api.reportRunEnv(ctx, userID, workspacePath, manifest, sessionID)
+	env := api.reportRunEnv(ctx, userID, workspacePath, selection, sessionID)
 	secretValues := make([]string, 0, len(env))
 	for key, value := range env {
 		if strings.HasPrefix(key, "SECRET_") && len(value) >= 6 {
@@ -250,23 +303,14 @@ func (api *StreamingAPI) runReportScript(ctx context.Context, userID, workspaceP
 // reportRunEnv gives the script what a scheduled run of this workflow would
 // have: selected workflow + global secrets, the unambiguous variable values,
 // and an MCP bridge session scoped to the workflow's selected servers.
-func (api *StreamingAPI) reportRunEnv(ctx context.Context, userID, workspacePath string, manifest *WorkflowManifest, sessionID string) map[string]string {
+func (api *StreamingAPI) reportRunEnv(ctx context.Context, userID, workspacePath string, selection reportRunSelection, sessionID string) map[string]string {
 	env := map[string]string{}
-	secrets := mergeGlobalSecrets(api.loadSelectedSecrets(ctx, userID, workspacePath, manifest.Capabilities.SelectedSecrets), manifest.Capabilities.SelectedGlobalSecretNames)
+	secrets := mergeGlobalSecrets(api.loadSelectedSecrets(ctx, userID, workspacePath, selection.secrets), selection.globalSecrets)
 	for _, secret := range secrets {
 		env["SECRET_"+secret.Name] = secret.Value
 	}
-	if content, found, err := readFileFromWorkspace(ctx, filepath.ToSlash(filepath.Join(workspacePath, "variables/variables.json"))); err == nil && found && strings.TrimSpace(content) != "" {
-		var variables workshop.VariablesManifest
-		if json.Unmarshal([]byte(content), &variables) == nil {
-			values, _, ok := workshop.ResolveWorkshopVariableValues(&variables, nil)
-			if !ok {
-				values = workshop.MergeGroupWithDefaults(&variables, nil)
-			}
-			for name, value := range values {
-				env["VAR_"+name] = value
-			}
-		}
+	if selection.variables { // workflows only; crews have no variables
+		api.addReportRunVariables(ctx, workspacePath, env)
 	}
 	if base := strings.TrimRight(os.Getenv("MCP_API_URL"), "/"); base != "" {
 		env["MCP_API_URL"] = base + "/s/" + sessionID
@@ -277,6 +321,24 @@ func (api *StreamingAPI) reportRunEnv(ctx context.Context, userID, workspacePath
 		common.PopulateMCPBridgeShortEnv(env)
 	}
 	return env
+}
+
+func (api *StreamingAPI) addReportRunVariables(ctx context.Context, workspacePath string, env map[string]string) {
+	content, found, err := readFileFromWorkspace(ctx, filepath.ToSlash(filepath.Join(workspacePath, "variables/variables.json")))
+	if err != nil || !found || strings.TrimSpace(content) == "" {
+		return
+	}
+	var variables workshop.VariablesManifest
+	if json.Unmarshal([]byte(content), &variables) != nil {
+		return
+	}
+	values, _, ok := workshop.ResolveWorkshopVariableValues(&variables, nil)
+	if !ok {
+		values = workshop.MergeGroupWithDefaults(&variables, nil)
+	}
+	for name, value := range values {
+		env["VAR_"+name] = value
+	}
 }
 
 // resolveReportRunMCPServer scopes a report run's bridge calls to the
@@ -291,14 +353,14 @@ func (api *StreamingAPI) resolveReportRunMCPServer(ctx context.Context, sessionI
 		return nil, false, nil
 	}
 	scope := cached.(reportRunScope)
-	manifest, exists, err := ReadWorkflowManifest(ctx, scope.workspacePath)
-	if err != nil || !exists {
-		return nil, true, fmt.Errorf("workflow MCP scope is unavailable")
+	selection, err := reportRunSelectionFor(ctx, scope.workspacePath)
+	if err != nil {
+		return nil, true, fmt.Errorf("report MCP scope is unavailable")
 	}
 	catalog, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
 		return nil, true, fmt.Errorf("load current MCP configuration: %w", err)
 	}
-	resolved, err := resolveSelectedMCPServer(catalog, runtimeMCPServers(manifest.Capabilities.SelectedServers), manifest.Capabilities.SelectedTools, scope.userID, server, tool)
+	resolved, err := resolveSelectedMCPServer(catalog, runtimeMCPServers(selection.servers), selection.tools, scope.userID, server, tool)
 	return resolved, true, err
 }

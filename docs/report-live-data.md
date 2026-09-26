@@ -14,7 +14,15 @@ window.report.ready(async () => {
 
 The script prints one JSON value; `run` resolves with it.
 
+It works on workflow Dashboards and on Crew project Dashboards (the Work
+product's `db/reports/`). Crews learn it from the `work-dashboard` skill,
+workflows from `reporting-policy` / `design-reporting-ui`.
+
 ## Who can run it, and as whom
+
+- Crew Dashboards: the crew owner and anyone with the Crew product (Crew Run
+  mode) can trigger its scripts. They run with the crew's selected MCP servers
+  and secrets. Crews have no variables.
 
 - Anyone who can open the workflow (owner, editor or read-only user) can
   trigger the scripts its Dashboard calls.

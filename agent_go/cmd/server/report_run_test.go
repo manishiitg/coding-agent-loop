@@ -42,6 +42,38 @@ func TestReportRunMCPSessionScope(t *testing.T) {
 	}
 }
 
+func TestReportRunCrewRoot(t *testing.T) {
+	if !isReportRunCrewRoot("_users/owner/Chats/Work/projects/sde") || !isReportRunCrewRoot("/_users/owner/Chats/Work/projects/sde/") {
+		t.Fatal("crew root rejected")
+	}
+	for _, bad := range []string{"Workflow/x", "_users//Chats/Work/projects/p", "_users/o/Chats/Work/projects/.hidden", "_users/o/Chats/Work/projects/p/code"} {
+		if isReportRunCrewRoot(bad) {
+			t.Fatalf("accepted %q", bad)
+		}
+	}
+}
+
+// A crew Dashboard is runnable by its owner and by users with the Crew
+// product; anyone else is refused before anything runs.
+func TestReportRunCrewAccess(t *testing.T) {
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_create":true,"products":["work"]},{"id":"outsider","username":"outsider","can_create":true,"products":["agentworks"]}]}`)
+	api := &StreamingAPI{}
+	post := func(claims *UserClaims) int {
+		r := httptest.NewRequest("POST", reportPreviewAPIPrefix+"run", strings.NewReader(`{"workspace":"_users/owner/Chats/Work/projects/sde","path":"code/x.py"}`))
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, claims))
+		w := httptest.NewRecorder()
+		api.handleReportRun(w, r)
+		return w.Code
+	}
+	if code := post(&UserClaims{UserID: "outsider", Username: "outsider"}); code != http.StatusForbidden {
+		t.Fatalf("user without the Crew product: %d", code)
+	}
+	// The owner passes the access check (the script itself does not exist).
+	if code := post(&UserClaims{UserID: "owner", Username: "owner"}); code != http.StatusNotFound {
+		t.Fatalf("owner: %d", code)
+	}
+}
+
 func TestReportRunRejectsBeforeRunning(t *testing.T) {
 	api := &StreamingAPI{}
 	post := func(body string, claims *UserClaims) *httptest.ResponseRecorder {
@@ -60,8 +92,10 @@ func TestReportRunRejectsBeforeRunning(t *testing.T) {
 	if w := post(`{"workspace":"Workflow/a","path":"db/x.py"}`, reader); w.Code != http.StatusBadRequest {
 		t.Fatalf("script outside code/: %d", w.Code)
 	}
-	if w := post(`{"workspace":"Crew/a","path":"code/x.py"}`, reader); w.Code != http.StatusBadRequest {
-		t.Fatalf("non-workflow workspace: %d", w.Code)
+	for _, ws := range []string{"Crew/a", "_users/o/Chats/Work/projects", "_users/o/Chats/Work/projects/p/sub", "_users/o/Chats/Other/projects/p"} {
+		if w := post(`{"workspace":"`+ws+`","path":"code/x.py"}`, reader); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d", ws, w.Code)
+		}
 	}
 	// A preview token bound to one workflow cannot run another's scripts.
 	bound := &UserClaims{UserID: "reader", Scope: reportPreviewScope, ScopeWorkspace: "Workflow/b"}

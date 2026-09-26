@@ -109,8 +109,8 @@ print(json.dumps({
 	t.Setenv("MCP_API_URL", bridge.URL+"/api")
 	t.Setenv("MCP_API_TOKEN", "bridge-e2e-token")
 
-	run := func(path string) (int, map[string]any) {
-		r := httptest.NewRequest("POST", reportPreviewAPIPrefix+"run", strings.NewReader(`{"workspace":"`+workflow+`","path":"`+path+`","args":{"days":7}}`))
+	runIn := func(workspacePath, path string) (int, map[string]any) {
+		r := httptest.NewRequest("POST", reportPreviewAPIPrefix+"run", strings.NewReader(`{"workspace":"`+workspacePath+`","path":"`+path+`","args":{"days":7}}`))
 		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "report-viewer"}))
 		w := httptest.NewRecorder()
 		api.handleReportRun(w, r)
@@ -120,6 +120,7 @@ print(json.dumps({
 		}
 		return w.Code, body
 	}
+	run := func(path string) (int, map[string]any) { return runIn(workflow, path) }
 
 	code, body := run("code/reports/live.py")
 	pretty, _ := json.MarshalIndent(body, "", "  ")
@@ -156,6 +157,47 @@ print(json.dumps({
 	t.Logf("broken.py -> %d %v", code, body)
 	if code != http.StatusUnprocessableEntity || !strings.Contains(body["error"].(string), "one JSON value") {
 		t.Fatalf("non-JSON output accepted")
+	}
+
+	// A crew project's Dashboard, opened by someone who is not its owner
+	// (Crew Run mode): same sandbox, the crew's own server selection.
+	crew := "_users/crew-owner/Chats/Work/projects/sde"
+	crewRoot := filepath.Join(docs, crew)
+	_ = os.RemoveAll(filepath.Join(docs, "_users/crew-owner"))
+	for _, dir := range []string{"code/reports", "db"} {
+		if err := os.MkdirAll(filepath.Join(crewRoot, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	liveScript, _ := os.ReadFile(filepath.Join(root, "code/reports/live.py"))
+	for rel, content := range map[string]string{
+		"product.json":         `{"schema_version":1,"product":"work","id":"sde","title":"SDE"}`,
+		"workflow.json":        `{"schema_version":1,"id":"sde","capabilities":{"selected_servers":["notion"],"selected_global_secret_names":[]}}`,
+		"code/reports/live.py": string(liveScript),
+	} {
+		if err := os.WriteFile(filepath.Join(crewRoot, rel), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	crewDB, err := sql.Open("sqlite", filepath.Join(crewRoot, "db", "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := crewDB.Exec(`create table deals(name text); insert into deals values ('Initech')`); err != nil {
+		t.Fatal(err)
+	}
+	crewDB.Close()
+	code, body = runIn(crew, "code/reports/live.py")
+	pretty, _ = json.MarshalIndent(body, "", "  ")
+	t.Logf("crew live.py -> %d\n%s", code, pretty)
+	if code != http.StatusOK || body["success"] != true {
+		t.Fatalf("crew run failed")
+	}
+	data = body["data"].(map[string]any)
+	if strings.Join(toStrings(data["deals"]), ",") != "Initech" || data["notion"].(map[string]any)["server"] != "notion" ||
+		!strings.Contains(data["github"].(map[string]any)["error"].(string), "not available") ||
+		data["wrote_db_folder"] == true || data["wrote_code_folder"] == true {
+		t.Fatalf("crew scope: %v", data)
 	}
 }
 

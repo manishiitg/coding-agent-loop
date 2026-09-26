@@ -1,8 +1,8 @@
 # Installable Crew template profiles
 
-Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 21 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
+Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 29 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The first four multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The seven multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -159,6 +159,66 @@ Each profile answers: **when to use it, what a first result must contain, what s
 - **Setup proof:** agree on account owner, health rules, support scope and renewal source; verify one current signal and the linked first-value readout. A missing source must remain visible.
 - **Later run:** update stable risk/action IDs, distinguish a resolved blocker from stale data, and avoid declaring churn risk from a single unsupported signal.
 
+## Engineering
+
+### Incident Investigator (`incident-investigator`)
+
+- **Use case:** investigate a production incident across the customer's alerts, telemetry, deploys, and incident records.
+- **First result:** dated, sourced timeline with observed impact, labeled hypotheses, gaps, accountable owner, and next decisions. The existing [incident Workflow](../../playbooks/agentic-engineering-platform/reliability-operations/incident-investigation-coordination/SKILL.md) covers a related route.
+- **Setup proof:** read one real alert and associated telemetry or deploy record; verify incident and service IDs, event versus ingestion time, source coverage, escalation policy, and an on-call review.
+- **Later run:** append new evidence to the same incident, correct disproven hypotheses, and check action state before notifying or creating another ticket. Recovery actions require a reviewed route.
+
+### Engineering Delivery Coordinator (`engineering-delivery-coordinator`)
+
+- **Use case:** follow a blocked change across issue, PR, CI, deployment, and owner handoffs.
+- **First result:** blocker ledger with exact issue and change IDs, commit SHA, CI and deployment states, environment, owner, due time, and the next evidence needed.
+- **Setup proof:** join one actual issue to a PR, build, and deployment record using stable identifiers; verify release policy, owner, and whether a green build reached the intended environment.
+- **Later run:** update the same blocker IDs, distinguish merged from deployed and verified, and avoid duplicate reminders. Merge, CI rerun, ticket write, and deployment need separate authorization.
+
+### Performance Investigator (`performance-investigator`)
+
+- **Use case:** investigate a page or API regression using the customer's performance tools and release history.
+- **First result:** regression brief with metric definition, comparable baseline/current measurements, coverage caveats, likely bottleneck, owner, and retest plan.
+- **Setup proof:** inspect a representative trace or measurement, confirm route, environment, percentile, units, traffic segment, baseline and current windows, and budget; review the diagnosis with the owner.
+- **Later run:** repeat the same measurement rule, record changed traffic or instrumentation, and close only after a comparable retest. Existing [browser](../../playbooks/agentic-engineering-platform/performance-engineering/browser-performance-validation/SKILL.md) and [API](../../playbooks/agentic-engineering-platform/performance-engineering/api-performance-validation/SKILL.md) Workflows can inform the route.
+
+### Cloud Cost Analyst (`cloud-cost-analyst`)
+
+- **Use case:** explain a cloud bill change and prepare risk-checked savings decisions across billing, usage, ownership, and service data.
+- **First result:** reconciled cost-change brief with currency and period rules, service owners, arithmetic, candidate savings ranges, risks, and verification plan.
+- **Setup proof:** read an authorized bill or export, reconcile one change against usage or allocation evidence, confirm discounts and owner map, and review a candidate with the service owner.
+- **Later run:** track the same candidate and approval IDs, check actual billed results after a change, and separate estimated from realized savings. The existing [FinOps Workflow](../../playbooks/agentic-engineering-platform/finops/cost-anomaly-to-verified-savings/SKILL.md) covers the longer route.
+
+## Shopify
+
+### Store Operations Coordinator (`store-operations-coordinator`)
+
+- **Use case:** work an order exception across Shopify, fulfillment, carrier, inventory, and support records.
+- **First result:** an order exception queue with exact store, order, line-item and fulfillment IDs, current states, customer deadline, owner, and next evidence. See the [illustrative order artifact](../../playbooks/agentic-engineering-platform/shopify/order-exception-to-resolution/examples/store-order-exception.json).
+- **Setup proof:** read one actual authorized order and matching fulfillment or support record; verify store identity, policy, owner, partial fulfillment, and whether a label, shipment, or delivery was truly observed.
+- **Later run:** re-read the same order and prior contact/refund state, preserve case IDs, and avoid duplicate follow-up, cancellation, or refund work.
+
+### Returns & Refunds Coordinator (`returns-refunds-coordinator`)
+
+- **Use case:** review a merchant's return or refund request using order, payment, delivery, prior-refund, and policy records.
+- **First result:** [policy and money review](../../playbooks/agentic-engineering-platform/shopify/order-exception-to-resolution/examples/return-resolution-review.json) with eligibility, amount-to-verify, unknowns, owner decision, and an unsent customer draft.
+- **Setup proof:** verify one actual store/order/customer match, captured and already-refunded amounts in one currency, current dispute and return state, policy version, prior messages, and approval owner. A draft or approval is not an issued refund.
+- **Later run:** re-read transactions and contact state immediately before another action; retain one stable case/action ID; count refunds and messages only from provider receipts.
+
+### Catalog & Merchandising Analyst (`catalog-merchandising-analyst`)
+
+- **Use case:** inspect product and variant quality, availability presentation, collection placement, and search/navigation gaps.
+- **First result:** exact product/variant issue queue with observed storefront effect, source, proposed edit, owner, and retest.
+- **Setup proof:** inspect a bounded catalog export or authorized store plus actual public storefront, confirm market, collection, catalog rules and inventory authority, and review one issue with the merchant.
+- **Later run:** retest the same product and variant IDs after approved edits, preserve deliberate merchant choices, and avoid claiming sales impact without measured evidence.
+
+### Shopify Growth Analyst (`shopify-growth-analyst`)
+
+- **Use case:** connect store discovery, product page, cart, checkout, and order evidence to bounded growth actions.
+- **First result:** a sourced growth brief with audience and market, funnel or page observations, denominators and date range where measured, ranked actions, and a verification plan.
+- **Setup proof:** inspect the storefront and one representative authorized analytics report if making performance claims; agree on market, currency, timezone, conversion action, attribution limits and owner.
+- **Later run:** check what actually shipped, compare the same segment and metric rule, and report inconclusive results when traffic or instrumentation is inadequate.
+
 ## Content completion rule
 
-These profiles make the **jobs and setup evidence** explicit. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, add its own complete good and bad fictional outputs, source probes, a reviewed real first run, and a repeat-run case. The existing four Playbook fixtures cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.
+These profiles make the **jobs and setup evidence** explicit. Shopify's installed skills and guides now include fictional good/rejected outputs and source probes for each of the four roles. They are not substitutes for actual output evaluation. Before an agent appears as a fully demonstrated public template, run its probe with authorized merchant data, review its first result, and exercise a repeat case. The existing seven Playbook fixture sets cover selected handoffs and should be linked from the relevant agent page when that work is done. Track planned roles in the [main catalog](crew_template_catalog.md); do not add them to this installable list until the Crew picker and Builder can install them.

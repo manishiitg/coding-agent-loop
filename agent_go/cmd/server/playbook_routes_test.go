@@ -158,13 +158,130 @@ func TestCustomerSuccessPlaybookInstallationCopiesContractAndPendingSetup(t *tes
 	}
 }
 
+func TestEngineeringPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("incident-to-verified-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/engineering"
+	const skill = "agentworks-playbook-incident-to-verified-recovery"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py", "examples/incident-investigation.json", "examples/engineering-blocker-ledger.json", "examples/invalid-engineering-blocker-ledger.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Engineering playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("Engineering setup was pre-completed: %+v", setup)
+	}
+}
+
+func TestShopifyPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("order-exception-to-resolution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/shopify"
+	const skill = "agentworks-playbook-order-exception-to-resolution"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py", "examples/store-order-exception.json", "examples/return-resolution-review.json", "examples/invalid-return-resolution-review.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Shopify playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("Shopify setup was pre-completed: %+v", setup)
+	}
+}
+
+func TestShopifyStorefrontPlaybookInstallationCopiesContractAndPendingSetup(t *testing.T) {
+	item, err := findPlaybook("storefront-opportunity-to-verified-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	const workspace = "Workflow/shopify-storefront"
+	const skill = "agentworks-playbook-storefront-opportunity-to-verified-change"
+	if _, err := installPlaybookSkill(context.Background(), workspace, skill, item); err != nil {
+		t.Fatal(err)
+	}
+	base := workspace + "/skills/" + skill + "/"
+	for _, relative := range []string{"SKILL.md", "SETUP.json", "playbook.json", "references/team-and-handoffs.md", "scripts/validate_handoff.py", "examples/shopify-growth-opportunity.json", "examples/catalog-change-review.json", "examples/invalid-catalog-change-review.json"} {
+		if mock.files[base+relative] == "" {
+			t.Fatalf("Shopify storefront playbook installation lacks %s", relative)
+		}
+	}
+	var setup struct {
+		PlaybookID string   `json:"playbook_id"`
+		Completed  []string `json:"completed_steps"`
+	}
+	if err := json.Unmarshal([]byte(mock.files[base+"SETUP.json"]), &setup); err != nil {
+		t.Fatal(err)
+	}
+	if setup.PlaybookID != item.ID || len(setup.Completed) != 0 {
+		t.Fatalf("Shopify storefront setup was pre-completed: %+v", setup)
+	}
+}
+
 func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	items, err := loadPlaybookCatalog()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 27 {
-		t.Fatalf("catalog has %d playbooks, want 27", len(items))
+	if len(items) != 30 {
+		t.Fatalf("catalog has %d playbooks, want 30", len(items))
+	}
+	shopify, err := findPlaybook("order-exception-to-resolution")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shopify.Category != "Shopify" || len(shopify.AgentSlots) != 2 || len(shopify.Handoffs) != 1 || len(shopify.SetupChecks) != 10 {
+		t.Fatalf("order exception to resolution = %+v", shopify)
+	}
+	storefront, err := findPlaybook("storefront-opportunity-to-verified-change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storefront.Category != "Shopify" || len(storefront.AgentSlots) != 2 || len(storefront.Handoffs) != 1 || len(storefront.SetupChecks) != 10 {
+		t.Fatalf("storefront opportunity to verified change = %+v", storefront)
+	}
+	engineering, err := findPlaybook("incident-to-verified-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engineering.Category != "Engineering" || len(engineering.AgentSlots) != 2 || len(engineering.Handoffs) != 1 || len(engineering.SetupChecks) != 10 {
+		t.Fatalf("incident to verified recovery = %+v", engineering)
 	}
 	success, err := findPlaybook("new-customer-to-first-value")
 	if err != nil {

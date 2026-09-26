@@ -1,0 +1,262 @@
+import type { CrewTemplate } from './crewTemplates'
+
+export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst'
+
+type Specialist = {
+  id: ShopifySpecialistId
+  name: string
+  icon: string
+  subcategory: string
+  role: string
+  purpose: string
+  firstResult: string
+  minimumInput: string
+  optionalConnections: string
+  exampleRequests: readonly [string, string]
+  method: readonly string[]
+  evidence: string
+  boundary: string
+  handoff: string
+  repeatRule: string
+  sourceProbe: string
+  decisionRules: readonly string[]
+  workedExample: string
+  rejectedExample: string
+  setupProof: string
+}
+
+const specialists: readonly Specialist[] = [
+  {
+    id: 'store-operations-coordinator', name: 'Store Operations Coordinator', icon: '📦', subcategory: 'Orders & fulfillment',
+    role: 'Shopify order and fulfillment operations coordinator',
+    purpose: 'Investigate order, inventory, and fulfillment exceptions across store and delivery tools, then prepare an owner-safe resolution queue.',
+    firstResult: 'An order exception queue with exact order and fulfillment IDs, current state, evidence, owner, deadline, and proposed next action.',
+    minimumInput: 'Shopify store and order scope, authorized order or fulfillment records, service policy, inventory source if relevant, and operations owner.',
+    optionalConnections: 'Shopify Admin, warehouse or fulfillment provider, shipping tracker, helpdesk, and approved team channel; a bounded export supports the first read-only queue.',
+    exampleRequests: ['Which orders are stuck between payment and fulfillment? Show the source status and next owner action.', 'Investigate this delayed order across Shopify, the fulfillment provider, and the support ticket.'],
+    method: [
+      'Confirm store ID, order ID, current time and timezone, customer-safe service policy, owner, and authorized data scope.',
+      'Join Shopify order, payment, fulfillment, inventory, tracking, and support records by exact IDs. Keep an unmatched external tracking record unresolved.',
+      'Separate paid, captured, fulfilled, shipped, delivered, cancelled, returned, and refunded states; note partial items and split fulfillments.',
+      'Classify the exception, customer deadline, affected line items, prior contact, and the responsible operations or fulfillment owner.',
+      'Produce one proposed next action and evidence needed to close each case. Route return or refund requests to the policy specialist.',
+    ],
+    evidence: 'Cite order, fulfillment, tracking, and support record IDs with observation times. A label-created shipment is not proof of delivery.',
+    boundary: 'Do not cancel, fulfill, edit inventory, issue a refund, or contact a customer without an authorized action route and exact owner decision.',
+    handoff: 'For Order Exception to Resolution, emit `store-order-exception/v1` with store, order, line-item, payment, fulfillment, return and support references; current states; policy version; owner; and proposed action. Keep absent external IDs explicit.',
+    repeatRule: 'Re-read the same order and fulfillment IDs before another action; compare new versus resolved exceptions and check prior contact or refund state to avoid duplicates.',
+    sourceProbe: 'Read one scoped Order with its line items and payment state, then its FulfillmentOrders/fulfillments and a matching warehouse or carrier record. Record the Shopify IDs, external ID, observed times, and which source owns each state. A missing external match stays unknown.',
+    decisionRules: [
+      'Classify at the affected line-item/fulfillment level; an order can have partial or split fulfillment.',
+      'A shipping label or tracking number is not proof of carrier acceptance or delivery. Escalate a missed service deadline using the merchant policy and a named owner.',
+      'If the customer requests money or a return, hand over the exact case and source references; do not turn the operations queue into a refund decision.',
+    ],
+    workedExample: '{"case_id":"case-507","store_id":"store-example-1","order_id":"order-4102","line_item_id":"line-1","fulfillment_ref":"warehouse:shipment-501","observed_state":"label_created; carrier acceptance unknown","source_refs":["shopify:order-4102@2026-09-24T14:30Z","warehouse:shipment-501@2026-09-24T14:28Z"],"owner":"store-ops-owner","next_action":"Ask fulfillment provider for acceptance scan before promising delivery","closure_evidence":"carrier acceptance or merchant-approved alternative"}',
+    rejectedExample: '“Order shipped and customer will receive it tomorrow.” Reject: only a label exists; there is no carrier acceptance or delivery promise source.',
+    setupProof: 'Show one real order with a line-level fulfillment join, a deliberately missing or stale external tracking state, the merchant service deadline, and the named owner decision.',
+  },
+  {
+    id: 'returns-refunds-coordinator', name: 'Returns & Refunds Coordinator', icon: '↩️', subcategory: 'Returns & refunds',
+    role: 'Shopify returns, refund requests, and customer resolution coordinator',
+    purpose: 'Review return and refund requests against order, payment, delivery, and policy records; prepare a safe decision and customer draft.',
+    firstResult: 'A source-linked return or refund review with eligibility, amount-to-verify, owner decision, and an unsent customer response.',
+    minimumInput: 'Store and order ID, return or refund request, authorized payment and fulfillment records, policy version, currency, and approval owner.',
+    optionalConnections: 'Shopify Admin, return platform, payment processor, helpdesk, and carrier tracking; an authorized order and payment export supports a first read-only review.',
+    exampleRequests: ['Review this customer refund request and show what the policy and payment record allow.', 'Prepare a return decision for this delayed order and an unsent reply for the support owner.'],
+    method: [
+      'Confirm exact store, order, customer and request identity, affected line items, currency, dates, and the policy version that applies.',
+      'Read fulfillment, delivery, existing return, capture, refund, credit, dispute, gift-card, and prior-contact states from authorized sources.',
+      'Check eligibility, deadline, item condition evidence, and remaining refundable amount under the store policy; mark tax, shipping, fees, and partial payments for owner verification.',
+      'Prepare a decision brief that separates confirmed facts, policy interpretation, unresolved money questions, and the requested owner approval.',
+      'Draft a customer-safe response without claiming that a refund, replacement, label, or message has already been sent.',
+    ],
+    evidence: 'Link exact order, transaction, refund, return, tracking, and ticket IDs. A draft or approval is not a processor receipt; report an issued refund only from a confirmed transaction record.',
+    boundary: 'Do not issue a refund, create a return label, cancel an order, promise a delivery date, or send a customer message without reviewed authorization and a verified tool route.',
+    handoff: 'For Order Exception to Resolution, consume the validated `store-order-exception/v1` for the same store and order, then emit `return-resolution-review/v1` with policy check, money verification, owner decision, unsent draft, and proof needed for closure.',
+    repeatRule: 'Re-read the current order, return, refund, dispute, and prior-message state before another touch; keep a stable case ID and never propose the same refund twice.',
+    sourceProbe: 'Read one scoped Order, captured OrderTransaction, existing Refund/return records, affected fulfillment line item, policy version, and matching helpdesk request. Prove they belong to the same store/order/customer; do not substitute ticket text for a payment receipt.',
+    decisionRules: [
+      'Distinguish a customer asking for a return in helpdesk from an actual Shopify Return object. Only a fulfilled item is eligible for a Shopify return; an unfulfilled item needs the merchant-approved order edit, cancellation, or refund route instead.',
+      'Calculate remaining refundable capture in integer minor units and one currency; leave the proposed amount null until tax, shipping, discounts, partial capture, prior refunds, and disputes are verified.',
+      'An owner approval is not execution. Count a refund, label, or customer message only after the relevant provider receipt and later source check.',
+    ],
+    workedExample: '{"case_id":"case-507","order_id":"order-4102","request_kind":"helpdesk_refund_request","affected_line_fulfillment":"unfulfilled","route":"refund_or_order_edit_review","captured_minor":8500,"already_refunded_minor":0,"proposed_refund_minor":null,"approval":"pending","customer_message":"unsent","source_refs":["shopify:transaction-602","helpdesk:case-507","policy:returns-policy-2026-08"],"next_evidence":"Verify shipping and tax treatment with the approval owner"}',
+    rejectedExample: '“Shopify return approved and $85 refunded.” Reject: the item is unfulfilled, no Shopify Return was confirmed, amount treatment is unresolved, and no refund transaction receipt exists.',
+    setupProof: 'Show a real request matched to one order and affected line, classify helpdesk request versus Shopify Return, calculate or explicitly defer a refundable amount, and record a pending owner decision with unsent draft.',
+  },
+  {
+    id: 'catalog-merchandising-analyst', name: 'Catalog & Merchandising Analyst', icon: '🏷️', subcategory: 'Catalog',
+    role: 'Shopify catalog quality and merchandising analyst',
+    purpose: 'Find product and variant data gaps that affect discovery and purchase, then prepare an evidence-backed merchant review queue.',
+    firstResult: 'A product and variant issue queue with exact IDs, observed storefront effect, proposed edit, owner, and retest.',
+    minimumInput: 'Store URL or authorized product export, collection scope, catalog standards, inventory source, and merchandising owner.',
+    optionalConnections: 'Shopify product catalog, product information manager, inventory source, search app, and storefront analytics; a public storefront plus export supports an initial read-only review.',
+    exampleRequests: ['Audit this collection for missing product facts, variant problems, and out-of-stock presentation.', 'Which catalog issues are blocking shoppers from finding the right size or product?'],
+    method: [
+      'Confirm store, market, language, collection and product scope, canonical product rules, and owner.',
+      'Join product and variant IDs to storefront URLs, inventory, price, images, attributes, collection placement, and search presentation.',
+      'Flag missing or inconsistent facts only when observed; distinguish a deliberate merchandising choice from a data defect.',
+      'Prioritize issues by affected product and buyer task, with source references, proposed correction, owner, and acceptance criteria.',
+      'Retest the storefront after an approved edit and preserve unresolved or rejected issue IDs.',
+    ],
+    evidence: 'Show exact product and variant IDs, market, observed page or export field, and observation time. Do not infer sales impact without a defined analytics source.',
+    boundary: 'Do not change product copy, pricing, availability, collections, or inventory without merchant review and a separately authorized write route.',
+    handoff: 'For Storefront Opportunity to Verified Change, consume validated `shopify-growth-opportunity/v1` for the same store, market, product, and variant; emit `catalog-change-review/v1` with current/proposed value, source proof, owner approval state, publish receipt, and retest. An independent catalog audit may still produce `catalog-issue-queue/v1`.',
+    repeatRule: 'Recheck the same product and variant IDs after changes; close only issues with observed fixes and avoid reopening an owner-rejected choice without new evidence.',
+    sourceProbe: 'Read a scoped Product and its ProductVariants, inventory source, market-specific storefront URL, and collection/search presentation. Compare the exact variant shoppers can choose with the inventory and price source for the same market.',
+    decisionRules: [
+      'Separate product-level facts from variant-level facts; a sold-out variant does not prove the entire product is unavailable.',
+      'Confirm market, currency, language, publication, and inventory authority before proposing a price, availability, or copy edit.',
+      'Rank an issue by the buyer task and observed defect. Call revenue impact a hypothesis unless measured with a defined analytics source.',
+    ],
+    workedExample: '{"issue_id":"catalog-24","product_id":"product-81","variant_id":"variant-81-m","market":"US","observed":"Size M selectable on product page; inventory export shows zero available","source_refs":["shopify:variant-81-m@2026-09-24T10:00Z","storefront:/products/linen-shirt?variant=81-m@2026-09-24T10:05Z"],"proposal":"Merchant to verify inventory sync and availability display","owner":"merch-owner","retest":"Same market and variant after approved change"}',
+    rejectedExample: '“Hide the product; it is out of stock and loses revenue.” Reject: only one variant was checked, availability authority is unresolved, and revenue loss was not measured.',
+    setupProof: 'Show one real product and variant ID, the storefront result in a named market, the inventory authority, a merchant-reviewed correction, and a same-variant retest rule.',
+  },
+  {
+    id: 'shopify-growth-analyst', name: 'Shopify Growth Analyst', icon: '📈', subcategory: 'Storefront growth',
+    role: 'Shopify storefront discovery and conversion analyst',
+    purpose: 'Connect storefront, traffic, product, and checkout evidence to reviewable growth actions for a specific Shopify store.',
+    firstResult: 'A store growth brief with measured funnel or page evidence, source limits, ranked opportunities, and a verification plan.',
+    minimumInput: 'Store URL and market, target buyer and conversion action, product or collection scope, observation period, owner, and analytics export for performance claims.',
+    optionalConnections: 'Shopify Analytics, web analytics, Search Console, ad platform, heatmaps, and theme or CMS access; public pages support qualitative review before analytics is connected.',
+    exampleRequests: ['Where are shoppers leaving between this product page and checkout? Show what the data actually supports.', 'Review our new store for discovery and conversion opportunities, then propose the first measured experiment.'],
+    method: [
+      'Confirm store market, buyer, product set, primary conversion action, attribution limits, owner, and reporting window.',
+      'Inspect public storefront journeys and authorized traffic, product, cart, checkout, and order data; align timezones, currencies, and denominators.',
+      'Separate qualitative usability issues from measured funnel changes. Do not treat sessions, checkouts, and orders as interchangeable counts.',
+      'Rank bounded page, merchandising, acquisition, or checkout hypotheses with source evidence, effort, owner, and success metric.',
+      'Ask for approval before theme, product, ad, or campaign changes; define a comparable post-change observation window.',
+    ],
+    evidence: 'Cite URL or report, date range, segment, numerator and denominator where relevant, and source coverage. Unknown attribution remains unknown.',
+    boundary: 'Do not publish theme changes, edit a product or campaign, spend ad budget, or claim conversion lift before a reviewed change and comparable measurement.',
+    handoff: 'For Storefront Opportunity to Verified Change, emit `shopify-growth-opportunity/v1` with exact store, market, product, variant, page, observation, source refs, evidence kind, and a measured metric only when a valid numerator/denominator exists. Consume the Catalog review and verify any shipped change before measuring it. A broader strategy brief may still use `shopify-growth-brief/v1`.',
+    repeatRule: 'Track the same opportunity and experiment IDs; verify what shipped before comparing outcomes, and report inconclusive results when traffic or instrumentation is insufficient.',
+    sourceProbe: 'Inspect one public product or collection journey and one authorized report/export for the same market and date range. Record metric definition, segment, timezone, currency, source coverage, and whether a checkout event or order is actually observed.',
+    decisionRules: [
+      'A public page audit supports a usability hypothesis, not a measured conversion-loss claim.',
+      'Use the same market, segment, event definitions, and observation windows when comparing; sessions, add-to-carts, checkouts, and orders have different denominators.',
+      'Verify the exact approved page or product change shipped before attributing a subsequent metric move; mark low-volume or missing data inconclusive.',
+    ],
+    workedExample: '{"opportunity_id":"growth-12","market":"US","page":"/products/linen-shirt","observation":"Size guide is below the buy button on mobile","measurement":"Product-page sessions 1200; add-to-cart sessions 96; 2026-09-01..14; US mobile","source_refs":["storefront:/products/linen-shirt@2026-09-24","analytics:report-44"],"hypothesis":"Make size guidance visible near variant choice","owner":"growth-owner","success_rule":"Compare US mobile add-to-cart/session over equivalent windows after verified publish"}',
+    rejectedExample: '“Checkout conversion fell 8%, so publish a new theme.” Reject: the cited count is product-page sessions, checkout denominator and comparable period are missing, and no owner approved a theme write.',
+    setupProof: 'Show one real storefront observation and the exact report behind any performance claim, with market, window, metric definition, denominator, and owner-reviewed experiment rule.',
+  },
+]
+
+function checklist(spec: Specialist): string {
+  const checks = [
+    { id: 'identity', title: 'Confirm the Shopify role', instructions: `Confirm whether ${spec.name} is this Crew's primary role or a supporting capability. Preserve an existing Crew identity and name the merchant owner.` },
+    { id: 'skill', title: 'Verify the selected skill', instructions: `Confirm skills/${spec.id}/SKILL.md exists and ${spec.id} is selected for this Crew.` },
+    { id: 'scope', title: 'Set store and job scope', instructions: `Record exact store, market, owner, time window, first job, and authorized data scope. Minimum input: ${spec.minimumInput}` },
+    { id: 'access', title: 'Test source access', instructions: `${spec.sourceProbe} Record exact IDs, freshness, and access gaps. ${spec.optionalConnections} A provider name is not a connection.` },
+    { id: 'policy', title: 'Verify domain rules and owner', instructions: `Confirm the merchant's policy, owner, and unknown-state treatment. ${spec.decisionRules.join(' ')} Do not join stores or customers by name alone.` },
+    { id: 'first_result', title: 'Produce the first result', instructions: `Use actual authorized evidence to produce ${spec.firstResult} ${spec.evidence} Setup proof: ${spec.setupProof} Fictional examples do not complete this check.` },
+    { id: 'review', title: 'Review the result and next action', instructions: 'Show the sourced result, unresolved facts, policy and money checks, proposed next action, approval owner, and exact evidence needed for closure. Record the owner decision.' },
+    { id: 'action_route', title: 'Choose customer and store action routes', optional: true, instructions: `Choose read-only chat or separately authorized store writes, refunds, labels, and messages. Read-only chat completes this decision. ${spec.boundary}` },
+    { id: 'recurrence', title: 'Choose recurrence and repeat behavior', optional: true, instructions: `Choose manual-only or a reviewed schedule, authenticated trigger, function, or Automation. Manual-only completes this decision. ${spec.repeatRule} Test a configured route before activation.` },
+  ]
+  return `${JSON.stringify({ schema_version: 1, template_id: spec.id, template_version: 1, checks, completed_steps: [] }, null, 2)}\n`
+}
+
+function skill(spec: Specialist): string {
+  return `---
+name: ${spec.id}
+description: ${spec.purpose}
+---
+
+# ${spec.name}
+
+This skill gives one Crew the ${spec.name} capability. It can seed a new Crew or support a compatible existing Crew without replacing its identity. Work through the merchant's current Shopify and adjacent SaaS records.
+
+## Setup through chat
+
+Read \`templates/${spec.id}/TEMPLATE_SETUP.json\` and \`templates/${spec.id}/SETUP.md\`. Verify each check against the merchant's actual scope before adding its ID to \`completed_steps\`. Preserve previous progress. Read-only chat and manual-only are valid choices for their optional checks. Report verified, blocked, and next.
+
+## First useful result
+
+${spec.method.map((step, index) => `${index + 1}. ${step}`).join('\n')}
+
+Deliver **${spec.firstResult}** ${spec.evidence}
+
+## Source probe and decision rules
+
+${spec.sourceProbe}
+
+${spec.decisionRules.map(rule => `- ${rule}`).join('\n')}
+
+## Illustrative output and rejection
+
+Fictional good output, illustrating the minimum facts and next action. Replace every value with authorized merchant evidence:
+
+\`\`\`json
+${spec.workedExample}
+\`\`\`
+
+Fictional output to reject: ${spec.rejectedExample}
+
+This example does not prove setup. ${spec.setupProof}
+
+## Follow-through
+
+${spec.repeatRule}
+
+## Automation handoff
+
+${spec.handoff} The Workflow must provide the schema and output path. Ask Builder to repair a route that omits them. Validate artifact structure before another Crew consumes it; a merchant reviews source truth and consequential decisions.
+
+## Boundaries
+
+${spec.boundary} Installing this skill enables no schedule, trigger, function, Automation, customer message, refund, or store write. Never copy another Crew's credentials or another store's data.
+`
+}
+
+function guide(spec: Specialist): string {
+  return `# ${spec.name} setup
+
+Template \`${spec.id}\` version 1. Progress lives in \`templates/${spec.id}/TEMPLATE_SETUP.json\` and is verified in Crew chat.
+
+## First result
+
+Provide ${spec.minimumInput} Ask: “${spec.exampleRequests[0]}”
+
+Expected output: **${spec.firstResult}** ${spec.evidence}
+
+## Source and connection choice
+
+${spec.optionalConnections} Start with a representative authorized read or export. Verify store identity and source coverage before claiming a connected result. Select live accounts only within the merchant's approved scope.
+
+**Probe:** ${spec.sourceProbe}
+
+**Setup proof:** ${spec.setupProof}
+
+## Decision rules
+
+${spec.decisionRules.map(rule => `- ${rule}`).join('\n')}
+
+## Example quality check
+
+Good fictional result: \`${spec.workedExample}\`
+
+Reject: ${spec.rejectedExample}
+
+## Optional recurring work
+
+A schedule can repeat this Crew's own review. A separate Automation can coordinate multiple Crews after Builder verifies bindings, handoffs, a manual route, and the merchant-approved run policy. ${spec.repeatRule} ${spec.boundary}
+`
+}
+
+export const shopifySpecialists: readonly CrewTemplate[] = specialists.map(spec => {
+  const base = `templates/${spec.id}`
+  const skillPath = `skills/${spec.id}/SKILL.md`
+  const setupGuidePath = `${base}/SETUP.md`
+  const setupPath = `${base}/TEMPLATE_SETUP.json`
+  return {
+    id: spec.id, version: 1, category: 'Shopify', subcategory: spec.subcategory, name: spec.name, icon: spec.icon,
+    role: spec.role, purpose: spec.purpose, firstResult: spec.firstResult,
+    minimumInput: spec.minimumInput, optionalConnections: spec.optionalConnections,
+    exampleRequests: spec.exampleRequests, selectedSkills: [spec.id],
+    setupPath, setupGuidePath, requiredFiles: [skillPath, setupGuidePath, setupPath],
+    files: { [skillPath]: skill(spec), [setupGuidePath]: guide(spec), [setupPath]: checklist(spec) },
+  }
+})

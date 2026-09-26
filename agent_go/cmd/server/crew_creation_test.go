@@ -380,6 +380,78 @@ func TestCreateCrewProjectAppliesCustomerSuccessTemplateOnBuilderAction(t *testi
 	}
 }
 
+func TestCreateCrewProjectAppliesEngineeringTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"incident-investigator", "engineering-delivery-coordinator", "performance-investigator", "cloud-cost-analyst"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Engineering Operator",
+				Role: "Engineering operator", Purpose: "Investigate a sourced engineering exception",
+				TemplateID: templateID, StepInstruction: "Return a source-linked result for review.",
+				IdempotencyKey: "engineering-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Engineering Crew lacks %s", relative)
+				}
+			}
+			var setup struct {
+				CompletedSteps []string `json:"completed_steps"`
+			}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			if len(setup.CompletedSteps) != 0 {
+				t.Fatalf("Engineering setup unexpectedly completed: %+v", setup.CompletedSteps)
+			}
+		})
+	}
+}
+
+func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
+	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst"} {
+		t.Run(templateID, func(t *testing.T) {
+			svc, mock, ctx := newCrewCreationTestEnv(t)
+			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+				UserID: "owner", WorkflowPath: "Workflow/build", Title: "Store Operator",
+				Role: "Shopify store operator", Purpose: "Review a sourced store exception",
+				TemplateID: templateID, StepInstruction: "Return a source-linked result for merchant review.",
+				IdempotencyKey: "shopify-" + templateID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := created.WorkspacePath
+			for _, relative := range []string{
+				"skills/" + templateID + "/SKILL.md",
+				"templates/" + templateID + "/SETUP.md",
+				"templates/" + templateID + "/TEMPLATE_SETUP.json",
+			} {
+				if mock.files[base+"/"+relative] == "" {
+					t.Fatalf("Shopify Crew lacks %s", relative)
+				}
+			}
+			var setup struct {
+				CompletedSteps []string `json:"completed_steps"`
+			}
+			if err := json.Unmarshal([]byte(mock.files[base+"/templates/"+templateID+"/TEMPLATE_SETUP.json"]), &setup); err != nil {
+				t.Fatal(err)
+			}
+			if len(setup.CompletedSteps) != 0 {
+				t.Fatalf("Shopify setup unexpectedly completed: %+v", setup.CompletedSteps)
+			}
+		})
+	}
+}
+
 func TestCreateCrewProjectValidatesInput(t *testing.T) {
 	svc, _, ctx := newCrewCreationTestEnv(t)
 	valid := CreateCrewRequest{

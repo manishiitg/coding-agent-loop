@@ -24,6 +24,8 @@ AgentWorks
     │   └── API Performance Validation
     ├── Engineering Operations Intelligence
     │   └── Engineering Operations Intelligence
+    ├── Engineering
+    │   └── Incident to Verified Recovery
     ├── FinOps
     │   └── Cost Anomaly to Verified Savings
     ├── Reliability Operations
@@ -44,8 +46,10 @@ AgentWorks
     │   └── Finance Operations Review
     ├── Sales
     │   └── Inbound Lead-to-Meeting Review
-    └── Customer Success
-        └── New Customer to First Value
+    ├── Customer Success
+    │   └── New Customer to First Value
+    └── Shopify
+        └── Order Exception to Resolution
 ```
 
 ## Browse categories and package locations
@@ -54,11 +58,24 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
-| Engineering | Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Engineering Crew roles are planned. |
+| Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | QA Crew roles are planned; existing packages remain under `browser-qa/`. |
 | Security | Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Security Crew roles are planned; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | The end-to-end launch-to-qualified-pipeline Playbook is planned. Existing Website Growth and Sales Crews are cross-listed, not duplicated. |
-| Shopify | No store-specific Workflow Playbook packaged yet | Shopify-specific Crews and store workflows are planned. Generic Website Growth Crews can be discovered for public-storefront work without store access. |
+| Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change | Four Shopify Crews and two multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
+
+### Engineering Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Incident to Verified Recovery](agentic-engineering-platform/engineering/incident-to-verified-recovery/SKILL.md) | Propose an Incident Investigator → Engineering Delivery Coordinator route, validate the incident/change handoff, review any production action, and check service recovery from telemetry before closure. |
+
+### Shopify Automation
+
+| Playbook | Outcome |
+| --- | --- |
+| [Order Exception to Resolution](agentic-engineering-platform/shopify/order-exception-to-resolution/SKILL.md) | Propose a Store Operations Coordinator → Returns & Refunds Coordinator route for an order problem tied to a return or refund request; verify store/order identity, policy and money rules, then require owner approval and provider receipts for actions. |
+| [Storefront Opportunity to Verified Change](agentic-engineering-platform/shopify/storefront-opportunity-to-verified-change/SKILL.md) | Propose a Shopify Growth Analyst → Catalog & Merchandising Analyst route for an observed shopper problem, validate the exact product/variant handoff, review a merchant edit, and verify the shipped change before measuring a comparable result. |
 
 ### Browser QA
 

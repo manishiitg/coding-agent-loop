@@ -122,6 +122,8 @@ bash "$REPO/agent_go/scripts/install-slack-cli.sh" /srv/dominion/tools
 command -v slack >/dev/null
 echo "==> Ensuring gog (Gmail connector CLI) is the latest release"
 bash "$REPO/deploy/common/install-gog.sh" /srv/dominion/tools
+echo "==> Validating authored Playbook packages before staging"
+python3 "$REPO/playbooks/scripts/validate_playbooks.py"
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only
 # agent_go/go.mod does), so without a go.work tying all three siblings
@@ -141,7 +143,12 @@ cp "$REPO/deploy/common/prune-releases.py" "$RELEASE_DIR/prune-releases.py"
 ln -sfn /srv/dominion/logs "$RELEASE_DIR/logs"
 echo "==> Staging release $RELEASE_ID at $RELEASE_DIR"
 cp -a "$REPO/playbooks/." "$RELEASE_DIR/playbooks/"
-test -f "$RELEASE_DIR/playbooks/crew-agents/website-growth/catalog.json" || { echo 'FATAL: Website Growth Crew catalog is missing from release' >&2; exit 1; }
+for category in website-growth finance sales customer-success engineering shopify; do
+  test -f "$RELEASE_DIR/playbooks/crew-agents/$category/catalog.json" || {
+    echo "FATAL: $category Crew catalog is missing from release" >&2
+    exit 1
+  }
+done
 
 export GOWORK="$GOWORK_FILE"
 

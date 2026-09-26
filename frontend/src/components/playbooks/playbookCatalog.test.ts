@@ -14,7 +14,7 @@ describe('small-team catalog', () => {
   it('uses one engineering operations intelligence playbook and scopes every playbook to small teams', () => {
     const intelligence = PLAYBOOK_CATALOG.filter(item => item.category === 'Engineering Operations Intelligence')
     expect(intelligence.map(item => item.id)).toEqual(['engineering-operations-intelligence'])
-    expect(PLAYBOOK_CATALOG).toHaveLength(38)
+    expect(PLAYBOOK_CATALOG).toHaveLength(39)
     expect(PLAYBOOK_CATALOG.every(item => item.teamScope === 'small_team')).toBe(true)
   })
 
@@ -34,6 +34,17 @@ describe('small-team catalog', () => {
     expect(finance?.agentSlots?.filter(slot => slot.required).map(slot => slot.agent_playbook_id)).toEqual(['billing-operations-coordinator', 'finance-analyst'])
     expect(finance?.handoffs?.find(handoff => handoff.required)?.artifact_type).toBe('billing-exception-queue/v1')
     expect(finance?.setupChecks).toContain('test_run')
+  })
+
+  it('exposes invoice intake with a distinct payables owner and validated document handoff', () => {
+    const invoice = PLAYBOOK_CATALOG.find(item => item.id === 'invoice-intake-to-reviewed-payable')
+    expect(invoice?.category).toBe('Finance')
+    expect(invoice?.agentSlots?.map(slot => slot.agent_playbook_id)).toEqual([
+      'document-intake-assistant', 'spend-payables-coordinator',
+    ])
+    expect(invoice?.handoffs?.[0].artifact_type).toBe('document-intake-record/v1')
+    expect(invoice?.setupChecks).toContain('duplicate_policy')
+    expect(invoice?.setupChecks).toContain('test_run')
   })
 
   it('exposes five Shopify routes with distinct two-Crew handoffs', () => {

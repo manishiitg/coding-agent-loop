@@ -47,7 +47,8 @@ AgentWorks
     ├── Website Growth
     │   └── Website Growth Loop
     ├── Finance
-    │   └── Finance Operations Review
+    │   ├── Finance Operations Review
+    │   └── Invoice Intake to Reviewed Payable
     ├── Sales
     │   └── Inbound Lead-to-Meeting Review
     ├── Customer Success
@@ -72,12 +73,13 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 
 | Browse category | Current Workflow Playbook coverage | Crew and gap status |
 | --- | --- | --- |
+| Finance | Finance Operations Review; Invoice Intake to Reviewed Payable | Five Finance Crews are locally installable. The invoice route reuses Operations Document Intake Assistant and keeps bill creation and payment behind separate review. |
 | Engineering | Incident to Verified Recovery; Engineering Operations Intelligence, Reliability Operations, Performance Engineering, FinOps | Four Engineering Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup. |
 | QA | Release Candidate to Reviewed Gate; Browser QA suite, including Critical Journey Validation, flaky-test work, and Release and PR Quality Gate | Three QA Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; existing single-workflow packages remain under `browser-qa/`. |
 | Security | Finding to Verified Remediation; Application Security Assessment and Remediation; Role and Permission Validation can be discovered here too | Three Security Crew roles and one multi-Crew Automation Playbook are locally installable with pending setup; the role-permission package remains under `browser-qa/`. |
 | GTM | Website Growth Loop and Inbound Lead-to-Meeting Review cover separate parts of the journey; Growth Analytics is adjacent | Two GTM Crews and the Launch to Qualified Pipeline Automation are locally installable with pending setup. Website Growth and Sales Crews are reused, not duplicated. |
 | Customer Support | Support Case to Reviewed Resolution | Four Support Crews are locally installable with pending setup. Triage and Reply form the required route; Escalation is optional. Feedback analysis remains a standalone Crew task. |
-| Operations | Meeting Decision to Owned Follow-through | Six Operations Crews are locally installable with pending setup. Meeting Actions and Project Status form the required route; Chief of Staff review is optional. Order, vendor and document work can start as standalone Crew jobs. |
+| Operations | Meeting Decision to Owned Follow-through; Invoice Intake to Reviewed Payable crosses into Finance | Six Operations Crews are locally installable with pending setup. Meeting Actions and Project Status form the required route; Chief of Staff review is optional. Document Intake also supports the invoice route; order and vendor work can start as standalone Crew jobs. |
 | Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
@@ -207,6 +209,7 @@ The Website Growth Loop is installed as guidance and a saved ten-check setup fil
 | Playbook | Outcome |
 | --- | --- |
 | [Finance Operations Review](agentic-engineering-platform/finance/finance-operations-review/SKILL.md) | Propose a Billing Operations Coordinator → Finance Analyst review of subscription billing exceptions and source-linked financial impact. Close and payables specialists are optional; their handoffs are not part of the first packaged route. |
+| [Invoice Intake to Reviewed Payable](agentic-engineering-platform/finance/invoice-intake-to-reviewed-payable/SKILL.md) | Propose a Document Intake Assistant → Spend & Payables Coordinator route. Validate invoice fields and page spans, re-read current AP records for duplicates and payment state, and stop at an owner-reviewed payable decision. Bill writes and payment need separate authorization and receipts. |
 
 ### Sales
 
@@ -259,7 +262,7 @@ Save application-specific verified locators and test setup in the knowledgebase 
 ## Authoring checks
 
 - Run `python3 playbooks/scripts/validate_playbooks.py` from the repository root.
-- This runs all 19 package-local contract suites; every multi-Crew Automation Playbook now has one.
+- This runs all 20 package-local contract suites; every multi-Crew Automation Playbook now has one.
 - Validate every skill's frontmatter and supporting links.
 - Parse `playbook.json` and confirm entrypoint/example paths exist.
 - Use each reference's behavioral cases when testing the builder on an authorized fixture application.

@@ -181,6 +181,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'billing-to-finance', from: 'billing', to: 'finance', artifact_type: 'billing-exception-queue/v1', required: true },
   ], setupChecks: ['goal_owner', 'source_scope', 'policy_metric', 'team_bindings', 'access', 'handoff_contract', 'plan_review', 'test_run', 'action_ledger', 'activation_choice'] },
+  { id: 'invoice-intake-to-reviewed-payable', title: 'Invoice Intake to Reviewed Payable', description: 'Extract an authorized vendor invoice, reconcile it against current payables, and prepare an owner-reviewed decision without posting or paying it.', version: '0.1.0', category: 'Finance', order: 2, inputCount: 6, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'intake', agent_playbook_id: 'document-intake-assistant', required: true, output: 'document-intake-record/v1' },
+    { id: 'payables', agent_playbook_id: 'spend-payables-coordinator', required: true, output: 'payable-review/v1' },
+  ], handoffs: [
+    { id: 'intake-to-payables', from: 'intake', to: 'payables', artifact_type: 'document-intake-record/v1', required: true },
+  ], setupChecks: ['goal_owner', 'document_scope', 'invoice_schema', 'duplicate_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'activation_choice'] },
   { id: 'website-growth-loop', title: 'Website Growth Loop', description: 'Coordinate a growth strategist and buyer-question specialist to find relevant website traffic opportunities, then track approved changes and measurement.', version: '0.3.0', category: 'Website Growth', order: 1, inputCount: 6, toolCount: 4, teamScope: 'small_team', agentSlots: [
     { id: 'strategist', agent_playbook_id: 'website-growth-starter', required: true, output: 'growth-priority-brief/v1' },
     { id: 'search', agent_playbook_id: 'search-opportunity-mapper', required: true, output: 'search-opportunity-list/v1' },

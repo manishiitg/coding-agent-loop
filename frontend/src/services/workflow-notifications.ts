@@ -15,6 +15,8 @@ export interface WorkflowNotificationInfo {
   pulseSummaryChannels: string[]
   // Who each summary is emailed to. Empty means the account default recipient.
   runSummaryRecipients: string[]
+  /** One sender for this workflow's Notify emails; empty inherits the account default. */
+  gmailConnectionId: string
   /** Which Gmail account(s) each summary sends FROM; empty means inherit. */
   runSummaryGmailConnectionIds: string[]
   pulseSummaryGmailConnectionIds: string[]
@@ -44,6 +46,7 @@ export async function loadWorkflowNotificationInfo(workspacePath: string): Promi
     runSummaryChannels: response.run_summary_channels || [],
     pulseSummaryChannels: response.pulse_summary_channels || [],
     runSummaryRecipients: response.run_summary_recipients || [],
+    gmailConnectionId: response.gmail_connection_id || '',
     runSummaryGmailConnectionIds: response.run_summary_gmail_connection_ids || [],
     pulseSummaryGmailConnectionIds: response.pulse_summary_gmail_connection_ids || [],
     pulseSummaryRecipients: response.pulse_summary_recipients || [],

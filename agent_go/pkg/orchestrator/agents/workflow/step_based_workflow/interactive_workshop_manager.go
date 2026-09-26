@@ -4628,10 +4628,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if len(notificationBlockRecipients) > 0 {
 				sb.WriteString(fmt.Sprintf("- Blocked recipients: %s\n", strings.Join(notificationBlockRecipients, ", ")))
 			}
-			// WHICH account sends, and what it could be changed to. Stating the
-			// available connections matters: the agent can edit workflow.json but
-			// has no tool to enumerate them, so without this it can only report
-			// that a sender exists and ask the user to look it up themselves.
+			// Show the saved sender and enabled choices so Builder can configure it.
 			if gmailSvc := services.GetGmailService(); gmailSvc != nil {
 				connections := gmailSvc.ListConnections()
 				if notificationGmailConnectionID == "" {
@@ -4646,7 +4643,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					sb.WriteString(fmt.Sprintf("- Gmail sender: %s\n", label))
 				}
-				if len(connections) > 1 {
+				if len(connections) > 0 {
 					available := make([]string, 0, len(connections))
 					for _, conn := range connections {
 						if !conn.Enabled {
@@ -4662,10 +4659,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						available = append(available, entry)
 					}
 					if len(available) > 0 {
-						sb.WriteString(fmt.Sprintf("- Available Gmail senders (set `gmail_connection_id` in workflow.json notifications to choose): %s\n",
+						sb.WriteString(fmt.Sprintf("- Available Gmail senders (set `notification_gmail_connection_id` with update_workflow_config to choose): %s\n",
 							strings.Join(available, "; ")))
 					}
 				}
+			} else if notificationGmailConnectionID == "" {
+				sb.WriteString("- Gmail sender: not set — inherits the account default connection\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("- Gmail sender connection ID: %s (connection status unavailable)\n", notificationGmailConnectionID))
 			}
 			// State both recipient lists unconditionally. "Not configured" is a real
 			// answer here — it means mail goes to the account default — and leaving
@@ -4875,7 +4876,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip update_workflow_config registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; disable selected Pulse reviewers; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports, Pulse reviewer selection, or Slack webhook configuration takes effect on the next workflow execution.",
+		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions and one Gmail notification sender; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; disable selected Pulse reviewers; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports, Pulse reviewer selection, or Slack webhook configuration takes effect on the next workflow execution.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -4972,6 +4973,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Email addresses the Pulse review summary is sent TO, stored in workflow.json capabilities.notifications.pulse_summary_recipients and applied automatically to every pulse_summary send. Use when Pulse findings should reach different people than the run outcome. Omit to leave unchanged; pass an empty array to clear it and fall back to the account default recipient. Denylists still apply on top.",
+				},
+				"notification_gmail_connection_id": map[string]interface{}{
+					"type":        "string",
+					"description": "One enabled Gmail connection ID to send this workflow's notify_user emails FROM, for both run and Pulse summaries. Inspect available IDs with get_workflow_config. Stored in workflow.json capabilities.notifications.gmail_connection_id; clears legacy per-summary sender overrides. Omit to leave unchanged; pass an empty string to inherit the account default Gmail sender. This does not change recipients or the Gmail connection_id chosen by ordinary workflow and Builder email actions.",
 				},
 
 				"browser_mode": map[string]interface{}{
@@ -5389,9 +5394,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			pulseChannelsRaw, pulseChannelsProvided := args["pulse_notification_channels"]
 			runRecipientsRaw, runRecipientsProvided := args["run_notification_recipients"]
 			pulseRecipientsRaw, pulseRecipientsProvided := args["pulse_notification_recipients"]
+			senderRaw, senderProvided := args["notification_gmail_connection_id"]
 			if (runProvided && runRaw != nil) || (pulseProvided && pulseRaw != nil) ||
 				(runChannelsProvided && runChannelsRaw != nil) || (pulseChannelsProvided && pulseChannelsRaw != nil) ||
-				(runRecipientsProvided && runRecipientsRaw != nil) || (pulseRecipientsProvided && pulseRecipientsRaw != nil) {
+				(runRecipientsProvided && runRecipientsRaw != nil) || (pulseRecipientsProvided && pulseRecipientsRaw != nil) ||
+				(senderProvided && senderRaw != nil) {
 				parseInstructions := func(name string, raw interface{}, provided bool) (string, error) {
 					if !provided || raw == nil {
 						return "", nil
@@ -5521,6 +5528,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if parseErr != nil {
 					return "Error: " + parseErr.Error() + ".", nil
 				}
+				var senderID string
+				if senderProvided && senderRaw != nil {
+					var ok bool
+					senderID, ok = senderRaw.(string)
+					if !ok {
+						return "Error: notification_gmail_connection_id must be a string.", nil
+					}
+					senderID = strings.TrimSpace(senderID)
+					if senderID != "" {
+						gmailSvc := services.GetGmailService()
+						if gmailSvc == nil {
+							return "Error: Gmail connections are unavailable; cannot validate notification sender.", nil
+						}
+						conn, found := gmailSvc.GetConnection(senderID)
+						if !found || !conn.Enabled {
+							return "Error: Notify sender must be an enabled Gmail connection.", nil
+						}
+					}
+				}
 				delete(notifications, "instructions")
 				for key, value := range map[string]string{
 					"run_summary_instructions":   strings.TrimSpace(runInstructions),
@@ -5554,6 +5580,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						notifications["pulse_summary_recipients"] = pulseRecipients
 					}
 				}
+				if senderProvided && senderRaw != nil {
+					if senderID == "" {
+						delete(notifications, "gmail_connection_id")
+					} else {
+						notifications["gmail_connection_id"] = senderID
+					}
+					delete(notifications, "run_summary_gmail_connection_ids")
+					delete(notifications, "pulse_summary_gmail_connection_ids")
+				}
 				if len(notifications) == 0 {
 					delete(caps, "notifications")
 				} else {
@@ -5576,6 +5611,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 				if pulseRecipientsProvided {
 					sb.WriteString(fmt.Sprintf("- Pulse summary recipients: %s\n", notificationRecipientSummary(pulseRecipients)))
+				}
+				if senderProvided && senderRaw != nil {
+					if senderID == "" {
+						sb.WriteString("- Gmail notification sender: account default\n")
+					} else {
+						sb.WriteString(fmt.Sprintf("- Gmail notification sender connection ID: %s\n", senderID))
+					}
 				}
 				logger.Info(fmt.Sprintf("Updated workflow notification instructions: run_configured=%v pulse_configured=%v run_recipients=%d pulse_recipients=%d", strings.TrimSpace(runInstructions) != "", strings.TrimSpace(pulseInstructions) != "", len(runRecipients), len(pulseRecipients)))
 			}

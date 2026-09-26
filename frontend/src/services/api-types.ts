@@ -3089,10 +3089,7 @@ export interface WorkflowNotificationAccountChannelInfo {
   default_sender?: string
   /** Which configured connection default_sender belongs to. */
   default_sender_connection_id?: string
-  /**
-   * Connections a workflow may send from. Fewer than two entries means there
-   * is nothing to choose and the picker stays hidden.
-   */
+  /** Connections available to the Notify sender picker. */
   sender_choices?: WorkflowNotificationSenderChoice[]
 }
 
@@ -3120,8 +3117,9 @@ export interface WorkflowNotificationInfoResponse {
   pulse_summary_channels?: string[]
   // Who each summary is emailed to. Empty means the account default recipient.
   run_summary_recipients?: string[]
-  /** Which Gmail account(s) each summary sends FROM. Several entries deliver
-   *  the summary once per account; absent means inherit the default. */
+  /** One sender selected for this workflow's Notify emails; empty inherits the account default. */
+  gmail_connection_id?: string
+  /** Legacy per-summary sender overrides; Notify now selects one sender. */
   run_summary_gmail_connection_ids?: string[]
   pulse_summary_gmail_connection_ids?: string[]
   pulse_summary_recipients?: string[]
@@ -3526,9 +3524,10 @@ export interface UpdateWorkflowManifestRequest {
   // omit the field to leave it unchanged.
   run_notification_recipients?: string[]
   pulse_notification_recipients?: string[]
-  // Which Gmail account(s) each summary is sent FROM. Several entries fan the
-  // summary out, one delivery per account. Send an empty array to clear back to
-  // the account default; omit the field to leave it unchanged.
+  /** One sender for this workflow's Notify emails. Empty inherits the account default. */
+  notification_gmail_connection_id?: string
+  // Legacy per-summary sender overrides. New Notify settings use
+  // notification_gmail_connection_id and clear these lists.
   run_notification_gmail_connection_ids?: string[]
   pulse_notification_gmail_connection_ids?: string[]
   notification_instructions?: string

@@ -5,6 +5,8 @@ import { expect, it, vi } from 'vitest'
 
 const { askMessages } = vi.hoisted(() => ({ askMessages: [] as string[] }))
 vi.mock('../../services/workflow-notifications', () => ({ loadWorkflowNotificationInfo: vi.fn() }))
+vi.mock('../../services/api', () => ({ workflowManifestApi: { updateWorkflowManifest: vi.fn(async () => ({})) } }))
+vi.mock('../../hooks/useCanWriteWorkflow', () => ({ useCanWriteWorkflow: () => true, READ_ONLY_TITLE: 'Read-only access' }))
 vi.mock('./AskAIButton', () => ({
   AskAIButton: (props: Record<string, unknown>) => {
     askMessages.push(String(props.message))
@@ -13,6 +15,7 @@ vi.mock('./AskAIButton', () => ({
 }))
 
 import WorkflowNotificationView from './WorkflowNotificationView'
+import { workflowManifestApi } from '../../services/api'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -20,12 +23,16 @@ const info = {
   scopeLabel: 'Shop',
   effectiveState: 'ready',
   slackWebhook: { secret_name: 'SLACK_MAIN' },
-  gmail: { state: 'ready', default_recipient: 'me@x.com', blocked_recipients: [], default_sender: 'me@x.com', sender_choices: [] },
+  gmail: { state: 'ready', default_recipient: 'me@x.com', blocked_recipients: [], default_sender: 'me@x.com', sender_choices: [
+    { id: 'gmail_001', email: 'me@x.com', ready: true },
+    { id: 'gmail_002', email: 'other@x.com', ready: true },
+  ] },
   runSummaryInstructions: 'Summarize the run.',
   pulseSummaryInstructions: '',
   runSummaryChannels: ['slack'],
   pulseSummaryChannels: [],
   runSummaryRecipients: [],
+  gmailConnectionId: '',
   runSummaryGmailConnectionIds: [],
   pulseSummaryGmailConnectionIds: [],
   pulseSummaryRecipients: [],
@@ -90,6 +97,26 @@ it('asks per channel and per summary from chat commands', async () => {
     expect(askMessages.some(message => message.includes('Gmail notifications'))).toBe(true)
     expect(askMessages.some(message => message.includes('run summary'))).toBe(true)
     expect(askMessages.some(message => message.includes('pulse review'))).toBe(true)
+  } finally {
+    await unmount()
+  }
+})
+
+it('saves one Notify sender without constraining workflow Gmail actions', async () => {
+  vi.mocked(workflowManifestApi.updateWorkflowManifest).mockClear()
+  const { host, unmount } = await mount()
+  try {
+    const sender = host.querySelector('select[aria-label="Notify Gmail sender"]') as HTMLSelectElement
+    expect(sender).not.toBeNull()
+    expect(host.textContent).toContain('Workflow and Builder Gmail actions choose independently.')
+    await act(async () => {
+      sender.value = 'gmail_002'
+      sender.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(workflowManifestApi.updateWorkflowManifest).toHaveBeenCalledWith({
+      workspace_path: 'Workflow/test',
+      notification_gmail_connection_id: 'gmail_002',
+    })
   } finally {
     await unmount()
   }

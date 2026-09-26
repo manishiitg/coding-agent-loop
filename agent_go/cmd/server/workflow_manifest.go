@@ -694,14 +694,9 @@ type WorkflowNotificationConfig struct {
 	// delivering. An identifier, never a secret.
 	GmailConnectionID string `json:"gmail_connection_id,omitempty"`
 
-	// Per-summary senders. These say which account(s) each summary is sent
-	// FROM, the counterpart to RunSummaryRecipients / PulseSummaryRecipients
-	// saying where it goes TO.
-	//
-	// A LIST, following the RunSummarySlackWebhookSecretNames precedent: naming
-	// several senders fans that summary out, delivering it once per account, so
-	// the same run summary can go out from both a work and a personal mailbox.
-	// Empty falls back to GmailConnectionID, then to the account default.
+	// Legacy per-summary sender overrides. New Notify settings save one
+	// GmailConnectionID and clear these fields. A legacy list with multiple
+	// senders is refused at delivery rather than sending duplicate messages.
 	RunSummaryGmailConnectionIDs   []string `json:"run_summary_gmail_connection_ids,omitempty"`
 	PulseSummaryGmailConnectionIDs []string `json:"pulse_summary_gmail_connection_ids,omitempty"`
 

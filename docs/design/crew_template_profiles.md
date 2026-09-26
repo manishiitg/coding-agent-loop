@@ -2,7 +2,7 @@
 
 Status: documentation companion to the [Crew template catalog](crew_template_catalog.md), reviewed 2026-09-26. These 60 profiles describe the job to prove during chat setup. The [frontend catalog](../../frontend/src/products/work/crewTemplates.ts) and its specialist modules remain the source of truth for installed skill text, versions, and checklist IDs. An example or suggested connection here does not grant access, enable recurrence, or establish that a customer has completed setup.
 
-Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-one multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
+Each profile answers: **when to use it, what a first result must contain, what setup must verify, and what changes on a later run.** The twenty-two multi-Crew journeys have linked JSON fixtures; other individual agent outputs still need complete worked examples before they are promoted as fully demonstrated public templates. See the [content quality review](../reviews/playbook_template_content_quality_2026-09-25.md).
 
 ## Finance
 
@@ -455,6 +455,13 @@ The [Finding to Verified Remediation](../../playbooks/agentic-engineering-platfo
 - **First result:** a payment exception with exact order and transaction IDs, kind, status, parent, presentment currency and amount, owner, and next evidence. See the [authorization-only example](../../playbooks/agentic-engineering-platform/shopify/payment-exception-to-order-decision/examples/payment-exception.json).
 - **Setup proof:** read a real authorized OrderTransaction and matching order, including kind/status, parent, amount/currency, capture policy, and owner. An authorization is not successful capture; a Refund object alone does not establish that the money arrived.
 - **Later run:** re-read the transaction and order before any retry or release decision, preserve a stable case/action ID, and stop a stale proposal when a later capture, void, dispute, or refund changes the state.
+
+### Checkout Recovery Coordinator (`checkout-recovery-coordinator`)
+
+- **Use case:** review one abandoned checkout for a permitted, unduplicated recovery contact; keep a separate owner and provider action route.
+- **First result:** a checkout-level decision with consent, later-order, suppression and prior-send evidence, or an unsent draft when all gates are clear. See the [review example](../../playbooks/agentic-engineering-platform/shopify/checkout-signal-to-reviewed-recovery/examples/checkout-recovery-review.json).
+- **Setup proof:** read a real authorized checkout and current consent/order/provider history; demonstrate one suppressed or unknown case, then obtain an owner review of any draft.
+- **Later run:** re-read completion, order, consent, opt-out and prior sends using a stable checkout-channel-campaign key; stop on recovery or duplicate-send risk.
 
 ## Content completion rule
 

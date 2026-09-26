@@ -124,6 +124,12 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   ], handoffs: [
     { id: 'catalog-to-growth', from: 'catalog', to: 'growth', artifact_type: 'launch-catalog-readiness/v1', required: true },
   ], setupChecks: ['goal_owner', 'launch_scope', 'catalog_standards', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'launch_ledger', 'activation_choice'] },
+  { id: 'checkout-signal-to-reviewed-recovery', title: 'Checkout Signal to Reviewed Recovery', description: 'Turn a Shopify abandoned checkout signal into a contact-policy review and an unsent recovery draft, with separate proof for any later send or order.', version: '0.1.0', category: 'Shopify', order: 6, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
+    { id: 'growth', agent_playbook_id: 'shopify-growth-analyst', required: true, output: 'checkout-recovery-signal/v1' },
+    { id: 'recovery', agent_playbook_id: 'checkout-recovery-coordinator', required: true, output: 'checkout-recovery-review/v1' },
+  ], handoffs: [
+    { id: 'signal-to-recovery', from: 'growth', to: 'recovery', artifact_type: 'checkout-recovery-signal/v1', required: true },
+  ], setupChecks: ['goal_owner', 'checkout_scope', 'contact_policy', 'team_bindings', 'source_access', 'handoff_contract', 'plan_review', 'test_run', 'contact_ledger', 'activation_choice'] },
   { id: 'incident-to-verified-recovery', title: 'Incident to Verified Recovery', description: 'Coordinate an incident investigation, an owned fix or rollback decision, and evidence that the affected service recovered.', version: '0.1.0', category: 'Engineering', order: 1, inputCount: 5, toolCount: 5, teamScope: 'small_team', agentSlots: [
     { id: 'investigation', agent_playbook_id: 'incident-investigator', required: true, output: 'incident-investigation/v1' },
     { id: 'delivery', agent_playbook_id: 'engineering-delivery-coordinator', required: true, output: 'engineering-blocker-ledger/v1' },

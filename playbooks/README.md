@@ -71,7 +71,8 @@ AgentWorks
         ├── Storefront Opportunity to Verified Change
         ├── Inventory Availability to Owner Action
         ├── Payment Exception to Order Decision
-        └── Product Launch Readiness to Go/No-Go
+        ├── Product Launch Readiness to Go/No-Go
+        └── Checkout Signal to Reviewed Recovery
 ```
 
 ## Browse categories and package locations
@@ -90,7 +91,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | Customer Support | Support Case to Reviewed Resolution; Feedback Theme to Product Decision crosses into Product | Four Support Crews are locally installable with pending setup. Triage and Reply form the required support-case route; Escalation is optional. Feedback & Review Analyst also supplies a validated theme to Product. |
 | Product | Feedback Theme to Product Decision | Product Feedback Coordinator is locally installable with pending setup. The route reuses Support's Feedback & Review Analyst, verifies current issue state and prepares an owner decision before any issue write or customer promise. |
 | Operations | Meeting Decision to Owned Follow-through; Invoice Intake to Reviewed Payable crosses into Finance | Six Operations Crews are locally installable with pending setup. Meeting Actions and Project Status form the required route; Chief of Staff review is optional. Document Intake also supports the invoice route; order and vendor work can start as standalone Crew jobs. |
-| Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go | Five Shopify Crews and five multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
+| Shopify | Order Exception to Resolution; Storefront Opportunity to Verified Change; Inventory Availability to Owner Action; Payment Exception to Order Decision; Product Launch Readiness to Go/No-Go; Checkout Signal to Reviewed Recovery | Six Shopify Crews and six multi-Crew Automation Playbooks are locally installable with pending setup. Generic Website Growth Crews can support public-storefront work without store access. |
 
 ### Engineering Automation
 
@@ -143,6 +144,7 @@ The [Crew and use-case catalog](../docs/design/crew_template_catalog.md) treats 
 | [Inventory Availability to Owner Action](agentic-engineering-platform/shopify/inventory-availability-to-owner-action/SKILL.md) | Propose a Catalog & Merchandising Analyst → Store Operations Coordinator route for a variant/location stock or display mismatch; review the action and retest inventory and storefront state. |
 | [Payment Exception to Order Decision](agentic-engineering-platform/shopify/payment-exception-to-order-decision/SKILL.md) | Propose a Payment Operations Investigator → Store Operations Coordinator route that distinguishes authorization from capture and gates fulfillment release on source evidence and owner approval. |
 | [Product Launch Readiness to Go/No-Go](agentic-engineering-platform/shopify/product-launch-readiness-to-go-no-go/SKILL.md) | Propose a Catalog & Merchandising Analyst → Shopify Growth Analyst preflight for one product, market, and Publication; block on unresolved facts and verify any approved launch. |
+| [Checkout Signal to Reviewed Recovery](agentic-engineering-platform/shopify/checkout-signal-to-reviewed-recovery/SKILL.md) | Propose a Shopify Growth Analyst → Checkout Recovery Coordinator route for one checkout and channel; block unsafe contact, keep the draft unsent, and verify later send and order states separately. |
 
 ### Browser QA
 

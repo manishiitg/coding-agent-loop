@@ -1,5 +1,9 @@
 # Shopify Playbook library review
 
+## Later library extension
+
+Checkout Signal to Reviewed Recovery adds a sixth Shopify Crew and Playbook locally. It pairs a minimal Shopify Growth Analyst signal with Checkout Recovery Coordinator's exact checkout, linked-order, consent, suppression, and prior-send review. Its validator and fictional cases check that unknown contact eligibility cannot become an eligible draft, a send requires owner approval and provider evidence, and an order claim needs a trusted checkout/order link. The original five-route review below remains the dated assessment. No merchant account or message route was activated by this extension.
+
 Date: 2026-09-26. Scope: local `feat/shopify-playbook-library-20260926` branch. The new library is not deployed. Dominion currently runs the prior four-Crew/two-Playbook Shopify release.
 
 ## Coverage

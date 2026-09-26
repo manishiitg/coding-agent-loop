@@ -732,7 +732,7 @@ func TestCreateCrewProjectAppliesMarketingTemplateOnBuilderAction(t *testing.T) 
 }
 
 func TestCreateCrewProjectAppliesShopifyTemplateOnBuilderAction(t *testing.T) {
-	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator"} {
+	for _, templateID := range []string{"store-operations-coordinator", "returns-refunds-coordinator", "catalog-merchandising-analyst", "shopify-growth-analyst", "payment-operations-investigator", "checkout-recovery-coordinator"} {
 		t.Run(templateID, func(t *testing.T) {
 			svc, mock, ctx := newCrewCreationTestEnv(t)
 			created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{

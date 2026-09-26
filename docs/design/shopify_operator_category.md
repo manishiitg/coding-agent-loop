@@ -11,17 +11,17 @@ Status: local templates and Builder proposals; merchant connections, real setup,
 | Fix discoverability and purchase facts | Catalog & Merchandising Analyst | Exact product/variant issue queue with observed storefront effect | Merchant-reviewed catalog edit and retest |
 | Improve product discovery and conversion | Shopify Growth Analyst | Sourced opportunity and bounded measurement plan | Catalog & Merchandising Analyst for a product/variant issue |
 | Resolve an order payment exception | Payment Operations Investigator | Exact transaction kind/status and owner-safe exception | Store Operations Coordinator for a hold or release review |
+| Review an abandoned checkout for contact | Checkout Recovery Coordinator | Consent and suppression-aware decision with an unsent draft when eligible | Merchant owner review; separate approved send and linked-order verification |
 
-The five installable Shopify Playbooks cover order/return resolution, storefront opportunity to catalog change, location-aware inventory, payment-to-order decision, and a bounded product launch go/no-go. They reuse these five Crews in different pairings. A generic Website Growth Crew may help with public-page content, but it does not gain Shopify product, order, or customer access through category membership.
+The six installable Shopify Playbooks cover order/return resolution, storefront opportunity to catalog change, location-aware inventory, payment-to-order decision, a bounded product launch go/no-go, and [checkout signal to reviewed recovery](../../playbooks/agentic-engineering-platform/shopify/checkout-signal-to-reviewed-recovery/SKILL.md). They reuse six Crews in different pairings. A generic Website Growth Crew may help with public-page content, but it does not gain Shopify product, order, or customer access through category membership.
 
 ## Further Shopify jobs to validate with merchants
 
-These are **candidates**, not installable Crews. Add a separate Crew only when its owner, source access, approval boundary, and recurring decision differ from the four shipped roles. Otherwise add a capability pack to an existing Crew.
+These are **candidates**, not installable Crews. Add a separate Crew only when its owner, source access, approval boundary, and recurring decision differ from the installed roles. Otherwise add a capability pack to an existing Crew.
 
 | Candidate job | Operator question and first output | Distinct source or decision | Likely placement |
 | --- | --- | --- | --- |
 | Supplier replenishment planning | “Which variants need a purchase order and when?” → supplier-aware reorder proposal | Purchase orders, lead times, forecasts, and multi-location policy beyond the current availability exception | Separate Crew if a replenishment owner has a recurring procurement queue |
-| Abandoned checkout recovery | “Which opted-in shoppers can receive a recovery message?” → consent and suppression-aware draft | AbandonedCheckout, later order state, marketing consent, messaging provider | Separate Playbook and possibly a lifecycle Crew; no send route in the current payment Playbook |
 | Customer service triage | “Which tickets need a reply or specialist handoff?” → sourced support queue and unsent drafts | Helpdesk identity, SLA, contact policy | Existing Customer Support category pack, Shopify-aware when order joins matter |
 | Retention and lifecycle | “Which customers need a service or campaign follow-up?” → consent-aware cohort and reviewed draft | Consent, messaging platform, cohort definitions, suppression | Existing Marketing or Customer Success Crew with Shopify capability |
 | Store launch and merchandising calendar | “Which launch assets are ready and what is blocked?” → release checklist with exact product, collection, theme, and channel owners | Publish calendar, content review, theme and channel permissions | Automation across Growth, Catalog, and human owner rather than a new Crew by default |

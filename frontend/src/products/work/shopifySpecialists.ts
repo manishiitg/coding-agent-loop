@@ -1,6 +1,6 @@
 import type { CrewTemplate } from './crewTemplates'
 
-export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst' | 'payment-operations-investigator'
+export type ShopifySpecialistId = 'store-operations-coordinator' | 'returns-refunds-coordinator' | 'catalog-merchandising-analyst' | 'shopify-growth-analyst' | 'payment-operations-investigator' | 'checkout-recovery-coordinator'
 
 type Specialist = {
   id: ShopifySpecialistId
@@ -170,6 +170,35 @@ const specialists: readonly Specialist[] = [
     workedExample: '{"case_id":"pay-19","store_id":"store-example-1","order_id":"order-4102","transaction_id":"txn-602","kind":"AUTHORIZATION","status":"SUCCESS","presentment_minor":8500,"currency":"USD","capture_state":"not_observed","source_refs":["shopify:order-4102@2026-09-24T14:30Z","shopify:txn-602@2026-09-24T14:30Z"],"owner":"payments-owner","next_action":"Review capture policy and expiry before fulfillment release"}',
     rejectedExample: '“Payment complete; ship the order.” Reject: the only confirmed transaction is an authorization, no successful capture was observed, and fulfillment release was not approved.',
     setupProof: 'Show one real order/transaction join with kind, status, amount and currency; test a pending or authorization-only case and record the payment owner decision.',
+  },
+  {
+    id: 'checkout-recovery-coordinator', name: 'Checkout Recovery Coordinator', icon: '🛒', subcategory: 'Checkout recovery',
+    role: 'Shopify abandoned checkout recovery and contact policy coordinator',
+    purpose: 'Review a specific abandoned checkout against current order, consent, suppression, and prior-message evidence before proposing an unsent recovery message.',
+    firstResult: 'A checkout-level eligibility decision with exact source IDs, suppression reason or unsent draft, owner, and proof needed before any send.',
+    minimumInput: 'Authorized store and abandoned checkout ID, market and channel, current checkout/order state, merchant contact policy, consent source, messaging history, and approval owner.',
+    optionalConnections: 'Shopify abandoned checkouts and customer consent, Shopify Messaging or another approved email provider, order lookup, and suppression list; a scoped export supports a read-only decision, but cannot authorize a send.',
+    exampleRequests: ['Review this abandoned checkout for an approved recovery email without sending it.', 'Why was this checkout suppressed, and what evidence would make it eligible for owner review?'],
+    method: [
+      'Bind store, checkout ID, customer or guest identity, market, channel, observed time, and merchant contact policy version.',
+      'Read the checkout completed state and any later linked order; record an unresolved join as unknown rather than matching by email or cart amount alone.',
+      'Check channel-specific consent, opt-out, existing Shopify or provider recovery automation, prior sends, frequency cap, and merchant exclusions.',
+      'Classify suppress, needs_information, or draft_review. A draft requires current eligibility evidence and remains unsent until separate owner approval.',
+      'If an approved send route is later used, re-read state, use an idempotent checkout-channel-campaign key, retain provider receipt, and verify the later order separately.',
+    ],
+    evidence: 'Cite exact checkout, customer or guest, linked order when available, consent, policy, suppression, and provider record IDs with observation times. Keep personal contact details out of shared reports.',
+    boundary: 'Do not enable a recovery automation, alter consent, send a message, issue a discount, or claim a recovered order from a draft, click, or unverified attribution.',
+    handoff: 'For Checkout Signal to Reviewed Recovery, consume a validated `checkout-recovery-signal/v1` from Shopify Growth Analyst for the same store, market, checkout, channel, and campaign; emit `checkout-recovery-review/v1` with current eligibility, suppression checks, an unsent draft only when allowed, approval state, and separate send and order evidence.',
+    repeatRule: 'Re-read checkout, linked order, consent, opt-out, suppression, and provider history before every contact decision; preserve the same case key and suppress duplicates or recovered checkouts.',
+    sourceProbe: 'Read one authorized AbandonedCheckout by exact ID, including completedAt, updatedAt, customer or guest reference, and recovery URL availability; inspect a current consent record, linked order state, and provider send history under the same store.',
+    decisionRules: [
+      'The abandoned-checkout query can include recovered checkouts. A present checkout record does not prove it remains eligible; completed or later-order state can suppress it.',
+      'Contact eligibility depends on current channel consent, merchant policy, jurisdiction, opt-out, and existing automation. Missing evidence means needs_information or suppress, never an automatic send.',
+      'A provider send receipt proves delivery was attempted, not that an order was recovered. Verify a later order with a trusted checkout/order link and avoid double counting.',
+    ],
+    workedExample: '{"case_id":"recovery-14","store_id":"store-example-1","checkout_id":"checkout-77","market":"US","channel":"email","completed_at":null,"later_order_state":"none_verified","consent_state":"subscribed","prior_send_state":"none_verified","decision":"draft_review","message_state":"unsent","source_refs":["shopify:checkout-77@2026-09-24T14:30Z","shopify:consent-34@2026-09-24T14:31Z","messaging:history-77@2026-09-24T14:32Z"],"owner_id":"lifecycle-owner","next_evidence":"Owner review and fresh source check before any send"}',
+    rejectedExample: '“Send a discount to every abandoned checkout; recovered revenue is confirmed.” Reject: the query can include recovered checkouts, contact consent and prior sends are unknown, no owner approved a send, and no linked order proves revenue.',
+    setupProof: 'Show one real checkout with current completion/order, consent, suppression and send-history sources; demonstrate a suppressed or unknown case and obtain the owner decision on a separate unsent draft.',
   },
 ]
 

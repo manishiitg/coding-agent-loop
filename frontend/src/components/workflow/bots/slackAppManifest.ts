@@ -66,8 +66,9 @@ export function buildSlackAppManifest({ name, optionalScopes = [] }: { name?: st
   return {
     display_information: { name: appName },
     features: {
-      // The Messages tab is where people DM the app.
-      app_home: { home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
+      // The Messages tab is where people DM the app; the Home tab is what
+      // they see when they open it (the agent publishes it, views.publish).
+      app_home: { home_tab_enabled: true, messages_tab_enabled: true, messages_tab_read_only_enabled: false },
       bot_user: { display_name: slackBotDisplayName(appName), always_online: true },
     },
     oauth_config: { scopes: { bot: [...SLACK_REQUIRED_SCOPES, ...SLACK_DM_SCOPES, ...new Set(extra)] } },

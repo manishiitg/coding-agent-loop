@@ -16,8 +16,8 @@ describe('Slack app manifest', () => {
     expect(manifest.settings.event_subscriptions.bot_events).toEqual(['app_mention', 'message.channels', 'message.groups', 'message.im'])
   })
 
-  it('opens the Messages tab so people can DM the app', () => {
-    expect(buildSlackAppManifest().features.app_home).toEqual({ home_tab_enabled: false, messages_tab_enabled: true, messages_tab_read_only_enabled: false })
+  it('opens the Messages tab (DMs) and the Home tab', () => {
+    expect(buildSlackAppManifest().features.app_home).toEqual({ home_tab_enabled: true, messages_tab_enabled: true, messages_tab_read_only_enabled: false })
   })
 
   it('enables Socket Mode and interactivity, disables org deploy and token rotation', () => {

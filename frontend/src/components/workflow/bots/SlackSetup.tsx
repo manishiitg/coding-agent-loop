@@ -80,7 +80,7 @@ type SlackSetupBots = Pick<WorkflowBots,
   | 'myBotSaving' | 'myBotError' | 'setMyBotError' | 'addMyBotChannel' | 'removeMyBotChannel'
 >
 
-export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; headerAction?: ReactNode }) {
+export function SlackSetup({ bots, headerAction, homeTabAction }: { bots: SlackSetupBots; headerAction?: ReactNode; homeTabAction?: ReactNode }) {
   const {
     readOnly, workflowId, slackOriginal, slackLoading, slackError, slackSuccess,
     canManageWorkflowSlack, hasProfileTarget, slackSelection,
@@ -154,7 +154,7 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
         </div>
       </FormSection>
 
-      {mode === 'own' && <OwnBotSection bots={bots} noun={noun} ownTitle={ownTitle} editing={editing || !own} onEdit={setEditing} />}
+      {mode === 'own' && <OwnBotSection bots={bots} noun={noun} ownTitle={ownTitle} editing={editing || !own} onEdit={setEditing} homeTabAction={homeTabAction} />}
       {mode === 'mine' && <MyBotsSection bots={bots} noun={noun} />}
       {mode === 'shared' && showShared && <SharedBotSection bots={bots} noun={noun} ownTitle={ownTitle} shared={shared} />}
 
@@ -184,8 +184,8 @@ export function SlackSetup({ bots, headerAction }: { bots: SlackSetupBots; heade
   )
 }
 
-function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
-  bots: SlackSetupBots; noun: string; ownTitle?: string; editing: boolean; onEdit: (editing: boolean) => void
+function OwnBotSection({ bots, noun, ownTitle, editing, onEdit, homeTabAction }: {
+  bots: SlackSetupBots; noun: string; ownTitle?: string; editing: boolean; onEdit: (editing: boolean) => void; homeTabAction?: ReactNode
 }) {
   const {
     canManageWorkflowSlack, slackSelection, slackConnConfirmDelete, removeWorkflowSlackConnection,
@@ -213,6 +213,14 @@ function OwnBotSection({ bots, noun, ownTitle, editing, onEdit }: {
             {slackConnConfirmDelete ? 'Click again to remove' : 'Remove bot'}
           </Button>
         </div>
+        {homeTabAction && canManageWorkflowSlack && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              <b className="text-foreground">Home tab</b> — what people see when they open the app in Slack. Turn on <b>App Home → Home Tab</b> in the Slack app first.
+            </p>
+            {homeTabAction}
+          </div>
+        )}
         {slackConnTestResult && <SlackChecksView result={slackConnTestResult} />}
         {/* The setup help stays reachable once the bot is installed: new
             features (e.g. direct messages) need scopes and events added in

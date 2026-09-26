@@ -83,6 +83,7 @@ func SlackConnectionRoutes(router *mux.Router, api *StreamingAPI) {
 	r.HandleFunc("/{id}", deleteSlackConnectionHandler(api)).Methods("DELETE", "OPTIONS")
 	r.HandleFunc("/{id}/default", setDefaultSlackConnectionHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/{id}/test", testSlackConnectionEntryHandler(api)).Methods("POST", "OPTIONS")
+	r.HandleFunc("/{id}/dry-run", slackConnectionDryRunHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/project/selection", projectSlackConnectionHandler(api)).Methods("GET", "PUT", "POST", "OPTIONS")
 }
 

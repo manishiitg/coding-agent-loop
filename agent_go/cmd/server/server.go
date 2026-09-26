@@ -2603,34 +2603,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
 	// Bot sessions use ONLY delegation tier config from DB for LLM selection — no server defaults needed
 	api.botManager = botManager
-	// Wire startSessionInternal after api is created (closure captures api)
-	botManager.SetStartSessionFunc(api.startSessionInternal)
-	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
-	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
-	botManager.SetResumeListFunc(api.listBotResumeTargets)
-	botManager.SetWorkflowAccessFunc(api.checkBotWorkflowAccess)
-	services.SetDedicatedSlackRouteFunc(api.dedicatedSlackRoute)
-	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
-		running := api.listRunningWorkflowExecutions(userID)
-		out := make([]services.BotRunningWorkflow, 0, len(running))
-		for _, wf := range running {
-			label := strings.TrimSpace(wf.PresetName)
-			if label == "" && wf.WorkspacePath != "" {
-				label = workflowNameFromWorkspacePath(wf.WorkspacePath)
-			}
-			out = append(out, services.BotRunningWorkflow{
-				WorkflowLabel:    label,
-				WorkspacePath:    wf.WorkspacePath,
-				Status:           wf.Status,
-				CurrentStepTitle: wf.CurrentStepTitle,
-				PhaseName:        wf.PhaseName,
-				Title:            wf.Title,
-				SessionID:        wf.SessionID,
-				StartedAt:        wf.StartedAt,
-			})
-		}
-		return out
-	})
+	// Every server hook (session start, routing, turn building) in one place,
+	// shared with the bot dry-run tests.
+	api.wireBotManager(botManager)
 	// Install the chat injector used by background-agent and workflow lifecycle
 	// messages. Human-input requests are intentionally not relayed through this
 	// path; users answer those directly in the correlated UI card.
@@ -2701,11 +2676,6 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Register bot routes
 	BotRoutes(router, api)
-	// Product/profile bot routes are shared by Slack and WhatsApp. WhatsApp
-	// has extra default-profile routing below, but Slack profile routes need
-	// this handler even when WhatsApp is disabled.
-	botManager.SetProfileTurnFunc(api.botProfileTurn)
-	botManager.SetWorkflowTurnFunc(api.botWorkflowTurn)
 	virtualtools.SetSlackMessageHandler(api.sendSlackMessageFromTool)
 	virtualtools.SetSlackCLIHandler(api.slackCLIFromTool)
 	if slackSvc != nil {
@@ -2733,12 +2703,6 @@ func runServer(cmd *cobra.Command, args []string) {
 			return voiceManager.Transcribe(ctx, samples)
 		})
 	}
-	// Progressive text: while a bot turn runs, forward each completed
-	// assistant reply as its own message rather than waiting for the whole
-	// turn to finish — reads the same durable conversation_history the UI's
-	// own chat-restore path already trusts, kept current as the turn runs.
-	botManager.SetChatHistoryReader(botProgressiveChatHistoryReader)
-
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
 		api.updateSessionActivity(sessionID)
@@ -3738,22 +3702,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// focus, per docs/design/agent_tool_surface_single_source.md).
 	currentUserIsReadOnly := workflowAccessForClaims(GetUserFromContext(r.Context())) == WorkflowAccessRead
 
-	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
-	resolvedProfile, err := api.resolveAgentProfileForQuery(r.Context(), &req, currentUserID, sessionID)
-	if err != nil {
-		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Workflow-phase payloads identify the workspace through their preset,
-	// not selected_folder (the client never sends it for these chats).
-	// Resolve it BEFORE access: otherwise conversationTargetAccess skips the
-	// manifest and answers from the account tier, so a manifest reader chats
-	// as Builder while every tool call fails the permission-drift guard
-	// once the folder is backfilled later in this handler.
-	api.backfillWorkflowPhaseFolder(r.Context(), &req)
-	access, accessErr := api.conversationTargetAccess(r.Context(), req)
-	if accessErr != nil {
-		http.Error(w, accessErr.Error(), http.StatusForbidden)
+	resolvedProfile, access, admitErr := api.admitQueryTarget(r.Context(), &req, currentUserID, sessionID)
+	if admitErr != nil {
+		status := http.StatusForbidden
+		if admitErr.invalidProfile {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, admitErr.Error(), status)
 		return
 	}
 	currentUserIsReadOnly = readOnlyForRequest(access, req)
@@ -13232,4 +13187,44 @@ func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {
 		return "<empty>"
 	}
 	return fmt.Sprintf("%s/%s", config.Provider, config.ModelID)
+}
+
+// queryAdmissionError is a refusal from admitQueryTarget.
+type queryAdmissionError struct {
+	err            error
+	invalidProfile bool
+}
+
+func (e *queryAdmissionError) Error() string {
+	if e.invalidProfile {
+		return "Invalid agent profile request: " + e.err.Error()
+	}
+	return e.err.Error()
+}
+
+func (e *queryAdmissionError) Unwrap() error { return e.err }
+
+// admitQueryTarget resolves a turn's target and the caller's access to it:
+// saved chat config, the agent profile, the workflow-phase folder, then
+// conversationTargetAccess. handleQuery and the bot dry run
+// (bot_dry_run.go) share it, so a dry run admits exactly what a real turn
+// admits.
+func (api *StreamingAPI) admitQueryTarget(ctx context.Context, req *QueryRequest, currentUserID, sessionID string) (*resolvedAgentProfile, WorkflowAccessLevel, *queryAdmissionError) {
+	api.applySavedMultiAgentChatConfig(ctx, req, currentUserID)
+	resolvedProfile, err := api.resolveAgentProfileForQuery(ctx, req, currentUserID, sessionID)
+	if err != nil {
+		return nil, WorkflowAccessNone, &queryAdmissionError{err: err, invalidProfile: true}
+	}
+	// Workflow-phase payloads identify the workspace through their preset,
+	// not selected_folder (the client never sends it for these chats).
+	// Resolve it BEFORE access: otherwise conversationTargetAccess skips the
+	// manifest and answers from the account tier, so a manifest reader chats
+	// as Builder while every tool call fails the permission-drift guard
+	// once the folder is backfilled later in handleQuery.
+	api.backfillWorkflowPhaseFolder(ctx, req)
+	access, err := api.conversationTargetAccess(ctx, *req)
+	if err != nil {
+		return nil, WorkflowAccessNone, &queryAdmissionError{err: err}
+	}
+	return resolvedProfile, access, nil
 }

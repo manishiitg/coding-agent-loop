@@ -2324,25 +2324,45 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
 
 	userEmail := s.resolveUserEmail(ev.User)
-	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, text, isThreadReply)
+	msg, handled := s.mentionMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, ev.TimeStamp, text, isThreadReply)
 	if handled {
 		return
 	}
-	s.messageHandler(BotIncomingMessage{
+	s.messageHandler(msg)
+}
+
+// mentionMessage builds the bot message for a Slack mention, with the route
+// this app resolves for the channel attached. handled reports a message the
+// route already answered (e.g. a blocked sender). The app-mention handler and
+// the bot dry run (DryRunMention) share it.
+func (s *SlackService) mentionMessage(ctx context.Context, userID, userEmail, channelID, threadTS, messageTS, text string, isThreadReply bool) (BotIncomingMessage, bool) {
+	text, presetRoute, handled := s.routeSlackWorkflowMessage(ctx, userID, userEmail, channelID, threadTS, text, isThreadReply)
+	if handled {
+		return BotIncomingMessage{}, true
+	}
+	return BotIncomingMessage{
 		Platform:       "slack",
-		UserID:         ev.User,
-		UserName:       ev.User,
+		UserID:         userID,
+		UserName:       userID,
 		UserEmail:      userEmail,
-		ChannelID:      ev.Channel,
+		ChannelID:      channelID,
 		ConnectionID:   s.connectionID,
 		ThreadTS:       threadTS,
 		Text:           text,
-		MessageTS:      ev.TimeStamp,
+		MessageTS:      messageTS,
 		Timestamp:      time.Now(),
 		IsThreadReply:  isThreadReply,
 		IsMention:      true,
 		PresetWorkflow: presetRoute,
-	})
+	}, false
+}
+
+// DryRunMention builds the message a mention of this app in channelID by
+// userEmail would produce, on a fresh synthetic thread. blocked reports a
+// sender the route refuses.
+func (s *SlackService) DryRunMention(ctx context.Context, userEmail, channelID, text string) (msg BotIncomingMessage, blocked bool) {
+	threadTS := fmt.Sprintf("dryrun.%d", time.Now().UnixNano())
+	return s.mentionMessage(ctx, "dry-run", strings.TrimSpace(userEmail), strings.ToUpper(strings.TrimSpace(channelID)), threadTS, threadTS, text, false)
 }
 
 // slackUserMentionTag matches Slack user tags (<@U123>, <@U123|label>).

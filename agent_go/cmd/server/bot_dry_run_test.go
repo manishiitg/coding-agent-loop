@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
@@ -47,6 +48,15 @@ func newBotDryRunWorld(t *testing.T) botDryRunWorld {
 	manager.RegisterConnector(svc)
 	fx.api.botManager = manager
 	fx.api.scheduler = NewSchedulerService(fx.api)
+	// Match the production Work profile: crews carry their attached
+	// workflows and crews into every turn.
+	profile := fx.profile
+	profile.Runtime.Capabilities.WorkflowReferences = agentprofiles.CapabilityOptional
+	registry := agentprofiles.NewRegistry()
+	if err := registry.RegisterProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	fx.profile, fx.api.agentProfiles = profile, registry
 	t.Cleanup(func() { services.SetDedicatedSlackRouteFunc(nil) })
 	// The fixture pins an LLM the test profile does not offer; a crew
 	// without one uses the profile's default.
@@ -166,5 +176,29 @@ func TestBotDryRunSharedBotUnroutedChannelIsRefused(t *testing.T) {
 	}
 	if outcome := w.mention(t, shared.ID, "C0NOROUTE01"); outcome.Admitted {
 		t.Fatalf("unrouted channel started a turn: %+v", outcome)
+	}
+}
+
+// RTS 2026-09-26: gptlive1 attaches two other crews by their logical path and
+// a workflow; its Slack bot was refused ("One or more attached workflows or
+// Crew projects are unavailable"). Attachments are the owner's context.
+func TestBotDryRunCrewWithAttachedCrewsAndWorkflow(t *testing.T) {
+	w := newBotDryRunWorld(t)
+	w.mock.mu.Lock()
+	w.mock.files["_users/owner/Chats/Work/projects/gamma/product.json"] = `{"schema_version":1,"product":"work","id":"crew-ggg","title":"Gamma","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}`
+	var runtime map[string]any
+	if err := json.Unmarshal([]byte(w.mock.files[crewRunModeOwnerRoot+"/workflow.json"]), &runtime); err != nil {
+		w.mock.mu.Unlock()
+		t.Fatal(err)
+	}
+	runtime["workflow_context_paths"] = []string{"Chats/Work/projects/gamma", "Workflow/shared"}
+	raw, _ := json.Marshal(runtime)
+	w.mock.files[crewRunModeOwnerRoot+"/workflow.json"] = string(raw)
+	w.mock.mu.Unlock()
+	app := w.createApp(t, "SDE", crewRunModeOwnerRoot, "work")
+	outcome := w.mention(t, app.ID, "C0CREWCHAN1")
+	requireAdmitted(t, outcome, "crew-aaa")
+	if paths, _ := json.Marshal(outcome.Request["workflow_context_paths"]); !strings.Contains(string(paths), "gamma") {
+		t.Fatalf("the crew's attachments never reached the turn: %s", paths)
 	}
 }

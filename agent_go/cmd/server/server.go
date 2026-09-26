@@ -3616,14 +3616,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// A workflow may keep durable read-only links in workflow.json. Merge those
 	// with one-message # references before the common authorization boundary so
 	// both forms receive identical access checks and folder guards.
-	req.WorkflowContextPaths = mergeDurableWorkflowContextPaths(r.Context(), req.SelectedFolder, req.WorkflowContextPaths)
-	contextPaths, contextReadPaths, contextErr := authorizeWorkflowContextPathsWithReadRoots(r.Context(), req.WorkflowContextPaths)
-	if contextErr != nil {
+	if contextErr := admitTurnContextPaths(r.Context(), &req); contextErr != nil {
 		http.Error(w, contextErr.Error(), http.StatusForbidden)
 		return
 	}
-	req.WorkflowContextPaths = contextPaths
-	req.authorizedWorkflowContextReadPaths = contextReadPaths
 
 	// Handle alias: Map Message to Query if Query is empty
 	if req.Query == "" && req.Message != "" {

@@ -76,6 +76,9 @@ func (api *StreamingAPI) admitBotTurn(ctx context.Context, reqMap map[string]int
 	}
 	// handleQuery also binds a Slack workflow trigger's invocation here; that
 	// allocates a run folder, so a dry run does not.
+	if err := admitTurnContextPaths(principalCtx, &req); err != nil {
+		return fmt.Errorf("handleQuery returned status %d: %w", http.StatusForbidden, err)
+	}
 	req.AgentMode = normalizeAgentMode(req.AgentMode)
 	if _, _, admitErr := api.admitQueryTarget(principalCtx, &req, GetUserIDFromContext(principalCtx), sessionID); admitErr != nil {
 		status := http.StatusForbidden

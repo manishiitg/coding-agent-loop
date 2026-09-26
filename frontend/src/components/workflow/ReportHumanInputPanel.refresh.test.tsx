@@ -57,7 +57,7 @@ describe('decision card refresh from the server live feed', () => {
 })
 
 describe('decision option click', () => {
-  it('sends the chosen answer to the chat instead of only filling the composer', async () => {
+  it('sends the chosen answer on a confirmed second click, like Ask AI', async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const workspace = 'Workflow/example'
     const input = { id: 'decision-2', workspace_path: workspace, source: 'technical_review',
@@ -71,7 +71,17 @@ describe('decision option click', () => {
       await act(async () => root.render(<ReportHumanInputPanel workspacePath={workspace} />))
       const option = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes("This workflow's own bot"))
       expect(option).toBeTruthy()
+      // First click arms (nothing sent); a second click right away is the
+      // tail of a double-click and is ignored; a deliberate second click sends.
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
       await act(async () => { option!.click() })
+      expect(sendReportHumanInputAnswerToChat).not.toHaveBeenCalled()
+      expect(container.textContent).toContain('Click again to send')
+      await act(async () => { option!.click() })
+      expect(sendReportHumanInputAnswerToChat).not.toHaveBeenCalled()
+      now.mockReturnValue(2_000)
+      await act(async () => { option!.click() })
+      now.mockRestore()
       expect(sendReportHumanInputAnswerToChat).toHaveBeenCalledWith(expect.objectContaining({ workspacePath: workspace, option: { id: 'own', title: "This workflow's own bot" } }))
       expect(openReportHumanInputAnswerInChat).not.toHaveBeenCalled()
     } finally {
